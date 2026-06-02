@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/state.schema.json",
+  "title": "Harness v3 State",
+  "description": "Schema para o state.json — maquina de estados do pipeline (FSM inter-turn). Backward-compatible: classification permanece string (= final); classification_meta e campos FSM sao opcionais.",
+  "type": "object",
+  "required": ["task_id", "classification", "status", "pipeline", "current_step", "artifacts_so_far", "started_at"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "description": "Versao do schema de state. Ausente = legado (pre-migracao).",
+      "type": "integer",
+      "enum": [3]
+    },
+    "task_id": {
+      "type": ["string", "null"],
+      "pattern": "^t-[0-9]{8}-[0-9A-Za-z]+$"
+    },
+    "classification": {
+      "description": "Classificacao final como string (ex: L2-feature). Mantida para backward-compat com leitores que fazem startswith('L0').",
+      "type": ["string", "null"]
+    },
+    "classification_meta": {
+      "description": "Metadados da classificacao em 2 camadas (regex suggested + semantica final). Opcional.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "suggested": {"type": ["string", "null"], "description": "Classificacao do regex (hook), rapida/offline"},
+        "final": {"type": ["string", "null"], "description": "Classificacao confirmada (semantica ou regex)"},
+        "source": {"type": "string", "enum": ["regex", "semantic", "human_override"]},
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "agreed": {"type": ["boolean", "null"], "description": "regex == semantica?"}
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["idle", "active", "awaiting_gate", "done", "escalated", "abandoned"]
+    },
+    "pipeline": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "current_step": {
+      "type": ["string", "null"]
+    },
+    "phase": {
+      "description": "Fase da FSM (classify, context_scan, spec_draft, design, implement, verify). Opcional.",
+      "type": ["string", "null"]
+    },
+    "pipeline_phases": {
+      "description": "Sequencia de fases da FSM para esta task. Opcional.",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "pending_gate": {
+      "description": "Gate humano pendente entre Workflows. null quando nao ha gate.",
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "type": {"type": "string", "enum": ["answer_clarifications", "approve_spec", "approve_plan", "escalation"]},
+        "payload": {"type": "object", "additionalProperties": true},
+        "raised_at": {"type": ["string", "null"]}
+      }
+    },
+    "workflow_runs": {
+      "description": "Auditoria das execucoes de Workflow scripts. Opcional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "script": {"type": "string"},
+          "started_at": {"type": ["string", "null"]},
+          "returned": {"type": ["object", "null"]}
+        }
+      }
+    },
+    "artifacts_so_far": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "started_at": {
+      "type": ["string", "null"]
+    }
+  }
+}

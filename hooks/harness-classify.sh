@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# harness-classify.sh — UserPromptSubmit hook for Harness v2
+# harness-classify.sh — UserPromptSubmit hook for Harness v3
 # Classifies tasks as L0/L1/L2, detects type, manages pipeline state.
 # Reads JSON from stdin (field: user_message or content).
 # Emits <harness-classification> or <harness-continuation> blocks.
@@ -116,7 +116,7 @@ if has_active and not is_task_switch:
     pipe_display = ' -> '.join(pipeline)
     output = json.dumps({
         "systemMessage": (
-            f"HARNESS v2 CONTINUING: {classification} (task {task_id}). "
+            f"HARNESS v3 CONTINUING: {classification} (task {task_id}). "
             f"Current step: {step_display}. Pipeline: {pipe_display}. "
             f"Continue the active pipeline by invoking skill='harness-workflow'."
         )
@@ -257,14 +257,17 @@ classification = f"{level}-{task_type}"
 # Pipeline mapping
 # ============================================================================
 PIPELINES = {
-    # Harness v3 — SDD pipelines (use write-spec/design-doc/verify-against-spec)
+    # Harness v3 — SDD pipelines. Nomes = FASES (estaveis); o harness-workflow
+    # mapeia cada fase ao mecanismo real (skill direta OU Workflow de fan-out).
+    # Zero skills fantasma: removidos triage-issue, request-refactor-plan,
+    # improve-codebase-architecture, prd-to-plan, execucao.
     "L1-feature":      ["write-spec-light", "tdd", "verify-against-spec"],
-    "L1-bug":          ["systematic-debugging", "triage-issue", "tdd", "verify"],
-    "L1-refactor":     ["request-refactor-plan", "execucao", "verify"],
+    "L1-bug":          ["systematic-debugging", "tdd", "verify"],
+    "L1-refactor":     ["write-spec-light", "tdd", "verify-against-spec"],
     "L2-feature":      ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
-    "L2-bug":          ["systematic-debugging", "triage-issue", "grill-me", "tdd", "verify"],
-    "L2-refactor":     ["discuss", "request-refactor-plan", "grill-me", "write-spec", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
-    "L2-architecture": ["discuss", "brainstorming", "write-spec", "grill-me", "improve-codebase-architecture", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
+    "L2-bug":          ["systematic-debugging", "grill-me", "tdd", "verify"],
+    "L2-refactor":     ["discuss", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
+    "L2-architecture": ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
 }
 # L0 has no pipeline
 pipeline = PIPELINES.get(classification, [])
@@ -281,9 +284,23 @@ started_at = now.isoformat()
 # ============================================================================
 status = "done" if level == "L0" else "active"
 
+# classification_meta: camada regex (suggested). Para L0 o regex decide sozinho
+# (final=suggested). Para L1+ a confirmacao semantica (wf-classify-semantic)
+# preenche final/source/agreed depois; ate la final=None. agreed=None em ambos
+# pois so a camada semantica avalia concordancia (entra no loop de accuracy).
+classification_meta = {
+    "suggested": classification,
+    "final": classification if level == "L0" else None,
+    "source": "regex",
+    "confidence": None,
+    "agreed": None,
+}
+
 new_state = {
     "task_id": task_id,
+    "schema_version": 3,
     "classification": classification,
+    "classification_meta": classification_meta,
     "status": status,
     "pipeline": pipeline,
     "current_step": None,
@@ -321,7 +338,7 @@ else:
     # L1+: emit systemMessage JSON to force workflow activation
     output = json.dumps({
         "systemMessage": (
-            f"HARNESS v2 CLASSIFIED: {classification}. "
+            f"HARNESS v3 CLASSIFIED: {classification}. "
             f"Pipeline: {pipeline_display}. "
             f"Task ID: {task_id}. "
             f"You MUST invoke the harness-workflow skill NOW using the Skill tool "

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Harness v2 — Suite de Testes Automatizados
+Harness v3 — Suite de Testes Automatizados
 ==========================================
-Testa todos os hooks e cenários de falha do sistema Harness v2.
+Testa todos os hooks e cenários de falha do sistema Harness v3.
 
 Uso:
     python test_harness.py              # roda todos os testes
@@ -110,6 +110,10 @@ class HarnessTestBase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        # Garante que o diretorio do harness existe antes do backup. Sem isto,
+        # ambientes ainda nao-bootstrapped (CI limpo, Desktop App recem-instalado,
+        # sandbox de health-check) falham com FileNotFoundError no setUpClass.
+        os.makedirs(HARNESS_DIR, exist_ok=True)
         cls._backup_dir = tempfile.mkdtemp(prefix="harness-test-backup-")
         for fname in ("state.json", ".session-files-count", "trace-current.md"):
             src = os.path.join(HARNESS_DIR, fname)
@@ -144,14 +148,14 @@ class TestClassify(HarnessTestBase):
     # ------------------------------------------------------------------
     # Helpers — aceitam ambos formatos de output:
     #   L0: <harness-classification> block (XML-like)
-    #   L1+: {"systemMessage": "HARNESS v2 CLASSIFIED: ..."} (JSON)
-    #   Active pipeline: {"systemMessage": "HARNESS v2 CONTINUING: ..."} (JSON)
+    #   L1+: {"systemMessage": "HARNESS v3 CLASSIFIED: ..."} (JSON)
+    #   Active pipeline: {"systemMessage": "HARNESS v3 CONTINUING: ..."} (JSON)
     # ------------------------------------------------------------------
     def assert_classified(self, out: str, level: str | None = None,
                           task_type: str | None = None) -> None:
         """Valida que output contém classificação em qualquer formato."""
         is_classified = ("<harness-classification>" in out
-                         or "HARNESS v2 CLASSIFIED" in out)
+                         or "HARNESS v3 CLASSIFIED" in out)
         self.assertTrue(is_classified,
                         f"Output não contém classificação. Output: {out[:500]}")
         if level:
@@ -170,7 +174,7 @@ class TestClassify(HarnessTestBase):
     def assert_continuation(self, out: str, task_id: str | None = None) -> None:
         """Valida continuação de pipeline ativo (XML ou systemMessage)."""
         is_continuation = ("<harness-continuation>" in out
-                           or "HARNESS v2 CONTINUING" in out)
+                           or "HARNESS v3 CONTINUING" in out)
         self.assertTrue(is_continuation,
                         f"Output não é continuação. Output: {out[:500]}")
         if task_id:
@@ -560,12 +564,16 @@ class TestSDDInfrastructure(HarnessTestBase):
         self.assertIn("verify-against-spec", content,
                       "Pipelines devem ter verify-against-spec")
 
-        # L2-feature section deve ter write-spec
-        l2_feat_idx = content.find("### L2-feature")
-        self.assertGreater(l2_feat_idx, 0, "Seção L2-feature não encontrada")
-        l2_feat_section = content[l2_feat_idx:l2_feat_idx + 800]
-        self.assertIn("write-spec", l2_feat_section,
+        # Linha de pipeline L2-feature (tabela de fases) deve listar as skills v3
+        l2_feat_idx = content.find("**L2-feature**")
+        self.assertGreater(l2_feat_idx, 0, "Linha de pipeline L2-feature nao encontrada")
+        l2_feat_line = content[l2_feat_idx:l2_feat_idx + 200]
+        self.assertIn("write-spec", l2_feat_line,
                       "L2-feature deve usar write-spec")
+        self.assertIn("design-doc", l2_feat_line,
+                      "L2-feature deve ter design-doc")
+        self.assertIn("verify-against-spec", l2_feat_line,
+                      "L2-feature deve terminar em verify-against-spec")
 
     def test_classify_emits_v3_pipelines_for_l2(self):
         """harness-classify.sh deve emitir pipelines v3 para L2-feature."""
@@ -666,6 +674,50 @@ class TestReclassify(HarnessTestBase):
             state["classification"].startswith("L1"),
             f"3+ arquivos deve promover para L1, got: {state['classification']}"
         )
+
+    # --- Cenário 17b: classification_meta sincroniza na promoção ---
+    def test_17b_promotion_syncs_classification_meta(self):
+        """Promover L0→L1 deve atualizar classification_meta, não deixar L0 stale.
+
+        Sem isto, record_signal.py fotografa final='L0-...' e o loop de
+        confirmação semântica trata a task promovida como já finalizada.
+        """
+        write_state({
+            "task_id": "t-test-meta",
+            "schema_version": 3,
+            "classification": "L0-feature",
+            "classification_meta": {
+                "suggested": "L0-feature",
+                "final": "L0-feature",
+                "source": "regex",
+                "confidence": None,
+                "agreed": None,
+            },
+            "status": "done",
+            "pipeline": [],
+            "current_step": None,
+            "artifacts_so_far": [],
+            "started_at": "2026-01-01T00:00:00Z",
+        })
+        write_counter({"count": 0, "files": [], "task_id": "t-test-meta"})
+
+        files = ["C:/project/src/x.py", "C:/project/src/y.py", "C:/project/src/z.py"]
+        for f in files:
+            run_hook(self.HOOK, {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": f},
+            })
+
+        meta = read_state()["classification_meta"]
+        self.assertTrue(
+            meta["suggested"].startswith("L1"),
+            f"suggested deve refletir L1, got: {meta['suggested']}"
+        )
+        self.assertIsNone(
+            meta["final"], "final deve voltar a None aguardando confirmação semântica"
+        )
+        self.assertIsNone(meta["agreed"], "agreed deve ser None (semântica ainda não avaliou)")
+        self.assertEqual(meta["source"], "regex")
 
     # --- Cenário 18: Classification None não deve crashar ---
     def test_18_null_classification_no_crash(self):
@@ -927,7 +979,7 @@ class TestIntegration(HarnessTestBase):
 # ===========================================================================
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Harness v2 — Suite de Testes Automatizados")
+    print("  Harness v3 — Suite de Testes Automatizados")
     print("  30 cenários | 4 hooks | classify + reclassify + git-guard + precompact")
     print("=" * 70)
     print()

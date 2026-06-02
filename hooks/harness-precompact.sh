@@ -23,7 +23,7 @@ if [ -f "$TRACE_FILE" ]; then
         ROTATION_NAME="$(date '+%Y-%m-%d-%H%M').md"
         mkdir -p "$TRACES_DIR"
         mv "$TRACE_FILE" "$TRACES_DIR/$ROTATION_NAME" 2>/dev/null || true
-        echo "# Harness v2 Trace — rotacionado em $TIMESTAMP" > "$TRACE_FILE"
+        echo "# Harness v3 Trace — rotacionado em $TIMESTAMP" > "$TRACE_FILE"
     fi
 fi
 
@@ -76,5 +76,13 @@ cat >> "$TRACE_FILE" << EOF
 - Artefatos: $ARTIFACTS
 - Arquivos modificados: $FILES_COUNT
 EOF
+
+# Auto-sync para o vault Obsidian (E3) — non-blocking; nunca quebra o handoff.
+# Espelha traces/specs/.remember para o vault. Se vault ausente, sai 0 (graceful).
+PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+VAULT_SYNC="$PLUGIN_DIR/scripts/vault_sync.py"
+if [ -f "$VAULT_SYNC" ]; then
+    python "$VAULT_SYNC" --quiet >/dev/null 2>&1 || true
+fi
 
 exit 0

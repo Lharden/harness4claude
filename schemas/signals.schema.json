@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.local/schemas/signals.schema.json",
+  "title": "Harness v3 Signals",
+  "description": "Schema para signals.json — telemetria de tasks e agregados. v3 adiciona o bloco aggregates.classify para fechar o loop de feedback da classificacao (regex suggested vs semantica final).",
+  "type": "object",
+  "required": ["version", "tasks", "aggregates"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [3]
+    },
+    "harness_version": {
+      "type": "string"
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task_id", "classification"],
+        "additionalProperties": true,
+        "properties": {
+          "task_id": {"type": "string"},
+          "classification": {"type": "string"},
+          "actual_level": {"type": "string"},
+          "pipeline_completed": {"type": "boolean"},
+          "steps_executed": {"type": "array", "items": {"type": "string"}},
+          "files_modified": {"type": "integer", "minimum": 0},
+          "completed_at": {"type": "string"},
+          "abandoned_at": {"type": "string"},
+          "reason": {"type": "string"},
+          "classification_meta": {
+            "description": "Snapshot da classificacao em 2 camadas para esta task. Tasks legadas (pre-v3) podem nao ter.",
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "suggested": {"type": ["string", "null"]},
+              "final": {"type": ["string", "null"]},
+              "source": {"type": "string", "enum": ["regex", "semantic", "human_override"]},
+              "agreed": {"type": ["boolean", "null"]}
+            }
+          }
+        }
+      }
+    },
+    "aggregates": {
+      "type": "object",
+      "required": ["total_tasks", "pipeline_completion_rate"],
+      "additionalProperties": true,
+      "properties": {
+        "total_tasks": {"type": "integer", "minimum": 0},
+        "l0_count": {"type": "integer", "minimum": 0},
+        "l1_count": {"type": "integer", "minimum": 0},
+        "l2_count": {"type": "integer", "minimum": 0},
+        "pipeline_completion_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "avg_files_per_task": {"type": "number", "minimum": 0},
+        "sdd_usage": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "specs_generated": {"type": "integer", "minimum": 0},
+            "spec_lights_generated": {"type": "integer", "minimum": 0},
+            "designs_generated": {"type": "integer", "minimum": 0},
+            "verifications_passed": {"type": "integer", "minimum": 0},
+            "verifications_failed": {"type": "integer", "minimum": 0},
+            "clarifications_resolved": {"type": "integer", "minimum": 0}
+          }
+        },
+        "classify": {
+          "description": "Loop de feedback da classificacao em 2 camadas.",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "total_classified": {"type": "integer", "minimum": 0, "description": "Tasks com final definido"},
+            "avg_classify_accuracy": {
+              "type": ["number", "null"],
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Fracao de tasks onde regex suggested == semantica final (agreed)"
+            },
+            "regex_vs_semantic_agreement": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+            "human_override_count": {"type": "integer", "minimum": 0, "description": "Tasks onde humano corrigiu (regex E semantica erraram)"}
+          }
+        }
+      }
+    }
+  }
+}
