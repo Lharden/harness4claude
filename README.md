@@ -321,6 +321,49 @@ plugin's CLAUDE.md overrides.
 
 ---
 
+## Multi-Machine Setup
+
+Harness is designed to run across **multiple machines** (e.g. Claude Code on a
+desktop and a laptop). Runtime state lives in `~/.claude/harness/` and is
+**per-machine, not per-project or synced** — each machine keeps its own
+`state.json` and `signals.json`. There is no central store and none is needed:
+specs and design docs live in each project's `./docs/`, which travels with the
+repo via git.
+
+What ports automatically vs. what each machine needs once:
+
+| Concern | Travels with the plugin? | Action per machine |
+|---------|--------------------------|--------------------|
+| Hooks, skills, scripts, schemas | ✅ Yes (plugin install) | `/plugin install harness` |
+| `state.json` / `signals.json` | ❌ No (per-machine, by design) | Created/migrated automatically on first `SessionStart` |
+| Schema version (v2 → v3) | n/a | **Auto-migrated** — the `SessionStart` hook runs `migrate_state.py` when it detects pre-v3 files, creating a timestamped `.bak-migrate-*` backup |
+| Obsidian `vault-bridge` MCP server | ❌ No (MCP config is host-local) | Configure the MCP server + Obsidian app plugins manually (see below) |
+
+### Upgrading an existing install to v3.1
+
+On any machine that ran a previous Harness version, the v2 `signals.json` is
+**migrated to v3 automatically** the next time a session starts — no manual step.
+The hook only migrates when something is actually below v3 (idempotent, gated on
+a version check) and always writes a `*.bak-migrate-<timestamp>` backup first.
+
+To migrate manually (or to preview):
+
+```bash
+python scripts/migrate_state.py            # migrate in place, with backups
+python scripts/migrate_state.py --dry-run  # report only, no writes
+```
+
+### Obsidian (vault-bridge) per machine
+
+The `vault_sync.py` script and the precompact auto-sync ship with the plugin, but
+the `vault-bridge` **MCP server configuration and the Obsidian app plugins are
+host-local** and are intentionally kept out of this repo. On each machine where
+you want vault sync, configure the MCP server in your `~/.claude/settings.json`
+and point it at that machine's vault path. Without this config, the rest of the
+pipeline still works — vault sync simply no-ops.
+
+---
+
 ## Contributing
 
 1. Fork the repository

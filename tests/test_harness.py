@@ -110,6 +110,10 @@ class HarnessTestBase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        # Garante que o diretorio do harness existe antes do backup. Sem isto,
+        # ambientes ainda nao-bootstrapped (CI limpo, Desktop App recem-instalado,
+        # sandbox de health-check) falham com FileNotFoundError no setUpClass.
+        os.makedirs(HARNESS_DIR, exist_ok=True)
         cls._backup_dir = tempfile.mkdtemp(prefix="harness-test-backup-")
         for fname in ("state.json", ".session-files-count", "trace-current.md"):
             src = os.path.join(HARNESS_DIR, fname)
@@ -670,6 +674,50 @@ class TestReclassify(HarnessTestBase):
             state["classification"].startswith("L1"),
             f"3+ arquivos deve promover para L1, got: {state['classification']}"
         )
+
+    # --- Cenário 17b: classification_meta sincroniza na promoção ---
+    def test_17b_promotion_syncs_classification_meta(self):
+        """Promover L0→L1 deve atualizar classification_meta, não deixar L0 stale.
+
+        Sem isto, record_signal.py fotografa final='L0-...' e o loop de
+        confirmação semântica trata a task promovida como já finalizada.
+        """
+        write_state({
+            "task_id": "t-test-meta",
+            "schema_version": 3,
+            "classification": "L0-feature",
+            "classification_meta": {
+                "suggested": "L0-feature",
+                "final": "L0-feature",
+                "source": "regex",
+                "confidence": None,
+                "agreed": None,
+            },
+            "status": "done",
+            "pipeline": [],
+            "current_step": None,
+            "artifacts_so_far": [],
+            "started_at": "2026-01-01T00:00:00Z",
+        })
+        write_counter({"count": 0, "files": [], "task_id": "t-test-meta"})
+
+        files = ["C:/project/src/x.py", "C:/project/src/y.py", "C:/project/src/z.py"]
+        for f in files:
+            run_hook(self.HOOK, {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": f},
+            })
+
+        meta = read_state()["classification_meta"]
+        self.assertTrue(
+            meta["suggested"].startswith("L1"),
+            f"suggested deve refletir L1, got: {meta['suggested']}"
+        )
+        self.assertIsNone(
+            meta["final"], "final deve voltar a None aguardando confirmação semântica"
+        )
+        self.assertIsNone(meta["agreed"], "agreed deve ser None (semântica ainda não avaliou)")
+        self.assertEqual(meta["source"], "regex")
 
     # --- Cenário 18: Classification None não deve crashar ---
     def test_18_null_classification_no_crash(self):

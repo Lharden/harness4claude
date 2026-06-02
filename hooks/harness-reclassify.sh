@@ -83,9 +83,21 @@ if counter['count'] >= 3 and state_class.startswith('L0'):
     try:
         with open(state_file, encoding='utf-8') as f:
             state = json.load(f)
-        state['classification'] = state_class.replace('L0', 'L1')
+        new_class = state_class.replace('L0', 'L1')
+        state['classification'] = new_class
         state['status'] = 'active'
         state['pipeline'] = ['write-spec-light', 'tdd', 'verify-against-spec']
+        # Mantem classification_meta em sincronia com a promocao. A promocao e
+        # uma decisao da camada regex (contagem de arquivos), entao espelha o
+        # tratamento de L1+ do classify hook: final/agreed=None ate a
+        # confirmacao semantica, para a task promovida nao parecer ja finalizada
+        # quando record_signal.py tira o snapshot (fecha o loop de accuracy).
+        meta = state.get('classification_meta') or {}
+        meta['suggested'] = new_class
+        meta['final'] = None
+        meta['source'] = 'regex'
+        meta['agreed'] = None
+        state['classification_meta'] = meta
         with open(state_file, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
     except Exception:
