@@ -132,6 +132,7 @@ phases to it. The other plugins enhance the pipeline but are not strictly requir
 | `grill-me` | Adversarial spec review. Challenges the spec from multiple angles to surface missing edge cases, ambiguous requirements, and unstated assumptions before implementation begins. |
 | `discuss` | Upstream alignment phase. Captures user decisions in three tiers -- Locked, Deferred, and Discretion -- before planning. Generates `docs/CONTEXT.md` that constrains all downstream steps. |
 | `validate-plan` | Pre-execution plan validation. Checks that the implementation plan covers all requirements from CONTEXT.md and the spec. Detects gaps, broken dependencies, and scope drift. Auto-revises up to 2 times. |
+| `security-scan-python` | On-demand Python security scan using `bandit` (SAST) and `pip-audit` (dependency CVEs). Free, no token/login. Triggered only when asked ("scan de segurança", "run bandit", "check vulnerabilities"). `bandit`/`pip-audit` are auto-installed via `requirements.txt` on bootstrap. |
 
 ---
 

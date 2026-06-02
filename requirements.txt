@@ -1,2 +1,6 @@
 pytest>=7.0
 pyyaml>=6.0
+# Security scanning (skill: security-scan-python). Instalados no bootstrap
+# (SessionStart -> pip install --user) para a skill funcionar em cada maquina.
+bandit>=1.7
+pip-audit>=2.7
