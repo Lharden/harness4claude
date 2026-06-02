@@ -85,7 +85,7 @@ if counter['count'] >= 3 and state_class.startswith('L0'):
             state = json.load(f)
         state['classification'] = state_class.replace('L0', 'L1')
         state['status'] = 'active'
-        state['pipeline'] = ['prd-to-plan', 'tdd', 'verify']
+        state['pipeline'] = ['write-spec-light', 'tdd', 'verify-against-spec']
         with open(state_file, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
     except Exception:
@@ -94,7 +94,7 @@ if counter['count'] >= 3 and state_class.startswith('L0'):
     print('  previous: L0')
     print('  new: L1')
     print('  reason: 3+ arquivos modificados na tarefa')
-    print('  pipeline: prd-to-plan -> tdd -> verify')
+    print('  pipeline: write-spec-light -> tdd -> verify-against-spec')
     print('</harness-reclassification>')
 " 2>/dev/null
 

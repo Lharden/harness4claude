@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Harness v2 — Suite de Testes Automatizados
+Harness v3 — Suite de Testes Automatizados
 ==========================================
-Testa todos os hooks e cenários de falha do sistema Harness v2.
+Testa todos os hooks e cenários de falha do sistema Harness v3.
 
 Uso:
     python test_harness.py              # roda todos os testes
@@ -144,14 +144,14 @@ class TestClassify(HarnessTestBase):
     # ------------------------------------------------------------------
     # Helpers — aceitam ambos formatos de output:
     #   L0: <harness-classification> block (XML-like)
-    #   L1+: {"systemMessage": "HARNESS v2 CLASSIFIED: ..."} (JSON)
-    #   Active pipeline: {"systemMessage": "HARNESS v2 CONTINUING: ..."} (JSON)
+    #   L1+: {"systemMessage": "HARNESS v3 CLASSIFIED: ..."} (JSON)
+    #   Active pipeline: {"systemMessage": "HARNESS v3 CONTINUING: ..."} (JSON)
     # ------------------------------------------------------------------
     def assert_classified(self, out: str, level: str | None = None,
                           task_type: str | None = None) -> None:
         """Valida que output contém classificação em qualquer formato."""
         is_classified = ("<harness-classification>" in out
-                         or "HARNESS v2 CLASSIFIED" in out)
+                         or "HARNESS v3 CLASSIFIED" in out)
         self.assertTrue(is_classified,
                         f"Output não contém classificação. Output: {out[:500]}")
         if level:
@@ -170,7 +170,7 @@ class TestClassify(HarnessTestBase):
     def assert_continuation(self, out: str, task_id: str | None = None) -> None:
         """Valida continuação de pipeline ativo (XML ou systemMessage)."""
         is_continuation = ("<harness-continuation>" in out
-                           or "HARNESS v2 CONTINUING" in out)
+                           or "HARNESS v3 CONTINUING" in out)
         self.assertTrue(is_continuation,
                         f"Output não é continuação. Output: {out[:500]}")
         if task_id:
@@ -560,12 +560,16 @@ class TestSDDInfrastructure(HarnessTestBase):
         self.assertIn("verify-against-spec", content,
                       "Pipelines devem ter verify-against-spec")
 
-        # L2-feature section deve ter write-spec
-        l2_feat_idx = content.find("### L2-feature")
-        self.assertGreater(l2_feat_idx, 0, "Seção L2-feature não encontrada")
-        l2_feat_section = content[l2_feat_idx:l2_feat_idx + 800]
-        self.assertIn("write-spec", l2_feat_section,
+        # Linha de pipeline L2-feature (tabela de fases) deve listar as skills v3
+        l2_feat_idx = content.find("**L2-feature**")
+        self.assertGreater(l2_feat_idx, 0, "Linha de pipeline L2-feature nao encontrada")
+        l2_feat_line = content[l2_feat_idx:l2_feat_idx + 200]
+        self.assertIn("write-spec", l2_feat_line,
                       "L2-feature deve usar write-spec")
+        self.assertIn("design-doc", l2_feat_line,
+                      "L2-feature deve ter design-doc")
+        self.assertIn("verify-against-spec", l2_feat_line,
+                      "L2-feature deve terminar em verify-against-spec")
 
     def test_classify_emits_v3_pipelines_for_l2(self):
         """harness-classify.sh deve emitir pipelines v3 para L2-feature."""
@@ -927,7 +931,7 @@ class TestIntegration(HarnessTestBase):
 # ===========================================================================
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Harness v2 — Suite de Testes Automatizados")
+    print("  Harness v3 — Suite de Testes Automatizados")
     print("  30 cenários | 4 hooks | classify + reclassify + git-guard + precompact")
     print("=" * 70)
     print()

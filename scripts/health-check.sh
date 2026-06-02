@@ -76,6 +76,22 @@ else
 fi
 echo ""
 
+echo "--- v3.1 Workflow + Schemas + Scripts ---"
+check "state.schema.json"        "test -f '$PLUGIN_DIR/schemas/state.schema.json'"
+check "signals.schema.json"      "test -f '$PLUGIN_DIR/schemas/signals.schema.json'"
+check "migrate_state.py"         "test -f '$PLUGIN_DIR/scripts/migrate_state.py'"
+check "record_signal.py"         "test -f '$PLUGIN_DIR/scripts/record_signal.py'"
+check "vault_sync.py"            "test -f '$PLUGIN_DIR/scripts/vault_sync.py'"
+check "wf-verify-multimodel.js"  "test -f '$PLUGIN_DIR/scripts/workflows/wf-verify-multimodel.js'"
+check "wf-context-scan.js"       "test -f '$PLUGIN_DIR/scripts/workflows/wf-context-scan.js'"
+check "signals.version == 3"     "python -c \"import os,json,sys; d=json.load(open(os.path.expanduser('~/.claude/harness/signals.json'),encoding='utf-8')); sys.exit(0 if d.get('version')==3 else 1)\""
+if command -v node >/dev/null 2>&1; then
+    check "Workflows validam (node)" "node '$PLUGIN_DIR/scripts/workflows/validate_workflows.cjs'"
+else
+    warn "node ausente — validacao de Workflows pulada"
+fi
+echo ""
+
 echo "--- Orphaned artifacts ---"
 # Check for ralph-loop orphan in current directory (project-scoped)
 if [ -f ".claude/ralph-loop.local.md" ]; then

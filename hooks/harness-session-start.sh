@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# harness-session-start.sh — SessionStart hook for Harness v2
+# harness-session-start.sh — SessionStart hook for Harness v3
 # Checks for active pipeline and emits systemMessage to resume.
 
 set -euo pipefail
@@ -14,6 +14,7 @@ if [ ! -f "$HARNESS_DIR/state.json" ]; then
     cat > "$HARNESS_DIR/state.json" << 'INITEOF'
 {
   "task_id": null,
+  "schema_version": 3,
   "classification": null,
   "status": "idle",
   "pipeline": [],
@@ -32,6 +33,9 @@ if [ ! -f "$HARNESS_DIR/signals.json" ]; then
   "tasks": [],
   "aggregates": {
     "total_tasks": 0,
+    "l0_count": 0,
+    "l1_count": 0,
+    "l2_count": 0,
     "pipeline_completion_rate": 0,
     "avg_files_per_task": 0,
     "sdd_usage": {
@@ -41,6 +45,12 @@ if [ ! -f "$HARNESS_DIR/signals.json" ]; then
       "verifications_passed": 0,
       "verifications_failed": 0,
       "clarifications_resolved": 0
+    },
+    "classify": {
+      "total_classified": 0,
+      "avg_classify_accuracy": null,
+      "regex_vs_semantic_agreement": null,
+      "human_override_count": 0
     }
   }
 }
@@ -93,7 +103,7 @@ try:
         pipe = ' -> '.join(state['pipeline'])
         msg = json.dumps({
             'systemMessage': (
-                f'HARNESS v2 RESUMING: Active pipeline {cls} (task {tid}). '
+                f'HARNESS v3 RESUMING: Active pipeline {cls} (task {tid}). '
                 f'Current step: {step}. Pipeline: {pipe}. '
                 f'Invoke harness-workflow skill to continue where you left off.'
             )

@@ -6,11 +6,11 @@ risk: low
 source: custom
 date_added: "2026-03-24"
 metadata:
-  version: 2
+  version: 3
   triggers: harness-classification, L1, L2, pipeline, feature, bug, refactor, architecture
 ---
 
-# Harness Workflow v2 — Roteador de Pipeline
+# Harness Workflow v3 — Roteador de Pipeline
 
 > **Precedência:** CLAUDE.md SEMPRE tem prioridade sobre esta skill.
 
@@ -21,35 +21,95 @@ Para L0, NÃO ative — execute direto sem pipeline.
 
 ## Protocolo
 
-1. **Ler classificação** — extraia level, type, pipeline do bloco injetado pelo hook
-2. **Anunciar** — exiba ao usuário: "Harness v2: {level}-{type} → {pipeline}"
-3. **Atualizar state.json** — marcar `current_step` conforme progride no pipeline
-4. **Invocar skills** — na sequência do pipeline, usando Skill tool
-5. **Flexibilidade** — pular etapas se justificar (ex: PRD já existe, bug óbvio)
-6. **DONE** — marcar `status: done` no state.json, registrar em signals.json
+1. **Ler classificação** — extraia level, type, pipeline do bloco injetado pelo hook. O `state.json` traz `classification_meta.suggested` (vindo do **regex**, rápido/offline) com `final: null` para L1+.
+2. **Confirmar classificação (camada semântica)** — ANTES de anunciar, avalie a intenção REAL do prompt do usuário e compare com o `suggested`:
+   - **Concorda** → grave `classification_meta.final = suggested`, `source = "regex"`, `agreed = true`.
+   - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → corrija: grave `classification_meta.final = <novo>`, `source = "semantic"`, `agreed = false`, atualize `classification` (string) e **troque `pipeline`** para o do novo level/type (ver tabela Pipelines).
+   - Grave com `Edit` no `state.json`. Isso alimenta o loop de accuracy (regex × semântica) em `signals.json`.
+   - Se o usuário corrigir explicitamente depois → `source = "human_override"`.
+3. **Anunciar** — exiba: "Harness v3: {level}-{type} → {pipeline}" (sinalize se houve correção semântica).
+4. **Atualizar state.json** — marcar `current_step` conforme progride no pipeline.
+5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
+6. **Flexibilidade** — pular etapas se justificar (ex.: spec já existe, bug óbvio).
+7. **DONE** — marcar `status: done` e registrar a task executando:
+   `python ~/.claude/plugins/local/harness/scripts/record_signal.py --completed --steps "step1,step2,..."`
+   (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
 
 ## Pipelines
 
-### L1-feature (v3 — SDD)
-`write-spec-light` → `tdd` → `autoresearch:ship` → [verify-against-spec]
+Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). O hook grava a fase-lista em `state.json.pipeline`; a seção **Motor de Execução** mapeia cada fase ao mecanismo real (skill direta, Workflow de fan-out, ou gate humano).
 
-### L1-bug
-`autoresearch:debug` (Iterations: 10) → `triage-issue` → `autoresearch:fix` (Iterations: 20, Guard: pytest) → [verify]
+| Classificação | Fases |
+|---|---|
+| **L1-feature** | write-spec-light → tdd → verify-against-spec |
+| **L1-bug** | systematic-debugging → tdd → verify |
+| **L1-refactor** | write-spec-light → tdd → verify-against-spec |
+| **L2-feature** | discuss → brainstorming → write-spec → grill-me → design-doc → validate-plan → tdd → verify-against-spec |
+| **L2-bug** | systematic-debugging → grill-me → tdd → verify |
+| **L2-refactor** | discuss → write-spec → grill-me → design-doc → validate-plan → tdd → verify-against-spec |
+| **L2-architecture** | discuss → brainstorming → write-spec → grill-me → design-doc → validate-plan → tdd → verify-against-spec |
 
-### L1-refactor
-`request-refactor-plan` → execução → `autoresearch:ship` → [verify]
+> **Zero skills fantasma:** removidos `triage-issue`, `request-refactor-plan`, `improve-codebase-architecture`, `prd-to-plan`, `write-a-prd`, `execucao`. Cada fase mapeia a um mecanismo real.
+> **autoresearch (acelerador opcional, não obrigatório):** em bugs, `tdd`/`verify` podem usar `autoresearch:debug`/`autoresearch:fix` (loops com guard pytest); em L2 com auth/dados/API, rodar `autoresearch:security`; em L2-architecture, `autoresearch:predict` para pré-análise. Se o plugin estiver indisponível, seguir sem ele (degradação graceful).
 
-### L2-feature (v3 — SDD)
-`discuss` → `brainstorming` → `write-spec` → `grill-me` (sem limite) → `design-doc` → `validate-plan` → `tdd` → `autoresearch:security` (Iterations: 15, condicional: auth/dados/API) → `autoresearch:ship` → [verify-against-spec]
+## Motor de Execução: Workflows + Gates
 
-### L2-bug
-`autoresearch:debug` (Iterations: 15) → `triage-issue` → `grill-me` → `autoresearch:fix` (Iterations: 30, Guard: pytest, --from-debug) → [verify]
+> **Princípio:** fases SEM humano podem virar **Workflow** (fan-out determinístico em background); fronteiras COM humano são **gates** (`AskUserQuestion`) ENTRE as fases. O `state.json` é a máquina de estados que sobrevive entre turnos — `status: "awaiting_gate"` é retomado pelo hook no próximo prompt.
 
-### L2-refactor (v3 — SDD)
-`discuss` → `request-refactor-plan` → `grill-me` → `write-spec` → `design-doc` → `validate-plan` → `tdd` → `autoresearch:ship` → [verify-against-spec]
+### Mapa fase → mecanismo
 
-### L2-architecture (v3 — SDD)
-`discuss` → `autoresearch:predict` (--depth standard) → `brainstorming` → `write-spec` → `grill-me` → `improve-codebase-architecture` → `design-doc` → `validate-plan` → `tdd` → `autoresearch:security` (Iterations: 15) → `autoresearch:ship` → [verify-against-spec]
+| Fase | Mecanismo | Como |
+|---|---|---|
+| (classificação) | inline | confirmar semanticamente (Protocolo, passo 2) |
+| `discuss` | skill | `Skill(skill="discuss")` → `docs/CONTEXT.md` |
+| `brainstorming` | skill | `Skill(skill="superpowers:brainstorming")` |
+| (contexto, L2-arch) | **Workflow** | `wf-context-scan` (fan-out de exploração) — opcional |
+| `write-spec` / `write-spec-light` | skill | `Skill(skill="write-spec[-light]")` |
+| `grill-me` | skill (humano-no-loop) | `Skill(skill="grill-me")` — adversarial, sem limite |
+| `design-doc` | skill | `Skill(skill="design-doc")` |
+| `validate-plan` | skill | `Skill(skill="validate-plan")` |
+| `tdd` | skill | `Skill(skill="superpowers:test-driven-development")` |
+| `verify-against-spec` (L2) | **Workflow** | `wf-verify-multimodel` (review multi-perspectiva + adversarial) |
+| `verify-against-spec` (L1) | skill | `Skill(skill="verify-against-spec")` (Workflow opcional) |
+| `verify` (bug) | skill | `Skill(skill="superpowers:verification-before-completion")` |
+
+### Invocando um Workflow
+
+Na fase mapeada para Workflow, chame a tool **Workflow** com o script e os `args`:
+
+```
+Workflow({
+  scriptPath: "~/.claude/plugins/local/harness/scripts/workflows/wf-verify-multimodel.js",
+  args: { task_id, changed_files: [...], spec_path: "docs/specs/<slug>-spec.md", base_ref: "HEAD" }
+})
+```
+
+Retorna JSON. Workflows disponíveis (validar com `node scripts/workflows/validate_workflows.cjs`):
+- `wf-verify-multimodel.js` → `{ pass, critical_count, findings[], summary }` (5 dimensões em paralelo + adjudicação adversarial que refuta falsos-positivos).
+- `wf-context-scan.js` → `{ files[], patterns[], constraints[], risks[] }` (exploração paralela do codebase).
+
+> Workflows exigem opt-in do usuário; **esta skill instruir a chamada já é o opt-in válido**. Não bloqueiam interação — toda decisão humana ocorre em gate ENTRE Workflows.
+
+### Gates (decisões humanas via AskUserQuestion)
+
+Ao atingir uma fronteira de decisão: grave `pending_gate` no state, marque `status: "awaiting_gate"`, use `AskUserQuestion`. Após resolver: limpe `pending_gate`, volte `status: "active"`, prossiga.
+
+| Gate | Quando | Pergunta |
+|---|---|---|
+| `answer_clarifications` | spec tem `[NEEDS CLARIFICATION]` | uma pergunta por ambiguidade (com opções sugeridas) |
+| `approve_spec` | após `grill-me` | Aprovar spec / Revisar / Cancelar |
+| `approve_plan` | após `design-doc`/`validate-plan` | Aprovar plano / Revisar / Cancelar |
+| `escalation` | `verify` falha após 2 gap-closures | mostrar gaps e pedir direção |
+
+"Revisar" re-invoca a fase anterior; clarifications respondidas são gravadas na spec.
+
+### Verify + gap-closure
+
+Quando a verificação retorna `pass: false`:
+1. Liste os `findings` bloqueantes (critical/high).
+2. Gere `docs/closure-plan.md` com APENAS as delta-tasks.
+3. Execute as delta-tasks e re-rode a verificação.
+4. Máx. 2 iterações; se ainda falhar → gate `escalation`.
 
 ## Steps novos (v2.1)
 
@@ -116,15 +176,12 @@ A Anthropic lançou a **Advisor Strategy** um dia antes do Harness v3 ser implem
 
 **Referência completa:** `~/.claude/projects/C--Windows-System32/memory/reference_advisor_strategy.md`
 
-### verify (com gap-closure + multi-model)
-O step `[verify]` no final de cada pipeline agora funciona como loop com review multi-modelo:
+### verify (com gap-closure)
+A fase de verificação no fim de cada pipeline:
 
-1. Rodar `verification-before-completion` (testes, lint, type check)
-2. **Lançar review multi-modelo** (conforme Multi-Model Protocol acima):
-   - Em L1: Claude (foreground) + Codex review (background) + Gemini review (background)
-   - Em L2: triple-model review (Claude + Codex + Gemini)
-   - Apresentar tabela consolidada de findings
-3. Se PASS (testes + review sem findings críticos) → pipeline completo, ir para DONE
+1. **L2** → rodar o Workflow `wf-verify-multimodel` (fan-out de 5 dimensões em paralelo + adjudicação adversarial). **L1** → `Skill(skill="verify-against-spec")`. **Bug** → `Skill(skill="superpowers:verification-before-completion")` (testes/lint/type-check).
+2. Apresentar a tabela de `findings` retornada (já deduplicada e filtrada por confidence pelo Workflow).
+3. Se `pass: true` (sem findings critical/high) → pipeline completo, ir para DONE
 5. Se FAIL → analisar o que faltou:
    a. Listar gaps especificos (teste falhando, requisito nao implementado, finding critico do review multi-modelo)
    b. Gerar `docs/closure-plan.md` com APENAS as delta-tasks necessarias
@@ -144,60 +201,25 @@ O step `[verify]` no final de cada pipeline agora funciona como loop com review 
 - Iteracao: 1 de 2
 ```
 
-## Multi-Model Protocol v2.2
+## Modelos secundários (Codex/Gemini — opcional)
 
-> **Dependência:** plugin `multi-model` em `~/.claude/plugins/local/multi-model/`
+> **Status:** o review multi-perspectiva primário é o Workflow `wf-verify-multimodel` (agents Claude em paralelo, 5 dimensões + adjudicação). Codex/Gemini são **secundários opcionais**. O plugin `multi-model@local` está **desabilitado** — NÃO dependa dele nem leia `routing.json`.
 
 ### Princípio
 
-Claude é sempre o primário. Codex e Gemini são secundários invocados em background quando agregam valor. Com assinaturas ilimitadas (Max + Plus + Pro), usar secundários agressivamente.
+Claude é sempre o primário (via `wf-verify-multimodel`). Codex/Gemini agregam diversidade de modelo quando disponíveis; nunca bloqueiam o pipeline.
 
-### Quando invocar modelos secundários
+### Como incluir um secundário (quando agregar valor)
 
-Ler `~/.claude/plugins/local/multi-model/config/routing.json` para decidir. Regra: se o stage atual tem `secondary` no routing.json, invocar.
-
-**Tabela rápida (não precisa ler routing.json para estes):**
-
-| Stage | Secundários | Timing | Quando |
-|-------|-------------|--------|--------|
-| `verify` | Codex + Gemini review | parallel | **SEMPRE** em L1 e L2 |
-| `autoresearch:security` | Codex adversarial | parallel | **SEMPRE** em L2 |
-| `write-a-prd` | Gemini context-scan | pre-stage | L2 com escopo grande |
-| `validate-plan` | Gemini cross-reference | parallel | **SEMPRE** em L2 |
-| `autoresearch:predict` | Gemini full codebase | parallel | **SEMPRE** em L2-architecture |
-
-### Como invocar
-
-**Ao entrar em um stage com secondary models:**
-
-1. Checar saúde dos modelos — rodar:
-   ```bash
-   cd ~/.claude/plugins/local/multi-model && python -c "
-   import sys; sys.path.insert(0, 'scripts')
-   from lib.health_check import compute_health, format_system_message
-   from pathlib import Path; pr=Path('.')
-   h=compute_health(pr/'telemetry', pr/'config'/'thresholds.json')
-   for m in h: print(f'{m.model}: {m.status}')
-   "
-   ```
-2. Pular modelos com status "red"
-3. **Timing "parallel":** Lançar secundários via Agent tool em background ENQUANTO Claude faz o stage em foreground
-   - Gemini: lançar agent `gemini-worker` com o contexto do stage
-   - Codex: lançar agent `codex-rescue` pedindo review do diff
-4. **Timing "pre":** Esperar resultado do secundário ANTES de Claude iniciar o stage
-5. Quando backgrounds retornarem → Quality Gate:
-   - Parsear outputs contra schema unificado
-   - Deduplicar findings (mesmo arquivo + linha = merge, listar fontes)
-   - Filtrar confidence < 0.5
-   - Apresentar tabela consolidada com coluna "Source"
-6. Logar telemetria de cada chamada
+- **Codex** (plugin `codex@openai-codex`, habilitado): `Skill(skill="codex:rescue")` ou um agent `codex-rescue` pedindo review do diff.
+- **Gemini:** se houver agent/MCP de Gemini conectado, lançá-lo via Agent tool em background com o contexto do stage.
+- **Dentro de um Workflow:** dar a um reviewer um `agentType` custom (ex.: `agent(prompt, { agentType: 'codex-rescue', schema })`) para diversificar o fan-out do `wf-verify-multimodel`.
 
 ### Degradação graciosa
 
-- Modelo indisponível → pular, continuar com os demais
-- Ambos indisponíveis → pipeline continua só com Claude (como antes)
-- Timeout → marcar "skipped" na telemetria, seguir
-- **O pipeline NUNCA trava por causa de modelo secundário**
+- Secundário indisponível → pular, seguir com o resultado do `wf-verify-multimodel`.
+- Timeout → marcar "skipped", seguir.
+- **O pipeline NUNCA trava por causa de modelo secundário.**
 
 ## Configurações padrão do autoresearch por etapa
 
@@ -233,30 +255,25 @@ Use o Edit tool para atualizar state.json. Custo: ~20 tokens por transição.
 
 ## DONE — registrar métricas
 
-Ao completar o pipeline:
-1. Marcar `status: "done"` no state.json
-2. Ler `files_modified` do counter file (`~/.claude/harness/.session-files-count`)
-3. Calcular `actual_level` baseado em files (0-1=L0, 2-3=L1, 4+=L2)
-4. Append entrada em `~/.claude/harness/signals.json` → array `tasks`
-5. Atualizar `aggregates`
+Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. Use o helper:
 
-### Template concreto para signals.json
+```bash
+# Pipeline concluído com sucesso
+python ~/.claude/plugins/local/harness/scripts/record_signal.py --completed \
+  --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec"
 
-Ler signals.json, adicionar ao array `tasks`, e recalcular `aggregates`:
-
-```json
-{
-  "task_id": "<copiar de state.json>",
-  "classification": "<copiar de state.json>",
-  "actual_level": "L0|L1|L2 (baseado em files: 0-1=L0, 2-3=L1, 4+=L2)",
-  "pipeline_completed": true,
-  "steps_executed": ["brainstorming", "write-a-prd", "..."],
-  "files_modified": 5,
-  "completed_at": "2026-04-03T12:00:00Z"
-}
+# Tarefa abandonada (troca de assunto / cancelamento)
+python ~/.claude/plugins/local/harness/scripts/record_signal.py --abandoned --reason "user_switch"
 ```
 
-Aggregates: incrementar `total_tasks` e o contador do level correspondente (`l0_count`, `l1_count`, `l2_count`). Recalcular `pipeline_completion_rate` = tasks com `pipeline_completed: true` / total.
+O script (idempotente por `task_id`):
+1. Lê `task_id`, `classification` e `classification_meta` do `state.json`
+2. Lê `files_modified` do counter e deriva `actual_level` (0-1=L0, 2-3=L1, 4+=L2)
+3. Acrescenta/atualiza a task em `signals.json` → array `tasks`
+4. Recalcula `aggregates`, incluindo o bloco `classify` (`avg_classify_accuracy`,
+   `regex_vs_semantic_agreement`, `human_override_count`) — fechando o loop de feedback
+
+Depois, marque `status: "done"` no `state.json` com `Edit`.
 
 ## Artefatos
 

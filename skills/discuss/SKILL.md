@@ -48,7 +48,7 @@ Escreva o arquivo com este formato:
 ```markdown
 # CONTEXT — [nome da feature/tarefa]
 
-> Gerado pela fase discuss do Harness v2. Este documento constraina todas as etapas downstream.
+> Gerado pela fase discuss do Harness v3. Este documento constraina todas as etapas downstream.
 
 ## Locked Decisions
 
