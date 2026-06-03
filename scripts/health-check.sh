@@ -126,6 +126,24 @@ if [[ "$STALE_CHECK" == stale:* ]]; then
 else
     echo "[OK]     No stale active tasks"
 fi
+echo ""
+
+echo "--- Plugin load (Claude Code) ---"
+# Plugin em disco != plugin CARREGADO. Sem o marketplace 'local' registrado, o
+# sufixo @local nao resolve e os hooks nunca disparam (falha silenciosa). Esta
+# checagem detecta isso — a lacuna que escondeu o plugin por todo o pos-format.
+if command -v claude >/dev/null 2>&1; then
+    if claude plugin list 2>/dev/null | grep -qa "harness4claude"; then
+        echo "[OK]     harness4claude carregado no Claude Code (marketplace local)"
+    else
+        echo "[FAIL]   harness4claude NAO carregado — hooks inativos. Corrija com:"
+        echo "         claude plugin marketplace add ~/.claude/plugins/local"
+        echo "         claude plugin install harness4claude@local   (e reinicie)"
+        EXIT_CODE=1
+    fi
+else
+    warn "claude CLI ausente no PATH — nao foi possivel verificar carga do plugin"
+fi
 
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
