@@ -172,7 +172,7 @@ A Anthropic lançou a **Advisor Strategy** um dia antes do Harness v3 ser implem
 ### Quando considerar incorporar Advisor Strategy
 **NÃO** refatorar pipelines atuais para incluir advisor step. **NÃO** criar skill `advisor` (confunde orchestration vs API primitive).
 
-**SIM** quando/se o Harness v3 migrar etapas para execução não-interativa via Agent SDK (scope futuro F6 do plano harness-v3-sdd). Nesse caso, habilitar `advisor_20260301` na chamada API faz sentido para que o executor Sonnet possa escalonar para Opus dentro da etapa sem round-trips extras. Benchmarks: Sonnet +2.7pp SWE-bench com -11.9% custo.
+**SIM** quando/se o Harness v3 migrar etapas para execução não-interativa via Agent SDK (scope futuro F6 do plano harness4claude). Nesse caso, habilitar `advisor_20260301` na chamada API faz sentido para que o executor Sonnet possa escalonar para Opus dentro da etapa sem round-trips extras. Benchmarks: Sonnet +2.7pp SWE-bench com -11.9% custo.
 
 **Referência completa:** `~/.claude/projects/C--Windows-System32/memory/reference_advisor_strategy.md`
 

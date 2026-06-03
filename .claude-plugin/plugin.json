@@ -1,16 +1,16 @@
 {
-  "name": "harness",
+  "name": "harness4claude",
   "version": "3.2.0",
   "description": "Spec-Driven Development orchestrator with L0/L1/L2 classification, structured pipelines, quality gates, and multi-model review. Classifies tasks by complexity, routes through SDD skills (write-spec, design-doc, verify-against-spec), and manages pipeline state.",
   "author": {
     "name": "Leonardo",
-    "url": "https://github.com/Lharden/harness-v3-sdd"
+    "url": "https://github.com/Lharden/harness4claude"
   },
-  "homepage": "https://github.com/Lharden/harness-v3-sdd",
-  "repository": "https://github.com/Lharden/harness-v3-sdd",
+  "homepage": "https://github.com/Lharden/harness4claude",
+  "repository": "https://github.com/Lharden/harness4claude",
   "license": "MIT",
   "keywords": [
-    "harness",
+    "harness4claude",
     "sdd",
     "spec-driven-development",
     "pipeline",
