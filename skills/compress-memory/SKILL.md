@@ -34,7 +34,7 @@ Skill utilitária que reduz tamanho de arquivos de memória secundários sem per
 ## Como rodar
 
 ```bash
-python ~/.claude/plugins/local/harness/skills/compress-memory/compress.py <arquivo>
+python ~/.claude/plugins/local/harness4claude/skills/compress-memory/compress.py <arquivo>
 # ou com opções:
 python compress.py recent.md --dry-run        # preview, não escreve
 python compress.py recent.md --no-backup      # pula backup (não recomendado)

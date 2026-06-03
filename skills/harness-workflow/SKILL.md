@@ -32,7 +32,7 @@ Para L0, NÃO ative — execute direto sem pipeline.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
 6. **Flexibilidade** — pular etapas se justificar (ex.: spec já existe, bug óbvio).
 7. **DONE** — marcar `status: done` e registrar a task executando:
-   `python ~/.claude/plugins/local/harness/scripts/record_signal.py --completed --steps "step1,step2,..."`
+   `python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed --steps "step1,step2,..."`
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
 
 ## Pipelines
@@ -79,7 +79,7 @@ Na fase mapeada para Workflow, chame a tool **Workflow** com o script e os `args
 
 ```
 Workflow({
-  scriptPath: "~/.claude/plugins/local/harness/scripts/workflows/wf-verify-multimodel.js",
+  scriptPath: "~/.claude/plugins/local/harness4claude/scripts/workflows/wf-verify-multimodel.js",
   args: { task_id, changed_files: [...], spec_path: "docs/specs/<slug>-spec.md", base_ref: "HEAD" }
 })
 ```
@@ -259,11 +259,11 @@ Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. U
 
 ```bash
 # Pipeline concluído com sucesso
-python ~/.claude/plugins/local/harness/scripts/record_signal.py --completed \
+python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed \
   --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec"
 
 # Tarefa abandonada (troca de assunto / cancelamento)
-python ~/.claude/plugins/local/harness/scripts/record_signal.py --abandoned --reason "user_switch"
+python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --abandoned --reason "user_switch"
 ```
 
 O script (idempotente por `task_id`):
