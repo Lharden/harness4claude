@@ -101,7 +101,7 @@ docs/specs/{feature-slug}-spec.md
 ```
 
 Onde `{feature-slug}` é um identificador kebab-case derivado do nome da
-feature (ex: `user-auth-oauth`, `payment-retry-logic`, `harness-v3-sdd`).
+feature (ex: `user-auth-oauth`, `payment-retry-logic`, `harness4claude`).
 
 Se o repositório não tiver o diretório `docs/specs/`, crie-o. Se a spec já
 existir, pergunte ao usuário se deve sobrescrever ou versionar

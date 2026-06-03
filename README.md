@@ -41,10 +41,10 @@ Add the plugin to your Claude Code `settings.json` under `extraKnownMarketplaces
 ```json
 {
   "extraKnownMarketplaces": {
-    "harness-v3-sdd": {
+    "harness4claude": {
       "source": {
         "source": "github",
-        "repo": "Lharden/harness-v3-sdd"
+        "repo": "Lharden/harness4claude"
       }
     }
   }
@@ -63,7 +63,7 @@ Verify the installation:
 /plugin list
 ```
 
-You should see `harness-v3-sdd` in the output with status `installed`.
+You should see `harness4claude` in the output with status `installed`.
 
 ---
 
@@ -79,7 +79,7 @@ On first launch, the `SessionStart` hook automatically:
 If anything goes wrong, run the diagnostic script:
 
 ```bash
-bash /path/to/harness-v3-sdd/scripts/health-check.sh
+bash /path/to/harness4claude/scripts/health-check.sh
 ```
 
 This reports the status of every dependency, file, and hook registration.
@@ -192,7 +192,7 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
 Run the full test suite:
 
 ```bash
-cd /path/to/harness-v3-sdd && python -m pytest tests/ -v
+cd /path/to/harness4claude && python -m pytest tests/ -v
 ```
 
 Tests cover:
