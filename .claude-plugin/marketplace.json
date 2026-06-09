@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "harness4claude",
+  "version": "3.2.0",
+  "description": "Harness v3 SDD — Spec-Driven Development orchestrator for Claude Code with L0/L1/L2 classification, structured pipelines, and quality gates.",
+  "owner": {
+    "name": "Leonardo",
+    "url": "https://github.com/Lharden"
+  },
+  "plugins": [
+    {
+      "name": "harness4claude",
+      "description": "Spec-Driven Development orchestrator with L0/L1/L2 classification, structured pipelines, quality gates. Routes prompts through SDD skills (write-spec, design-doc, verify-against-spec) and manages pipeline state.",
+      "version": "3.2.0",
+      "author": {
+        "name": "Leonardo",
+        "url": "https://github.com/Lharden/harness4claude"
+      },
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
