@@ -493,6 +493,53 @@ class TestClassify(HarnessTestBase):
         self.assertIn("adiciona suporte a webhooks", state["prompt_excerpt"])
         self.assertEqual(state["prompt_len"], len(prompt))
 
+    # --- Cenário 36: sumarizador na dead zone (~16KB) não cria task idle ---
+    def test_36_summarizer_preamble_never_creates_task_idle(self):
+        """Regressão t-20260612-155238: o prompt do sumarizador do remember
+        (~16KB) cai na dead zone entre MAX_SWITCH_LEN (1500) e MAX_CLASSIFY_LEN
+        (30000). Sem pipeline ativo ele passava o guard de comprimento e criava
+        task fantasma no state.json GLOBAL. A assinatura de automação deve barrá-lo
+        em qualquer tamanho."""
+        # setUp deixou fresh_state (task_id None, status None)
+        body = (
+            "read the conversation extract below and write one memory entry. "
+            "discutimos um bug com erro de falha no pipeline do sistema.\n"
+        )
+        summarizer = (
+            "You are summarizing a Claude Code session for a daily memory log.\n"
+            + body * 180
+        )
+        self.assertTrue(
+            1500 < len(summarizer) < 30000,
+            f"prompt deve cair na dead zone, tem {len(summarizer)} chars"
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": summarizer})
+        self.assertEqual(code, 0)
+        self.assertIsNone(
+            read_state()["task_id"],
+            "sumarizador não pode criar task (state global sobrescrito)"
+        )
+        self.assertNotIn("CLASSIFIED", out)
+
+    # --- Cenário 36b: sumarizador não toca pipeline ativo (independe do status) ---
+    def test_36b_summarizer_preamble_never_touches_active(self):
+        """O mesmo sumarizador (~16KB) com pipeline ATIVO: a assinatura sai antes
+        de qualquer leitura do state — task ativa intacta, sem CLASSIFIED e sem
+        CONTINUING (prompt de máquina não gera nenhuma saída do harness)."""
+        self._active_state("t-test-summ-active")
+        summarizer = (
+            "You are summarizing a Claude Code session for a daily memory log.\n"
+            + ("linha de log qualquer do extrato da conversa.\n" * 250)
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": summarizer})
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            read_state()["task_id"], "t-test-summ-active",
+            "sumarizador não pode tocar pipeline ativo"
+        )
+        self.assertNotIn("CLASSIFIED", out)
+        self.assertNotIn("CONTINUING", out)
+
 
 # ===========================================================================
 # RECLASSIFY TESTS (harness-reclassify.sh) — 4 cenários

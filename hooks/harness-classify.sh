@@ -86,11 +86,25 @@ state_file = os.environ["HARNESS_STATE_FILE"]
 counter_file = os.environ["HARNESS_COUNTER_FILE"]
 
 # ============================================================================
-# Guards anti-automação (incidente 2026-06-12, task fantasma t-20260612-034438)
+# Guard de automação por ASSINATURA (incidente 2026-06-12, t-20260612-155238)
 # ============================================================================
-# Sessões automatizadas (ex.: sumarizador headless do remember, que embute o
-# extrato da conversa inteira no prompt, ~160KB) disparam os mesmos hooks de
-# UserPromptSubmit e escrevem no MESMO state.json global. Dois limites:
+# Sessões headless (ex.: sumarizador do remember) começam com um preâmbulo
+# DETERMINÍSTICO que nenhum humano digita como tarefa. Esse prompt tem ~16KB e
+# caía na "dead zone" entre MAX_SWITCH_LEN (1500) e MAX_CLASSIFY_LEN (30000):
+# passava o guard de comprimento e, sem pipeline ativo, criava task fantasma no
+# state.json GLOBAL. Assinatura > comprimento: pega o sumarizador em QUALQUER
+# tamanho e sai ANTES de ler/escrever o state — nunca cria/toca task, independente
+# do status (msg já vem lowercased + NFKD-normalizado do extrator).
+AUTOMATION_SIGNATURES = (
+    "you are summarizing a claude code session",
+)
+if any(sig in msg for sig in AUTOMATION_SIGNATURES):
+    raise SystemExit(0)
+
+# ============================================================================
+# Guards anti-automação por COMPRIMENTO (incidente t-20260612-034438)
+# ============================================================================
+# Backstop para automações sem assinatura conhecida que colam blobs gigantes:
 # - MAX_CLASSIFY_LEN: acima disso é colagem/automação — nunca escrever state.
 # - MAX_SWITCH_LEN: derrubar pipeline ativo exige comando humano CURTO.
 MAX_CLASSIFY_LEN = 30000
