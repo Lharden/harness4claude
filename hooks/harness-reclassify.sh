@@ -51,13 +51,20 @@ counter_file = os.path.join(harness_dir, '.session-files-count')
 file_path = os.environ['HARNESS_FILE_PATH']
 
 # Read state
+# Contrato PostToolUse: este hook só consome tool_input.file_path (contagem).
+# Conteúdo de tool (tool_input.content / tool_response) NUNCA é classificado —
+# texto de tool não é prompt (incidente 2026-06-12, t-20260612-034438).
 state_task_id = ''
 state_class = ''
+state_status = ''
+meta_agreed = None
 try:
     with open(state_file, encoding='utf-8') as f:
         state = json.load(f)
     state_task_id = state.get('task_id') or ''
     state_class = state.get('classification') or ''
+    state_status = state.get('status') or ''
+    meta_agreed = (state.get('classification_meta') or {}).get('agreed')
 except Exception:
     pass
 
@@ -78,8 +85,12 @@ if file_path not in counter['files']:
 with open(counter_file, 'w', encoding='utf-8') as f:
     json.dump(counter, f, indent=2)
 
-# Reclassify if L0 and 3+ files
-if counter['count'] >= 3 and state_class.startswith('L0'):
+# Reclassify if L0 and 3+ files.
+# Travas (PostToolUse jamais cria task nova — task_id é sempre preservado):
+# - status=active: pipeline em andamento é intocável
+# - agreed=True: classificação confirmada semanticamente está travada
+if (counter['count'] >= 3 and state_class.startswith('L0')
+        and state_status != 'active' and meta_agreed is not True):
     try:
         with open(state_file, encoding='utf-8') as f:
             state = json.load(f)

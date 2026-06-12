@@ -32,8 +32,9 @@ Para L0, NÃO ative — execute direto sem pipeline.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
 6. **Flexibilidade** — pular etapas se justificar (ex.: spec já existe, bug óbvio).
 7. **DONE** — marcar `status: done` e registrar a task executando:
-   `python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed --steps "step1,step2,..."`
+   `python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed --steps "step1,step2,..." --expect-task "<task_id>"`
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
+   **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma — nesse caso, restaure o state da sua task antes de registrar.
 
 ## Pipelines
 
@@ -258,9 +259,11 @@ Use o Edit tool para atualizar state.json. Custo: ~20 tokens por transição.
 Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. Use o helper:
 
 ```bash
-# Pipeline concluído com sucesso
+# Pipeline concluído com sucesso (--expect-task = task_id do INÍCIO do pipeline;
+# aborta com exit 2 se o state global foi trocado por outra sessão no meio)
 python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed \
-  --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec"
+  --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec" \
+  --expect-task "t-20260612-033900"
 
 # Tarefa abandonada (troca de assunto / cancelamento)
 python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --abandoned --reason "user_switch"

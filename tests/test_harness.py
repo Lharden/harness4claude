@@ -9,10 +9,10 @@ Uso:
     python test_harness.py -v           # verbose
     python test_harness.py -k classify  # só testes de classificação
 
-20 cenários de falha mapeados, organizados por hook:
-  - harness-classify.sh:    10 cenários
-  - harness-reclassify.sh:   4 cenários
-  - harness-git-guard.sh:    4 cenários
+Cenários de falha mapeados, organizados por hook:
+  - harness-classify.sh:    17 cenários (10 base + machine-prompt guards)
+  - harness-reclassify.sh:  11 cenários (contagem, promoção, travas de state)
+  - harness-git-guard.sh:    7 cenários
   - harness-precompact.sh:   2 cenários
 """
 
@@ -369,6 +369,124 @@ class TestClassify(HarnessTestBase):
         self.assertTrue(state["task_id"].startswith("t-"), "task_id deve começar com 't-'")
         self.assertIsInstance(state["pipeline"], list)
         self.assertIsInstance(state["artifacts_so_far"], list)
+
+    # ------------------------------------------------------------------
+    # Cenários 31-35: guards contra prompts de máquina
+    # Incidente 2026-06-12 (t-20260612-034438): a sessão headless do
+    # remember (sumarizador de daily log) envia um prompt gigante embutindo
+    # o extrato da conversa. Frases do extrato ("outra coisa") casavam
+    # SWITCH_PATTERNS por substring e keywords ("bug", "erro", "falha",
+    # "pipeline") classificavam L2-bug — sobrescrevendo a task ativa
+    # t-20260612-033900 de outra sessão no state.json global.
+    # ------------------------------------------------------------------
+
+    def _active_state(self, task_id: str) -> None:
+        """Configura um pipeline L1-feature ativo (como no incidente)."""
+        write_state({
+            "task_id": task_id,
+            "schema_version": 3,
+            "classification": "L1-feature",
+            "classification_meta": {
+                "suggested": "L1-feature",
+                "final": "L1-feature",
+                "source": "semantic",
+                "confidence": 0.9,
+                "agreed": True,
+            },
+            "status": "active",
+            "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
+            "current_step": "tdd",
+            "artifacts_so_far": [],
+            "started_at": "2026-06-12T03:39:00+00:00",
+        })
+        write_counter({"count": 2, "files": ["C:/a.py", "C:/b.py"], "task_id": task_id})
+
+    # --- Cenário 31: prompt gigante de automação não toca o state ---
+    def test_31_machine_prompt_never_touches_state(self):
+        """Reprodução fiel do incidente: prompt ~160KB com switch words e
+        keywords de bug, pipeline ativo → state intocado, sem classificação."""
+        self._active_state("t-test-incident")
+        filler = (
+            "discutimos um bug com erro de falha no pipeline do sistema. "
+            "ou seguimos para outra coisa?\n"
+        )
+        huge = (
+            "You are summarizing a Claude Code session for a daily memory log.\n"
+            + filler * 1800  # ~160KB, como o prompt real do remember
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": huge})
+        self.assertEqual(code, 0)
+        state = read_state()
+        self.assertEqual(
+            state["task_id"], "t-test-incident",
+            "prompt de máquina sobrescreveu task ativa (incidente t-20260612-034438)"
+        )
+        self.assertEqual(state["classification"], "L1-feature")
+        self.assertEqual(state["current_step"], "tdd")
+        self.assertNotIn("CLASSIFIED", out, "prompt de máquina não pode gerar classificação")
+        # counter da task ativa também não pode ser resetado
+        self.assertEqual(read_counter()["task_id"], "t-test-incident")
+
+    # --- Cenário 31b: prompt médio com switch substring não mata pipeline ---
+    def test_31b_medium_prompt_with_switch_words_continues(self):
+        """Prompt de alguns KB contendo 'outra coisa' não é comando humano de
+        troca de tarefa — pipeline ativo deve emitir CONTINUING."""
+        self._active_state("t-test-medium")
+        msg = (
+            "segue o log da conversa para resumo: o usuário perguntou sobre o "
+            "deploy e disse: vamos ver outra coisa depois. houve um erro 40012 "
+            "e uma FALHA no teste do pipeline.\n"
+        ) * 30  # ~5KB — acima do limite de switch, abaixo do limite de classify
+        code, out, _ = run_hook(self.HOOK, {"prompt": msg})
+        self.assertEqual(code, 0)
+        self.assert_continuation(out)
+        self.assertEqual(read_state()["task_id"], "t-test-medium")
+
+    # --- Cenário 32: switch patterns exigem word boundary ---
+    def test_32_switch_requires_word_boundary(self):
+        """'cancelamento' contém 'cancela' mas não é troca de tarefa."""
+        self._active_state("t-test-wb")
+        code, out, _ = run_hook(self.HOOK, {
+            "user_prompt": "o cancelamento do pedido esta retornando 500"
+        })
+        self.assertEqual(code, 0)
+        self.assert_continuation(out)
+        self.assertEqual(
+            read_state()["task_id"], "t-test-wb",
+            "substring de switch word não pode derrubar pipeline ativo"
+        )
+
+    # --- Cenário 33: switch explícito curto continua funcionando ---
+    def test_33_short_explicit_switch_still_works(self):
+        """Comando humano curto de troca de tarefa deve criar task nova."""
+        self._active_state("t-test-switch")
+        code, out, _ = run_hook(self.HOOK, {
+            "user_prompt": "esquece isso, muda de assunto: otimiza o cache do parser"
+        })
+        self.assertEqual(code, 0)
+        self.assert_classified(out)
+        self.assertNotEqual(read_state()["task_id"], "t-test-switch")
+
+    # --- Cenário 34: prompt gigante não cria task nem quando idle ---
+    def test_34_huge_prompt_never_creates_task_when_idle(self):
+        """Sem pipeline ativo, prompt acima do limite também não vira task."""
+        # setUp deixou fresh_state (task_id None, status None)
+        huge = "corrige o bug do modulo de pagamentos agora mesmo. " * 800  # ~40KB
+        code, out, _ = run_hook(self.HOOK, {"prompt": huge})
+        self.assertEqual(code, 0)
+        self.assertIsNone(read_state()["task_id"], "prompt gigante não deve criar task")
+        self.assertNotIn("CLASSIFIED", out)
+
+    # --- Cenário 35: state cacheia o prompt que originou a task ---
+    def test_35_state_caches_prompt_excerpt(self):
+        """O prompt original fica auditável no state (prompt_excerpt/prompt_len).
+        Qualquer reclassificação futura usa este cache — nunca tool output."""
+        prompt = "adiciona suporte a webhooks no servico de notificacoes"
+        run_hook(self.HOOK, {"user_prompt": prompt})
+        state = read_state()
+        self.assertIn("prompt_excerpt", state)
+        self.assertIn("adiciona suporte a webhooks", state["prompt_excerpt"])
+        self.assertEqual(state["prompt_len"], len(prompt))
 
 
 # ===========================================================================
@@ -753,6 +871,108 @@ class TestReclassify(HarnessTestBase):
             "tool_input": {},
         })
         self.assertEqual(code, 0)
+
+    # ------------------------------------------------------------------
+    # Cenários 19b-19f: travas de state em PostToolUse
+    # Incidente 2026-06-12: garantir que NENHUM caminho de PostToolUse
+    # cria task nova, classifica tool output ou mexe em pipeline ativo.
+    # ------------------------------------------------------------------
+
+    # --- Cenário 19b: promoção preserva task_id ---
+    def test_19b_reclassify_preserves_task_id(self):
+        """PostToolUse nunca cria task nova — task_id é imutável aqui."""
+        self._setup_l0_state()
+        files = ["C:/p/a.py", "C:/p/b.py", "C:/p/c.py", "C:/p/d.py"]
+        for f in files:
+            run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
+        state = read_state()
+        self.assertEqual(state["task_id"], "t-test-reclass",
+                         "promoção L0→L1 deve manter a MESMA task")
+        self.assertTrue(state["classification"].startswith("L1"))
+
+    # --- Cenário 19c: tool output jamais é classificado ---
+    def test_19c_reclassify_ignores_tool_output_text(self):
+        """Conteúdo de Write/Edit (ex.: script com 'FALHA', 'erro 40012') não
+        pode ser tratado como prompt: o type da task vem do prompt original."""
+        self._setup_l0_state()
+        payload = "raise RuntimeError('FALHA: erro 40012 - bug critico no sistema')"
+        files = ["C:/p/x.py", "C:/p/y.py", "C:/p/z.py"]
+        for f in files:
+            run_hook(self.HOOK, {
+                "tool_name": "Write",
+                "tool_input": {"file_path": f, "content": payload},
+                "tool_response": {"type": "text", "text": payload},
+            })
+        state = read_state()
+        self.assertEqual(
+            state["classification"], "L1-feature",
+            "type não pode ser re-derivado de tool output (seria 'bug')"
+        )
+        self.assertEqual(state["task_id"], "t-test-reclass")
+
+    # --- Cenário 19d: agreed=True trava a classificação ---
+    def test_19d_reclassify_respects_agreed_lock(self):
+        """Classificação confirmada semanticamente (agreed=true) é imutável."""
+        write_state({
+            "task_id": "t-test-locked",
+            "schema_version": 3,
+            "classification": "L0-feature",
+            "classification_meta": {
+                "suggested": "L0-feature",
+                "final": "L0-feature",
+                "source": "semantic",
+                "confidence": 0.95,
+                "agreed": True,
+            },
+            "status": "done",
+            "pipeline": [],
+            "current_step": None,
+            "artifacts_so_far": [],
+            "started_at": "2026-01-01T00:00:00Z",
+        })
+        write_counter({"count": 0, "files": [], "task_id": "t-test-locked"})
+        for f in ["C:/p/m.py", "C:/p/n.py", "C:/p/o.py"]:
+            run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
+        state = read_state()
+        self.assertEqual(state["classification"], "L0-feature",
+                         "agreed=true deve travar reclassificação (não reabrir)")
+        self.assertEqual(state["classification_meta"]["final"], "L0-feature")
+
+    def _assert_untouched_when_active(self, classification: str) -> None:
+        """Helper: com status=active, reclassify não altera NADA do state."""
+        original = {
+            "task_id": "t-test-act",
+            "schema_version": 3,
+            "classification": classification,
+            "classification_meta": {
+                "suggested": classification,
+                "final": None,
+                "source": "regex",
+                "confidence": None,
+                "agreed": None,
+            },
+            "status": "active",
+            "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
+            "current_step": "tdd",
+            "artifacts_so_far": ["docs/specs/x-spec-light.md"],
+            "started_at": "2026-06-12T03:39:00+00:00",
+        }
+        write_state(original)
+        write_counter({"count": 0, "files": [], "task_id": "t-test-act"})
+        for f in ["C:/p/q.py", "C:/p/r.py", "C:/p/s.py", "C:/p/t.py"]:
+            run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
+        state = read_state()
+        self.assertEqual(state, original,
+                         f"status=active deve ser intocável (classification={classification})")
+
+    # --- Cenário 19e: pipeline L1 ativo é intocável ---
+    def test_19e_reclassify_never_touches_active_pipeline(self):
+        self._assert_untouched_when_active("L1-feature")
+
+    # --- Cenário 19f: até L0 anômalo com status=active é intocável ---
+    def test_19f_reclassify_never_promotes_active_l0(self):
+        """Estado anômalo (L0 + active) não pode ser promovido em PostToolUse."""
+        self._assert_untouched_when_active("L0-feature")
 
 
 # ===========================================================================
