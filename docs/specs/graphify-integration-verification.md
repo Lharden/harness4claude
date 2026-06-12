@@ -9,7 +9,7 @@
 | AC1 hook PreToolUse ativo | ✅ VERIFICADO (2026-06-12) | graphifyy 0.8.38 instalado pelo usuário via setup-graphify.sh; skill /graphify registrada; CLAUDE.md +3 linhas (trigger); hook em `.claude/settings.json` DO PROJETO (por-repo — setup rodado com cwd no plugin) |
 | AC2 graph-context lê grafo | ✅ VERIFICADO (2026-06-12) | Grafo gerado: 1018 nós/1209 arestas/88 comunidades (`graphify update` + `cluster-only --no-label`, AST-only). Query real validada: `graphify query "state.json"` → BFS depth=2, 10 nós, arestas calls/rationale_for com arquivo:linha |
 | AC3 fallback sem grafo | ✅ POR DESIGN | Protocolo passo 3 + regra NEVER ("nunca bloquear pipeline"); fallback `wf-context-scan` já validado pelo health-check ("Workflows validam (node)") |
-| AC4 export no vault | 🟡 PARCIAL | Convenção pronta: `AI-Brain/wiki/graphs/index.md` criado, linkado em `wiki/index.md` (anti-órfão), vault-bridge com tabela+seção. Export real bloqueado por AC1 |
+| AC4 export no vault | ✅ VERIFICADO (2026-06-12) | `/graphify --obsidian` executado: **1080 notas** em `AI-Brain/wiki/graphs/harness4claude/`; grafo final 775 nós/1041 arestas/62 comunidades rotuladas (AST + semântica via 2 subagents, ~207k tokens); indexado em `wiki/graphs/index.md` |
 | AC5 health-check WARN-only | ✅ VERIFICADO | Output real 2026-06-12: `[WARN] graphify ausente (opcional)` + `=== All checks passed ===` (exit 0) |
 | AC6 pytest sem regressão | ✅ VERIFICADO | `124 passed in 112.92s` (suite completa do plugin) |
 
