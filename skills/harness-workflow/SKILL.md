@@ -63,7 +63,7 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 | (classificação) | inline | confirmar semanticamente (Protocolo, passo 2) |
 | `discuss` | skill | `Skill(skill="discuss")` → `docs/CONTEXT.md` |
 | `brainstorming` | skill | `Skill(skill="superpowers:brainstorming")` |
-| (contexto, L2-arch) | **Workflow** | `wf-context-scan` (fan-out de exploração) — opcional |
+| (contexto, L2) | skill | `Skill(skill="graph-context")` — knowledge graph (graphify) primeiro; fallback `wf-context-scan` |
 | `write-spec` / `write-spec-light` | skill | `Skill(skill="write-spec[-light]")` |
 | `grill-me` | skill (humano-no-loop) | `Skill(skill="grill-me")` — adversarial, sem limite |
 | `design-doc` | skill | `Skill(skill="design-doc")` |

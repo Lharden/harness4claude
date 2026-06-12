@@ -30,3 +30,4 @@ desktop.ini
 # Local plugin state
 *.local.md
 .bootstrap-done
+graphify-out/
