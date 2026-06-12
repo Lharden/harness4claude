@@ -81,3 +81,45 @@ def test_record_updates_accuracy(rec, tmp_path):
             "classification_meta": {"agreed": True, "source": "regex"}}
     out = rec.record(tmp_path, task)
     assert out["aggregates"]["classify"]["avg_classify_accuracy"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# --expect-task: proteção contra state.json sobrescrito por sessão paralela.
+# Incidente 2026-06-12: o workflow fechou a task t-20260612-033900, mas o
+# state global já tinha sido trocado pela task fantasma t-20260612-034438
+# (criada pela sessão headless do remember) — e o signal foi gravado errado.
+# ---------------------------------------------------------------------------
+
+def _setup_harness_dir(tmp_path, task_id: str) -> None:
+    (tmp_path / "state.json").write_text(json.dumps({
+        "task_id": task_id,
+        "classification": "L1-feature",
+        "classification_meta": {"suggested": "L1-feature", "final": "L1-feature",
+                                "source": "semantic", "agreed": True},
+    }), encoding="utf-8")
+    (tmp_path / ".session-files-count").write_text(
+        json.dumps({"count": 2, "files": ["a.py", "b.py"], "task_id": task_id}),
+        encoding="utf-8")
+
+
+def test_main_expect_task_match_records(rec, tmp_path, monkeypatch):
+    _setup_harness_dir(tmp_path, "t-real")
+    monkeypatch.setattr(sys, "argv", [
+        "record_signal.py", "--harness-dir", str(tmp_path),
+        "--completed", "--steps", "tdd", "--expect-task", "t-real",
+    ])
+    assert rec.main() == 0
+    out = json.loads((tmp_path / "signals.json").read_text(encoding="utf-8"))
+    assert [t["task_id"] for t in out["tasks"]] == ["t-real"]
+
+
+def test_main_expect_task_mismatch_aborts(rec, tmp_path, monkeypatch):
+    """State com task diferente da esperada → não grava nada, exit 2."""
+    _setup_harness_dir(tmp_path, "t-fantasma")
+    monkeypatch.setattr(sys, "argv", [
+        "record_signal.py", "--harness-dir", str(tmp_path),
+        "--completed", "--expect-task", "t-real",
+    ])
+    assert rec.main() == 2
+    assert not (tmp_path / "signals.json").exists(), \
+        "mismatch de task_id não pode gravar signal (task fantasma)"

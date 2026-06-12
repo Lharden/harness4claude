@@ -221,6 +221,20 @@ python -m pytest tests/ -v --cov=hooks --cov=scripts --cov-report=term-missing
 
 These ship alongside the SDD pipeline and are independently useful:
 
+### `scripts/diagnose_ollama.py` — Ollama smoke-test
+
+End-to-end check of the local Ollama stack used by the Obsidian vault tooling
+(Text Generator via native `/api/generate`, karpathywiki via OpenAI-compat
+`/v1/chat/...`): server up, model present, CORS for `app://obsidian.md`,
+structured-extraction quality and rough tokens/s. Exit 0 = all good.
+
+```bash
+python scripts/diagnose_ollama.py [--model qwen3.5:9b]
+```
+
+> Discovered as an orphan by the knowledge graph (nothing referenced it) —
+> this section is the missing edge.
+
 ### `compress-memory` skill
 
 Safe compression for secondary memory files (recent.md, archive.md, today-*.md).

@@ -10,8 +10,13 @@ regex-suggested vs semantica-final) — via migrate_state.recompute_aggregates.
 Usado pelo harness-workflow no passo DONE.
 
 Uso:
-    python record_signal.py --completed --steps "discuss,write-spec,tdd"
+    python record_signal.py --completed --steps "discuss,write-spec,tdd" --expect-task t-XXXXXXXX-XXXXXX
     python record_signal.py --abandoned --reason "user_switch"
+
+--expect-task protege contra state.json sobrescrito por sessão paralela
+(incidente 2026-06-12: task fantasma t-20260612-034438 registrada no lugar
+da task real porque o state global tinha sido trocado entre o início do
+pipeline e o DONE). Com mismatch, nada é gravado e o exit code é 2.
 """
 
 from __future__ import annotations
@@ -97,10 +102,25 @@ def main() -> int:
     group.add_argument("--abandoned", action="store_true", help="task abandonada")
     parser.add_argument("--steps", default="", help="steps executados (CSV)")
     parser.add_argument("--reason", default=None, help="motivo do abandono")
+    parser.add_argument(
+        "--expect-task",
+        default=None,
+        metavar="TASK_ID",
+        help="task_id esperado; aborta sem gravar se o state.json contiver outro "
+        "(proteção contra state sobrescrito por sessão paralela)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     state = load_json(args.harness_dir / "state.json")
+    if args.expect_task and (state or {}).get("task_id") != args.expect_task:
+        logger.error(
+            "state.json contem task %s, esperado %s — nada registrado "
+            "(state sobrescrito por outra sessao?)",
+            (state or {}).get("task_id"),
+            args.expect_task,
+        )
+        return 2
     counter = load_json(args.harness_dir / ".session-files-count")
     steps = [s.strip() for s in args.steps.split(",") if s.strip()]
     completed = not args.abandoned

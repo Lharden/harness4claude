@@ -86,13 +86,47 @@ state_file = os.environ["HARNESS_STATE_FILE"]
 counter_file = os.environ["HARNESS_COUNTER_FILE"]
 
 # ============================================================================
+# Guard de automação por ASSINATURA (incidente 2026-06-12, t-20260612-155238)
+# ============================================================================
+# Sessões headless (ex.: sumarizador do remember) começam com um preâmbulo
+# DETERMINÍSTICO que nenhum humano digita como tarefa. Esse prompt tem ~16KB e
+# caía na "dead zone" entre MAX_SWITCH_LEN (1500) e MAX_CLASSIFY_LEN (30000):
+# passava o guard de comprimento e, sem pipeline ativo, criava task fantasma no
+# state.json GLOBAL. Assinatura > comprimento: pega o sumarizador em QUALQUER
+# tamanho e sai ANTES de ler/escrever o state — nunca cria/toca task, independente
+# do status (msg já vem lowercased + NFKD-normalizado do extrator).
+AUTOMATION_SIGNATURES = (
+    "you are summarizing a claude code session",
+)
+if any(sig in msg for sig in AUTOMATION_SIGNATURES):
+    raise SystemExit(0)
+
+# ============================================================================
+# Guards anti-automação por COMPRIMENTO (incidente t-20260612-034438)
+# ============================================================================
+# Backstop para automações sem assinatura conhecida que colam blobs gigantes:
+# - MAX_CLASSIFY_LEN: acima disso é colagem/automação — nunca escrever state.
+# - MAX_SWITCH_LEN: derrubar pipeline ativo exige comando humano CURTO.
+MAX_CLASSIFY_LEN = 30000
+MAX_SWITCH_LEN = 1500
+
+if len(msg) > MAX_CLASSIFY_LEN:
+    raise SystemExit(0)
+
+# ============================================================================
 # Task-switch detection
 # ============================================================================
+# \b obrigatório: 'cancela' sem boundary casava 'cancelamento'; num extrato
+# de conversa qualquer frase aparece ('ou seguimos para outra coisa?').
 SWITCH_PATTERNS = (
-    r'nova tarefa|new task|cancela|outra coisa|switch to|esquece isso|'
-    r'deixa pra la|nevermind|forget that|muda de assunto'
+    r'\bnova tarefa\b|\bnew task\b|\bcancela\b|\bcancele\b|\boutra coisa\b|'
+    r'\bswitch to\b|\besquece isso\b|\bdeixa pra la\b|\bnevermind\b|'
+    r'\bforget that\b|\bmuda de assunto\b|\bmudar de assunto\b'
 )
-is_task_switch = bool(re.search(SWITCH_PATTERNS, msg, re.IGNORECASE))
+is_task_switch = (
+    len(msg) <= MAX_SWITCH_LEN
+    and bool(re.search(SWITCH_PATTERNS, msg, re.IGNORECASE))
+)
 
 # ============================================================================
 # Check active pipeline in state.json
@@ -306,6 +340,10 @@ new_state = {
     "current_step": None,
     "artifacts_so_far": [],
     "started_at": started_at,
+    # Cache do prompt (normalizado) que originou a classificação — fonte única
+    # legítima para auditoria e reclassificação. Tool output JAMAIS entra aqui.
+    "prompt_len": len(msg),
+    "prompt_excerpt": msg[:300],
 }
 
 with open(state_file, "w", encoding="utf-8") as f:

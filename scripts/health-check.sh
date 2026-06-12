@@ -42,6 +42,11 @@ check "python"           "command -v python"
 check "pytest"           "python -m pytest --version"
 check "ruff"             "command -v ruff"
 check "pyright"          "command -v pyright"
+if command -v graphify >/dev/null 2>&1; then
+    echo "[OK]     graphify (knowledge graph CLI)"
+else
+    warn "graphify ausente (opcional) — instalar: bash $PLUGIN_DIR/scripts/setup-graphify.sh"
+fi
 echo ""
 
 echo "--- Harness state ---"

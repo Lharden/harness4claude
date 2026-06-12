@@ -9,10 +9,10 @@ Uso:
     python test_harness.py -v           # verbose
     python test_harness.py -k classify  # só testes de classificação
 
-20 cenários de falha mapeados, organizados por hook:
-  - harness-classify.sh:    10 cenários
-  - harness-reclassify.sh:   4 cenários
-  - harness-git-guard.sh:    4 cenários
+Cenários de falha mapeados, organizados por hook:
+  - harness-classify.sh:    17 cenários (10 base + machine-prompt guards)
+  - harness-reclassify.sh:  11 cenários (contagem, promoção, travas de state)
+  - harness-git-guard.sh:    7 cenários
   - harness-precompact.sh:   2 cenários
 """
 
@@ -22,7 +22,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 # ---------------------------------------------------------------------------
@@ -52,7 +51,13 @@ BASH: str = _bash_path
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def run_hook(hook_name: str, stdin_data: dict, *, timeout: int = 15) -> tuple[int, str, str]:
+def run_hook(
+    hook_name: str,
+    stdin_data: dict,
+    *,
+    timeout: int = 15,
+    env_extra: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Executa um hook com JSON no stdin. Retorna (exit_code, stdout, stderr)."""
     hook_path = os.path.join(HOOKS_DIR, hook_name)
     proc = subprocess.run(
@@ -61,7 +66,7 @@ def run_hook(hook_name: str, stdin_data: dict, *, timeout: int = 15) -> tuple[in
         capture_output=True,
         text=True,
         timeout=timeout,
-        env={**os.environ, "PYTHONUTF8": "1"},
+        env={**os.environ, "PYTHONUTF8": "1", **(env_extra or {})},
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -369,6 +374,171 @@ class TestClassify(HarnessTestBase):
         self.assertTrue(state["task_id"].startswith("t-"), "task_id deve começar com 't-'")
         self.assertIsInstance(state["pipeline"], list)
         self.assertIsInstance(state["artifacts_so_far"], list)
+
+    # ------------------------------------------------------------------
+    # Cenários 31-35: guards contra prompts de máquina
+    # Incidente 2026-06-12 (t-20260612-034438): a sessão headless do
+    # remember (sumarizador de daily log) envia um prompt gigante embutindo
+    # o extrato da conversa. Frases do extrato ("outra coisa") casavam
+    # SWITCH_PATTERNS por substring e keywords ("bug", "erro", "falha",
+    # "pipeline") classificavam L2-bug — sobrescrevendo a task ativa
+    # t-20260612-033900 de outra sessão no state.json global.
+    # ------------------------------------------------------------------
+
+    def _active_state(self, task_id: str) -> None:
+        """Configura um pipeline L1-feature ativo (como no incidente)."""
+        write_state({
+            "task_id": task_id,
+            "schema_version": 3,
+            "classification": "L1-feature",
+            "classification_meta": {
+                "suggested": "L1-feature",
+                "final": "L1-feature",
+                "source": "semantic",
+                "confidence": 0.9,
+                "agreed": True,
+            },
+            "status": "active",
+            "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
+            "current_step": "tdd",
+            "artifacts_so_far": [],
+            "started_at": "2026-06-12T03:39:00+00:00",
+        })
+        write_counter({"count": 2, "files": ["C:/a.py", "C:/b.py"], "task_id": task_id})
+
+    # --- Cenário 31: prompt gigante de automação não toca o state ---
+    def test_31_machine_prompt_never_touches_state(self):
+        """Reprodução fiel do incidente: prompt ~160KB com switch words e
+        keywords de bug, pipeline ativo → state intocado, sem classificação."""
+        self._active_state("t-test-incident")
+        filler = (
+            "discutimos um bug com erro de falha no pipeline do sistema. "
+            "ou seguimos para outra coisa?\n"
+        )
+        huge = (
+            "You are summarizing a Claude Code session for a daily memory log.\n"
+            + filler * 1800  # ~160KB, como o prompt real do remember
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": huge})
+        self.assertEqual(code, 0)
+        state = read_state()
+        self.assertEqual(
+            state["task_id"], "t-test-incident",
+            "prompt de máquina sobrescreveu task ativa (incidente t-20260612-034438)"
+        )
+        self.assertEqual(state["classification"], "L1-feature")
+        self.assertEqual(state["current_step"], "tdd")
+        self.assertNotIn("CLASSIFIED", out, "prompt de máquina não pode gerar classificação")
+        # counter da task ativa também não pode ser resetado
+        self.assertEqual(read_counter()["task_id"], "t-test-incident")
+
+    # --- Cenário 31b: prompt médio com switch substring não mata pipeline ---
+    def test_31b_medium_prompt_with_switch_words_continues(self):
+        """Prompt de alguns KB contendo 'outra coisa' não é comando humano de
+        troca de tarefa — pipeline ativo deve emitir CONTINUING."""
+        self._active_state("t-test-medium")
+        msg = (
+            "segue o log da conversa para resumo: o usuário perguntou sobre o "
+            "deploy e disse: vamos ver outra coisa depois. houve um erro 40012 "
+            "e uma FALHA no teste do pipeline.\n"
+        ) * 30  # ~5KB — acima do limite de switch, abaixo do limite de classify
+        code, out, _ = run_hook(self.HOOK, {"prompt": msg})
+        self.assertEqual(code, 0)
+        self.assert_continuation(out)
+        self.assertEqual(read_state()["task_id"], "t-test-medium")
+
+    # --- Cenário 32: switch patterns exigem word boundary ---
+    def test_32_switch_requires_word_boundary(self):
+        """'cancelamento' contém 'cancela' mas não é troca de tarefa."""
+        self._active_state("t-test-wb")
+        code, out, _ = run_hook(self.HOOK, {
+            "user_prompt": "o cancelamento do pedido esta retornando 500"
+        })
+        self.assertEqual(code, 0)
+        self.assert_continuation(out)
+        self.assertEqual(
+            read_state()["task_id"], "t-test-wb",
+            "substring de switch word não pode derrubar pipeline ativo"
+        )
+
+    # --- Cenário 33: switch explícito curto continua funcionando ---
+    def test_33_short_explicit_switch_still_works(self):
+        """Comando humano curto de troca de tarefa deve criar task nova."""
+        self._active_state("t-test-switch")
+        code, out, _ = run_hook(self.HOOK, {
+            "user_prompt": "esquece isso, muda de assunto: otimiza o cache do parser"
+        })
+        self.assertEqual(code, 0)
+        self.assert_classified(out)
+        self.assertNotEqual(read_state()["task_id"], "t-test-switch")
+
+    # --- Cenário 34: prompt gigante não cria task nem quando idle ---
+    def test_34_huge_prompt_never_creates_task_when_idle(self):
+        """Sem pipeline ativo, prompt acima do limite também não vira task."""
+        # setUp deixou fresh_state (task_id None, status None)
+        huge = "corrige o bug do modulo de pagamentos agora mesmo. " * 800  # ~40KB
+        code, out, _ = run_hook(self.HOOK, {"prompt": huge})
+        self.assertEqual(code, 0)
+        self.assertIsNone(read_state()["task_id"], "prompt gigante não deve criar task")
+        self.assertNotIn("CLASSIFIED", out)
+
+    # --- Cenário 35: state cacheia o prompt que originou a task ---
+    def test_35_state_caches_prompt_excerpt(self):
+        """O prompt original fica auditável no state (prompt_excerpt/prompt_len).
+        Qualquer reclassificação futura usa este cache — nunca tool output."""
+        prompt = "adiciona suporte a webhooks no servico de notificacoes"
+        run_hook(self.HOOK, {"user_prompt": prompt})
+        state = read_state()
+        self.assertIn("prompt_excerpt", state)
+        self.assertIn("adiciona suporte a webhooks", state["prompt_excerpt"])
+        self.assertEqual(state["prompt_len"], len(prompt))
+
+    # --- Cenário 36: sumarizador na dead zone (~16KB) não cria task idle ---
+    def test_36_summarizer_preamble_never_creates_task_idle(self):
+        """Regressão t-20260612-155238: o prompt do sumarizador do remember
+        (~16KB) cai na dead zone entre MAX_SWITCH_LEN (1500) e MAX_CLASSIFY_LEN
+        (30000). Sem pipeline ativo ele passava o guard de comprimento e criava
+        task fantasma no state.json GLOBAL. A assinatura de automação deve barrá-lo
+        em qualquer tamanho."""
+        # setUp deixou fresh_state (task_id None, status None)
+        body = (
+            "read the conversation extract below and write one memory entry. "
+            "discutimos um bug com erro de falha no pipeline do sistema.\n"
+        )
+        summarizer = (
+            "You are summarizing a Claude Code session for a daily memory log.\n"
+            + body * 180
+        )
+        self.assertTrue(
+            1500 < len(summarizer) < 30000,
+            f"prompt deve cair na dead zone, tem {len(summarizer)} chars"
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": summarizer})
+        self.assertEqual(code, 0)
+        self.assertIsNone(
+            read_state()["task_id"],
+            "sumarizador não pode criar task (state global sobrescrito)"
+        )
+        self.assertNotIn("CLASSIFIED", out)
+
+    # --- Cenário 36b: sumarizador não toca pipeline ativo (independe do status) ---
+    def test_36b_summarizer_preamble_never_touches_active(self):
+        """O mesmo sumarizador (~16KB) com pipeline ATIVO: a assinatura sai antes
+        de qualquer leitura do state — task ativa intacta, sem CLASSIFIED e sem
+        CONTINUING (prompt de máquina não gera nenhuma saída do harness)."""
+        self._active_state("t-test-summ-active")
+        summarizer = (
+            "You are summarizing a Claude Code session for a daily memory log.\n"
+            + ("linha de log qualquer do extrato da conversa.\n" * 250)
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": summarizer})
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            read_state()["task_id"], "t-test-summ-active",
+            "sumarizador não pode tocar pipeline ativo"
+        )
+        self.assertNotIn("CLASSIFIED", out)
+        self.assertNotIn("CONTINUING", out)
 
 
 # ===========================================================================
@@ -754,6 +924,108 @@ class TestReclassify(HarnessTestBase):
         })
         self.assertEqual(code, 0)
 
+    # ------------------------------------------------------------------
+    # Cenários 19b-19f: travas de state em PostToolUse
+    # Incidente 2026-06-12: garantir que NENHUM caminho de PostToolUse
+    # cria task nova, classifica tool output ou mexe em pipeline ativo.
+    # ------------------------------------------------------------------
+
+    # --- Cenário 19b: promoção preserva task_id ---
+    def test_19b_reclassify_preserves_task_id(self):
+        """PostToolUse nunca cria task nova — task_id é imutável aqui."""
+        self._setup_l0_state()
+        files = ["C:/p/a.py", "C:/p/b.py", "C:/p/c.py", "C:/p/d.py"]
+        for f in files:
+            run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
+        state = read_state()
+        self.assertEqual(state["task_id"], "t-test-reclass",
+                         "promoção L0→L1 deve manter a MESMA task")
+        self.assertTrue(state["classification"].startswith("L1"))
+
+    # --- Cenário 19c: tool output jamais é classificado ---
+    def test_19c_reclassify_ignores_tool_output_text(self):
+        """Conteúdo de Write/Edit (ex.: script com 'FALHA', 'erro 40012') não
+        pode ser tratado como prompt: o type da task vem do prompt original."""
+        self._setup_l0_state()
+        payload = "raise RuntimeError('FALHA: erro 40012 - bug critico no sistema')"
+        files = ["C:/p/x.py", "C:/p/y.py", "C:/p/z.py"]
+        for f in files:
+            run_hook(self.HOOK, {
+                "tool_name": "Write",
+                "tool_input": {"file_path": f, "content": payload},
+                "tool_response": {"type": "text", "text": payload},
+            })
+        state = read_state()
+        self.assertEqual(
+            state["classification"], "L1-feature",
+            "type não pode ser re-derivado de tool output (seria 'bug')"
+        )
+        self.assertEqual(state["task_id"], "t-test-reclass")
+
+    # --- Cenário 19d: agreed=True trava a classificação ---
+    def test_19d_reclassify_respects_agreed_lock(self):
+        """Classificação confirmada semanticamente (agreed=true) é imutável."""
+        write_state({
+            "task_id": "t-test-locked",
+            "schema_version": 3,
+            "classification": "L0-feature",
+            "classification_meta": {
+                "suggested": "L0-feature",
+                "final": "L0-feature",
+                "source": "semantic",
+                "confidence": 0.95,
+                "agreed": True,
+            },
+            "status": "done",
+            "pipeline": [],
+            "current_step": None,
+            "artifacts_so_far": [],
+            "started_at": "2026-01-01T00:00:00Z",
+        })
+        write_counter({"count": 0, "files": [], "task_id": "t-test-locked"})
+        for f in ["C:/p/m.py", "C:/p/n.py", "C:/p/o.py"]:
+            run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
+        state = read_state()
+        self.assertEqual(state["classification"], "L0-feature",
+                         "agreed=true deve travar reclassificação (não reabrir)")
+        self.assertEqual(state["classification_meta"]["final"], "L0-feature")
+
+    def _assert_untouched_when_active(self, classification: str) -> None:
+        """Helper: com status=active, reclassify não altera NADA do state."""
+        original = {
+            "task_id": "t-test-act",
+            "schema_version": 3,
+            "classification": classification,
+            "classification_meta": {
+                "suggested": classification,
+                "final": None,
+                "source": "regex",
+                "confidence": None,
+                "agreed": None,
+            },
+            "status": "active",
+            "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
+            "current_step": "tdd",
+            "artifacts_so_far": ["docs/specs/x-spec-light.md"],
+            "started_at": "2026-06-12T03:39:00+00:00",
+        }
+        write_state(original)
+        write_counter({"count": 0, "files": [], "task_id": "t-test-act"})
+        for f in ["C:/p/q.py", "C:/p/r.py", "C:/p/s.py", "C:/p/t.py"]:
+            run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
+        state = read_state()
+        self.assertEqual(state, original,
+                         f"status=active deve ser intocável (classification={classification})")
+
+    # --- Cenário 19e: pipeline L1 ativo é intocável ---
+    def test_19e_reclassify_never_touches_active_pipeline(self):
+        self._assert_untouched_when_active("L1-feature")
+
+    # --- Cenário 19f: até L0 anômalo com status=active é intocável ---
+    def test_19f_reclassify_never_promotes_active_l0(self):
+        """Estado anômalo (L0 + active) não pode ser promovido em PostToolUse."""
+        self._assert_untouched_when_active("L0-feature")
+
 
 # ===========================================================================
 # GIT GUARD TESTS (harness-git-guard.sh) — 6 cenários
@@ -890,34 +1162,42 @@ class TestPrecompact(HarnessTestBase):
 
     # --- Cenário 28: Rotação quando trace > 50KB ---
     def test_28_trace_rotation(self):
-        """Trace > 50KB deve ser rotacionado para traces/."""
-        # Cria trace grande (>50KB)
-        with open(TRACE_FILE, "w", encoding="utf-8") as f:
-            f.write("# Big trace\n" + "x" * 52000)
+        """Trace > 50KB deve ser rotacionado para traces/ — em HARNESS_DIR isolado.
 
-        traces_dir = os.path.join(HARNESS_DIR, "traces")
-        os.makedirs(traces_dir, exist_ok=True)
-        # Marker de tempo: tudo criado/modificado >= t0 conta como rotacao desta run.
-        # Subtrai 1s para tolerar drift de mtime no Windows.
-        t0 = time.time() - 1.0
+        Regressão 2026-06-12: a versão antiga escrevia no harness REAL e o
+        precompact espelhava o fixture para o vault via vault_sync — 41
+        fixtures "Big trace" acumulados em traces/ e AI-Brain/wiki/sessions/.
+        """
+        import tempfile
 
-        code, out, err = run_hook(self.HOOK, {})
-        self.assertEqual(code, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness = os.path.join(tmp, "harness")
+            tmp_vault = os.path.join(tmp, "vault")
+            os.makedirs(tmp_harness)
+            os.makedirs(tmp_vault)
+            with open(os.path.join(tmp_harness, "state.json"), "w", encoding="utf-8") as f:
+                json.dump({"task_id": "t-test-28", "status": "done"}, f)
+            trace_file = os.path.join(tmp_harness, "trace-current.md")
+            with open(trace_file, "w", encoding="utf-8") as f:
+                f.write("# Big trace\n" + "x" * 52000)
 
-        # Verificar que foi rotacionado: mtime mais robusto que set-diff,
-        # porque o nome do arquivo (timestamp por segundo) pode colidir entre runs.
-        rotated = [
-            name for name in os.listdir(traces_dir)
-            if os.path.getmtime(os.path.join(traces_dir, name)) >= t0
-        ]
-        self.assertTrue(
-            len(rotated) > 0,
-            f"Deve haver arquivo rotacionado em traces/ (mtime >= t0). Listing: {os.listdir(traces_dir)}",
-        )
+            env = {
+                # bash (MSYS) aceita paths Windows com forward slashes
+                "HARNESS_DIR": tmp_harness.replace(os.sep, "/"),
+                # vault_sync filho herda e NAO toca o vault real
+                "AI_BRAIN_PATH": tmp_vault,
+            }
+            code, out, err = run_hook(self.HOOK, {}, env_extra=env)
+            self.assertEqual(code, 0)
 
-        # trace-current.md deve ter sido recriado (menor)
-        size = os.path.getsize(TRACE_FILE)
-        self.assertLess(size, 51200, "trace-current.md deve ser menor após rotação")
+            # dir tmp nasce vazio: qualquer arquivo em traces/ e desta rotacao
+            traces_dir = os.path.join(tmp_harness, "traces")
+            rotated = os.listdir(traces_dir) if os.path.isdir(traces_dir) else []
+            self.assertTrue(len(rotated) > 0, f"Deve haver rotacao em traces/. Listing: {rotated}")
+
+            # trace-current.md deve ter sido recriado (menor)
+            size = os.path.getsize(trace_file)
+            self.assertLess(size, 51200, "trace-current.md deve ser menor após rotação")
 
 
 # ===========================================================================

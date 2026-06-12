@@ -3,7 +3,8 @@
 set -euo pipefail
 
 # Convert paths for Python on Windows (MSYS /c/... → C:\...)
-HARNESS_DIR="$HOME/.claude/harness"
+# Parametrizavel via env: testes isolam com HARNESS_DIR temporario (default = producao)
+HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 if command -v cygpath &>/dev/null; then
     HARNESS_DIR_WIN=$(cygpath -w "$HARNESS_DIR")
 else
@@ -82,7 +83,7 @@ EOF
 PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VAULT_SYNC="$PLUGIN_DIR/scripts/vault_sync.py"
 if [ -f "$VAULT_SYNC" ]; then
-    python "$VAULT_SYNC" --quiet >/dev/null 2>&1 || true
+    python "$VAULT_SYNC" --quiet --harness-dir "$HARNESS_DIR_WIN" >/dev/null 2>&1 || true
 fi
 
 exit 0
