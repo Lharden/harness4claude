@@ -22,7 +22,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 # ---------------------------------------------------------------------------
@@ -52,7 +51,13 @@ BASH: str = _bash_path
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def run_hook(hook_name: str, stdin_data: dict, *, timeout: int = 15) -> tuple[int, str, str]:
+def run_hook(
+    hook_name: str,
+    stdin_data: dict,
+    *,
+    timeout: int = 15,
+    env_extra: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Executa um hook com JSON no stdin. Retorna (exit_code, stdout, stderr)."""
     hook_path = os.path.join(HOOKS_DIR, hook_name)
     proc = subprocess.run(
@@ -61,7 +66,7 @@ def run_hook(hook_name: str, stdin_data: dict, *, timeout: int = 15) -> tuple[in
         capture_output=True,
         text=True,
         timeout=timeout,
-        env={**os.environ, "PYTHONUTF8": "1"},
+        env={**os.environ, "PYTHONUTF8": "1", **(env_extra or {})},
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -1110,34 +1115,42 @@ class TestPrecompact(HarnessTestBase):
 
     # --- Cenário 28: Rotação quando trace > 50KB ---
     def test_28_trace_rotation(self):
-        """Trace > 50KB deve ser rotacionado para traces/."""
-        # Cria trace grande (>50KB)
-        with open(TRACE_FILE, "w", encoding="utf-8") as f:
-            f.write("# Big trace\n" + "x" * 52000)
+        """Trace > 50KB deve ser rotacionado para traces/ — em HARNESS_DIR isolado.
 
-        traces_dir = os.path.join(HARNESS_DIR, "traces")
-        os.makedirs(traces_dir, exist_ok=True)
-        # Marker de tempo: tudo criado/modificado >= t0 conta como rotacao desta run.
-        # Subtrai 1s para tolerar drift de mtime no Windows.
-        t0 = time.time() - 1.0
+        Regressão 2026-06-12: a versão antiga escrevia no harness REAL e o
+        precompact espelhava o fixture para o vault via vault_sync — 41
+        fixtures "Big trace" acumulados em traces/ e AI-Brain/wiki/sessions/.
+        """
+        import tempfile
 
-        code, out, err = run_hook(self.HOOK, {})
-        self.assertEqual(code, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness = os.path.join(tmp, "harness")
+            tmp_vault = os.path.join(tmp, "vault")
+            os.makedirs(tmp_harness)
+            os.makedirs(tmp_vault)
+            with open(os.path.join(tmp_harness, "state.json"), "w", encoding="utf-8") as f:
+                json.dump({"task_id": "t-test-28", "status": "done"}, f)
+            trace_file = os.path.join(tmp_harness, "trace-current.md")
+            with open(trace_file, "w", encoding="utf-8") as f:
+                f.write("# Big trace\n" + "x" * 52000)
 
-        # Verificar que foi rotacionado: mtime mais robusto que set-diff,
-        # porque o nome do arquivo (timestamp por segundo) pode colidir entre runs.
-        rotated = [
-            name for name in os.listdir(traces_dir)
-            if os.path.getmtime(os.path.join(traces_dir, name)) >= t0
-        ]
-        self.assertTrue(
-            len(rotated) > 0,
-            f"Deve haver arquivo rotacionado em traces/ (mtime >= t0). Listing: {os.listdir(traces_dir)}",
-        )
+            env = {
+                # bash (MSYS) aceita paths Windows com forward slashes
+                "HARNESS_DIR": tmp_harness.replace(os.sep, "/"),
+                # vault_sync filho herda e NAO toca o vault real
+                "AI_BRAIN_PATH": tmp_vault,
+            }
+            code, out, err = run_hook(self.HOOK, {}, env_extra=env)
+            self.assertEqual(code, 0)
 
-        # trace-current.md deve ter sido recriado (menor)
-        size = os.path.getsize(TRACE_FILE)
-        self.assertLess(size, 51200, "trace-current.md deve ser menor após rotação")
+            # dir tmp nasce vazio: qualquer arquivo em traces/ e desta rotacao
+            traces_dir = os.path.join(tmp_harness, "traces")
+            rotated = os.listdir(traces_dir) if os.path.isdir(traces_dir) else []
+            self.assertTrue(len(rotated) > 0, f"Deve haver rotacao em traces/. Listing: {rotated}")
+
+            # trace-current.md deve ter sido recriado (menor)
+            size = os.path.getsize(trace_file)
+            self.assertLess(size, 51200, "trace-current.md deve ser menor após rotação")
 
 
 # ===========================================================================
