@@ -11,7 +11,10 @@ harness-precompact.sh (auto-sync no handoff) e pela skill vault-bridge.
 
 Uso:
     python vault_sync.py [--vault DIR] [--quiet]
-Env: VAULT_PATH sobrescreve o default.
+Env: AI_BRAIN_PATH sobrescreve o default. NAO usar VAULT_PATH aqui: desde a
+migracao MCP (2026-06-12), VAULT_PATH aponta para a RAIZ do vault Obsidian
+(consumida pelo NODE_EXTRA_CA_CERTS/MCP), e o alvo deste sync e o sub-vault
+AI-Brain — usar VAULT_PATH duplicaria a arvore wiki/ na raiz (bug 2026-06-12).
 """
 
 from __future__ import annotations
@@ -86,7 +89,7 @@ def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
 def main() -> int:
     """Ponto de entrada CLI."""
     parser = argparse.ArgumentParser(description="Espelha artefatos do Harness para o vault.")
-    env_vault = os.environ.get("VAULT_PATH")
+    env_vault = os.environ.get("AI_BRAIN_PATH")
     parser.add_argument("--vault", type=Path, default=Path(env_vault) if env_vault else DEFAULT_VAULT)
     parser.add_argument("--harness-dir", type=Path, default=Path.home() / ".claude" / "harness")
     parser.add_argument("--quiet", action="store_true")
