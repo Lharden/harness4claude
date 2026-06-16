@@ -15,6 +15,10 @@
 #
 # Segredos: a API key do Obsidian REST NUNCA e escrita por este script. O MCP usa
 # ${OBSIDIAN_API_KEY} resolvido do ambiente — exporte-a no seu shell/perfil.
+#
+# PRE-REQUISITOS MANDATORIOS (verificados no fim; o script sai != 0 se faltarem,
+# salvo --skip-verify): OBSIDIAN_API_KEY exportada, cert do Local REST API no
+# lugar, e o plugin 'superpowers' instalado. Sem eles o pipeline NAO sobe igual.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -49,10 +53,12 @@ REPO_URL="git@github.com:Lharden/harness4claude.git"
 
 DRY_RUN=0
 CLONE=1
+SKIP_VERIFY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)     DRY_RUN=1 ;;
     --no-clone)    CLONE=0 ;;
+    --skip-verify) SKIP_VERIFY=1 ;;
     --vault-root)  shift; VAULT_ROOT="$1" ;;
     --repo)        shift; REPO_URL="$1" ;;
     *) echo "[erro] flag desconhecida: $1"; exit 2 ;;
@@ -193,20 +199,66 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Passos manuais que exigem decisao humana / segredos / GUI
+# 5. Passos MANDATORIOS que exigem decisao humana / segredos / GUI
 # ---------------------------------------------------------------------------
 cat <<EOF
 
-== Proximos passos manuais (nao automatizaveis com seguranca) ==
-  1. Obsidian REST: instale o plugin "Local REST API" no Obsidian, copie o cert
-     para "$CERT_PATH" e exporte a chave:
-       export OBSIDIAN_API_KEY="<sua-chave>"   (adicione ao perfil do shell)
-  2. mcpvault: a 1a execucao baixa @bitbonsai/mcpvault via npx (requer Node/npm).
-  3. Graphify (install de pacote = decisao humana):
+== PASSOS MANDATORIOS (segredo / GUI / install de pacote) ==
+  1. [MANDATORIO] Obsidian REST: instale o plugin "Local REST API" no Obsidian,
+     copie o cert para "$CERT_PATH" e exporte a chave (adicione ao perfil do shell):
+       export OBSIDIAN_API_KEY="<sua-chave>"
+  2. [MANDATORIO] Plugin 'superpowers' (o Harness delega brainstorming/TDD/debug):
+       /plugin install harness4claude   (e confirme superpowers via /plugin list)
+  3. mcpvault: a 1a execucao baixa @bitbonsai/mcpvault via npx (requer Node/npm).
+  4. Graphify (install de pacote = decisao humana):
        bash "$SCRIPT_DIR/setup-graphify.sh"
-  4. Plugins: 'superpowers' e obrigatorio. Apos abrir o Claude Code, rode
-       /plugin install harness4claude   (ou confirme via /plugin list)
   5. Reinicie o Claude Code para recarregar settings.json e ~/.claude.json.
 
 Backups criados com sufixo .bak-sync-$TS. Detalhes: docs/SYNC.md
 EOF
+
+# ---------------------------------------------------------------------------
+# 6. Gate de verificacao MANDATORIO (sai != 0 se faltar item critico)
+# ---------------------------------------------------------------------------
+if [ $DRY_RUN = 1 ] || [ $SKIP_VERIFY = 1 ]; then
+  note info "verificacao mandatoria pulada ($([ $DRY_RUN = 1 ] && echo dry-run || echo --skip-verify))"
+  exit 0
+fi
+
+echo ""; echo "== Verificacao mandatoria =="
+mandatory_fail=0
+check() { # check <ok?> <label> <dica>
+  if [ "$1" = 1 ]; then note ok "$2"; else note FALTA "$2 -> $3"; mandatory_fail=1; fi
+}
+
+# OBSIDIAN_API_KEY exportada no ambiente
+check "$([ -n "${OBSIDIAN_API_KEY:-}" ] && echo 1 || echo 0)" \
+  "OBSIDIAN_API_KEY exportada" \
+  "export OBSIDIAN_API_KEY=<chave do Local REST API> no perfil do shell"
+
+# Cert do Local REST API presente
+check "$([ -f "$CERT_PATH" ] && echo 1 || echo 0)" \
+  "cert REST em $CERT_PATH" \
+  "copie obsidian-local-rest-api.crt para esse caminho"
+
+# Plugin superpowers habilitado em settings.json
+SP_OK=$("$PY" - "$SETTINGS" <<'PYEOF'
+import json, sys, os
+p = sys.argv[1]
+try:
+    d = json.load(open(p, encoding="utf-8"))
+    ep = d.get("enabledPlugins", {})
+    print("1" if any(k.startswith("superpowers@") and v for k, v in ep.items()) else "0")
+except Exception:
+    print("0")
+PYEOF
+)
+check "$SP_OK" "plugin 'superpowers' habilitado" "/plugin install superpowers e reabra o Claude Code"
+
+echo ""
+if [ $mandatory_fail = 1 ]; then
+  note erro "pre-requisitos MANDATORIOS faltando (acima). Resolva e rode de novo,"
+  note erro "ou use --skip-verify para ignorar conscientemente. Exit 1."
+  exit 1
+fi
+note ok "todos os pre-requisitos mandatorios presentes."

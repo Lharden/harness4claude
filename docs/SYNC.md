@@ -72,16 +72,25 @@ O script:
 
 Flags: `--dry-run`, `--no-clone`, `--vault-root <path>`, `--repo <url>`.
 
-### 5. Passos manuais (segredo / GUI / install de pacote)
+### 5. Passos MANDATORIOS (segredo / GUI / install de pacote)
+
+Estes nao podem ser automatizados com seguranca e sao **obrigatorios** — o
+`sync-machine.sh` roda um **gate de verificacao no fim** e sai com codigo `!= 0`
+se algum faltar (use `--skip-verify` para ignorar conscientemente):
+
+| Item mandatorio | Como satisfazer |
+|-----------------|-----------------|
+| `OBSIDIAN_API_KEY` exportada | `export OBSIDIAN_API_KEY="<chave>"` no perfil do shell |
+| Cert do Local REST API | copiar `obsidian-local-rest-api.crt` para `~/.claude/obsidian-config/` |
+| Plugin `superpowers` habilitado | `/plugin install superpowers` (o Harness delega brainstorming/TDD/debug) |
 
 ```bash
-# Obsidian: instale o plugin "Local REST API" no app, copie o cert:
-#   ~/.claude/obsidian-config/obsidian-local-rest-api.crt
+# Obsidian: instale o plugin "Local REST API" no app, copie o cert acima.
 bash scripts/setup-graphify.sh    # instala graphify (PyPI graphifyy) + skill + hook
 ```
 
-No Claude Code: `superpowers` e **obrigatorio**; confirme com `/plugin list` e, se
-preciso, `/plugin install harness4claude`. Reinicie para recarregar as configs.
+Reinicie o Claude Code para recarregar as configs. Itens nao-bloqueantes (mcpvault
+via npx, `/plugin install harness4claude`) sao apenas avisos.
 
 ### 6. Verificar
 
