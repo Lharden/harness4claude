@@ -28,7 +28,28 @@ from pathlib import Path
 
 logger = logging.getLogger("harness.vault_sync")
 
-DEFAULT_VAULT = Path(r"C:\Users\Leonardo\Documents\Obsidian Vault\AI-Brain")
+
+def _default_vault() -> Path:
+    """Resolve o sub-vault AI-Brain de forma portavel (cross-OS, sem hardcode).
+
+    Precedencia:
+      1. AI_BRAIN_PATH  -> aponta direto para o sub-vault AI-Brain (uso preferido).
+      2. VAULT_PATH     -> RAIZ do vault Obsidian; o alvo deste sync e a subpasta
+         "AI-Brain" (nunca a raiz — usar a raiz duplicaria a arvore wiki/, bug
+         2026-06-12). Por isso anexamos "/AI-Brain" em vez de usar VAULT_PATH cru.
+      3. Fallback        -> ~/Documents/Obsidian Vault/AI-Brain (Windows/macOS/Linux
+         via Path.home(), sem caminho de usuario hardcoded).
+    """
+    ai_brain = os.environ.get("AI_BRAIN_PATH")
+    if ai_brain:
+        return Path(ai_brain)
+    vault_root = os.environ.get("VAULT_PATH")
+    if vault_root:
+        return Path(vault_root) / "AI-Brain"
+    return Path.home() / "Documents" / "Obsidian Vault" / "AI-Brain"
+
+
+DEFAULT_VAULT = _default_vault()
 
 
 def newer(src: Path, dst: Path) -> bool:
@@ -89,8 +110,8 @@ def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
 def main() -> int:
     """Ponto de entrada CLI."""
     parser = argparse.ArgumentParser(description="Espelha artefatos do Harness para o vault.")
-    env_vault = os.environ.get("AI_BRAIN_PATH")
-    parser.add_argument("--vault", type=Path, default=Path(env_vault) if env_vault else DEFAULT_VAULT)
+    # DEFAULT_VAULT ja resolve AI_BRAIN_PATH / VAULT_PATH / ~ de forma portavel.
+    parser.add_argument("--vault", type=Path, default=DEFAULT_VAULT)
     parser.add_argument("--harness-dir", type=Path, default=Path.home() / ".claude" / "harness")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()

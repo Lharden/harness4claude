@@ -1,0 +1,18 @@
+{
+  "_comment": "Servidores MCP Obsidian para sincronizacao do Harness. Mesclado em ~/.claude.json (top-level mcpServers) por scripts/sync-machine.sh. Placeholders: __VAULT_ROOT__ = raiz do vault Obsidian. O segredo NUNCA fica aqui: o REST usa ${OBSIDIAN_API_KEY} resolvido do ambiente.",
+  "mcpServers": {
+    "obsidian-fs": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@bitbonsai/mcpvault@0.11.0", "__VAULT_ROOT__"],
+      "env": {}
+    },
+    "obsidian": {
+      "type": "http",
+      "url": "https://127.0.0.1:27124/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${OBSIDIAN_API_KEY}"
+      }
+    }
+  }
+}

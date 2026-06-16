@@ -1,0 +1,47 @@
+<!-- HARNESS4CLAUDE:BEGIN — gerenciado por scripts/sync-machine.sh. Nao edite entre os marcadores; rode o sync para atualizar. -->
+## Harness v3 SDD (MANDATORY)
+- Hook classifica cada prompt como L0/L1/L2 (regex = `classification_meta.suggested`); harness-workflow confirma/corrige semanticamente (`classification_meta.final`/`agreed`). Loop de accuracy em signals.json (`aggregates.classify`)
+- systemMessage com "HARNESS v3 CLASSIFIED" L1/L2 -> MUST `Skill(skill="harness-workflow")` ANTES de responder
+- systemMessage com "HARNESS v3 CONTINUING" ou "HARNESS v3 RESUMING" -> invocar harness-workflow para continuar/retomar
+- L0: executar diretamente, sem pipeline
+- State: `~/.claude/harness/state.json` | CLAUDE.md tem prioridade absoluta
+
+### Skills SDD v3
+- `write-spec` — spec formal completa (user stories P1/P2/P3, AC Given/When/Then, [NEEDS CLARIFICATION], boundaries)
+- `write-spec-light` — spec enxuta ~50 linhas para L1 (overhead humano ~2 min)
+- `design-doc` — design tecnico separado (arch, data model, API contracts, test strategy, risks) — entre grill-me e validate-plan em L2
+- `verify-against-spec` — verifica cobertura item-por-item spec<->implementacao com evidencias concretas
+
+### Pipelines v3
+- **L1-feature**: `write-spec-light` -> `tdd` -> `verify-against-spec`
+- **L2-feature**: `discuss` -> `brainstorming` -> `write-spec` -> `grill-me` -> `design-doc` -> `validate-plan` -> `tdd` -> `verify-against-spec`
+- **L2-architecture**: inclui `write-spec` + `grill-me` + `design-doc` entre brainstorming e validate-plan
+- **L2-refactor**: adiciona `write-spec` + `design-doc` apos grill-me
+- **L1/L2-bug**: inalterados (bug nao precisa spec formal)
+
+### Artefatos SDD
+- `docs/specs/{feature-slug}-spec.md` (ou `-spec-light.md`)
+- `docs/specs/{feature-slug}-design.md`
+- `docs/specs/{feature-slug}-verification.md`
+
+### Principios SDD
+- AI gera 90%+ das specs; humano valida e decide ambiguidades
+- `[NEEDS CLARIFICATION]` forca decisoes explicitas (nunca assumir)
+- AC Given/When/Then alimentam TDD (1 AC = 1 teste)
+- Spec e living doc (spec-anchored para L2)
+
+### Health check
+- Rodar `bash ~/.claude/plugins/local/harness4claude/scripts/health-check.sh` para verificar dependencies, state, hooks e skills
+- Requer `jq` instalado (Windows: `winget install jqlang.jq`; macOS: `brew install jq`; Linux: `apt install jq`)
+
+## Obsidian (vault-bridge)
+- Vault root via `env.VAULT_PATH`; sub-vault de espelhamento = `<VAULT_PATH>/AI-Brain` (ou `AI_BRAIN_PATH`)
+- MCP servers `obsidian-fs` (mcpvault) e `obsidian` (REST https) em `~/.claude.json`; segredo do REST via `${OBSIDIAN_API_KEY}`
+- `harness-precompact.sh` chama `vault_sync.py` no handoff; degrada graceful se o vault nao existir
+
+## graphify
+- **graphify** (`~/.claude/skills/graphify/SKILL.md`) — qualquer input vira knowledge graph. Trigger: `/graphify`
+- Para perguntas sobre codebase: rodar `graphify query "<pergunta>"` quando `graphify-out/graph.json` existir; `graphify path "<A>" "<B>"` para relacoes; `graphify explain "<conceito>"` para conceitos
+- Apos modificar codigo: `graphify update .` (AST-only, sem custo de API)
+- Setup por maquina: `bash ~/.claude/plugins/local/harness4claude/scripts/setup-graphify.sh`
+<!-- HARNESS4CLAUDE:END -->
