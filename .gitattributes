@@ -1,0 +1,7 @@
+# Forca LF em scripts executados por bash/python, para que clonar em macOS/Linux
+# (ou em Git Bash no Windows) nao quebre com terminadores CRLF. Critico para o
+# kit de sync cross-OS (scripts/sync-machine.sh & cia).
+*.sh   text eol=lf
+*.py   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
