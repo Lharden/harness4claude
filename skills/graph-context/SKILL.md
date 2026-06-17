@@ -29,7 +29,7 @@ Objetivo: alimentar `write-spec`/`design-doc`/exploração com **estrutura real*
 4. **Staleness**: `graph.json` anterior ao HEAD atual? Re-run é barato (cache SHA256 só reprocessa mudanças) — sugerir antes de confiar no grafo.
 5. **Espelho no vault (conhecimento permanente)**:
    ```bash
-   /graphify . --obsidian --obsidian-dir "C:/Users/Leonardo/Documents/Obsidian Vault/AI-Brain/wiki/graphs/{repo-slug}"
+   /graphify . --obsidian --obsidian-dir "${AI_BRAIN_PATH:-$VAULT_PATH/AI-Brain}/wiki/graphs/{repo-slug}"
    ```
    Convenção: `wiki/graphs/{repo-slug}/` no vault AI-Brain (slug = nome do diretório git, kebab-case). O vault-bridge indexa em `wiki/index.md` e cruza wikilinks com `wiki/specs/{proj}/`.
 

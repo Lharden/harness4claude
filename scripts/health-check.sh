@@ -133,6 +133,24 @@ else
 fi
 echo ""
 
+echo "--- Obsidian integration ---"
+# WARN-only: o harness funciona sem Obsidian (vault_sync degrada graceful). Estes
+# checks reaproveitam tools/vault_sync_doctor.py (sem duplicar logica) e NUNCA
+# falham o health-check — Obsidian aberto nao e pre-requisito do harness.
+VAULT_ROOT="${VAULT_PATH:-$HOME/Documents/Obsidian Vault}"
+if [ ! -d "$VAULT_ROOT" ]; then
+    warn "vault ausente em $VAULT_ROOT (defina VAULT_PATH) — integracao Obsidian opcional"
+elif [ -z "${OBSIDIAN_API_KEY:-}" ]; then
+    warn "OBSIDIAN_API_KEY nao exportada — MCP 'obsidian' (REST) ficara sem auth"
+elif [ ! -d "$PLUGIN_DIR/tools" ]; then
+    warn "tools/ ausente (PR de tooling nao mergeado?) — doctor indisponivel"
+elif ( cd "$PLUGIN_DIR" && python -m tools.vault_sync_doctor --root "$VAULT_ROOT" --check-rest >/dev/null 2>&1 ); then
+    echo "[OK]     Obsidian doctor ready (plugins + REST API 127.0.0.1:27124)"
+else
+    warn "Obsidian doctor nao-ready (app fechado / REST off?) — rode: (cd '$PLUGIN_DIR' && python -m tools.vault_sync_doctor --root \"\$VAULT_PATH\" --check-rest)"
+fi
+echo ""
+
 echo "--- Plugin load (Claude Code) ---"
 # Plugin em disco != plugin CARREGADO. Sem o marketplace 'local' registrado, o
 # sufixo @local nao resolve e os hooks nunca disparam (falha silenciosa). Esta

@@ -372,7 +372,7 @@ What ports automatically vs. what each machine needs once:
 
 | Concern | Travels with the plugin? | Action per machine |
 |---------|--------------------------|--------------------|
-| Hooks, skills, scripts, schemas | ✅ Yes (plugin install) | `/plugin install harness` |
+| Hooks, skills, scripts, tools, schemas | ✅ Yes (plugin install) | `/plugin install harness` |
 | `state.json` / `signals.json` | ❌ No (per-machine, by design) | Created/migrated automatically on first `SessionStart` |
 | Schema version (v2 → v3) | n/a | **Auto-migrated** — the `SessionStart` hook runs `migrate_state.py` when it detects pre-v3 files, creating a timestamped `.bak-migrate-*` backup |
 | Global `CLAUDE.md` Harness block, `settings.json` env/marketplace, Obsidian MCP servers | ❌ No (host-local) | **`scripts/sync-machine.sh`** merges all three from `sync/templates/` |
@@ -392,14 +392,27 @@ python scripts/migrate_state.py            # migrate in place, with backups
 python scripts/migrate_state.py --dry-run  # report only, no writes
 ```
 
-### Obsidian (vault-bridge) per machine
+### Obsidian integration per machine
 
-The `vault_sync.py` script and the precompact auto-sync ship with the plugin, but
-the `vault-bridge` **MCP server configuration and the Obsidian app plugins are
-host-local** and are intentionally kept out of this repo. On each machine where
-you want vault sync, configure the MCP server in your `~/.claude/settings.json`
-and point it at that machine's vault path. Without this config, the rest of the
-pipeline still works — vault sync simply no-ops.
+`vault_sync.py` (mirrors traces/specs/`.remember` into the vault on PreCompact) and
+the [`tools/`](tools/) vault utilities ship with the plugin. The two MCP servers —
+`obsidian-fs` (mcpvault, filesystem) and `obsidian` (Local REST API over https) — are
+wired **automatically** by `scripts/sync-machine.sh`, which merges
+[`sync/templates/mcp.obsidian.snippet.json`](sync/templates/mcp.obsidian.snippet.json)
+into `~/.claude.json` with your `VAULT_PATH` substituted. The REST key stays a secret:
+the template references `${OBSIDIAN_API_KEY}`, never a literal.
+
+Per machine you still set two host-local things by hand (the `sync-machine.sh` verify
+gate enforces both): export `OBSIDIAN_API_KEY` and place the Local REST API cert. Then:
+
+- `bash scripts/health-check.sh` — now includes an **Obsidian block** (WARN-only) that
+  reuses the doctor to confirm the REST API + community plugins are live.
+- `python -m tools.vault_sync_doctor --root "$VAULT_PATH" --check-rest` — full readiness report.
+- `python -m tools.export_plugins --root "$VAULT_PATH"` — lightweight plugin lock (`~6 KB`)
+  for backup/restore instead of committing plugin binaries.
+
+Without this config the rest of the pipeline still works — vault sync simply no-ops.
+See [`docs/SYNC.md`](docs/SYNC.md) for the full per-machine runbook.
 
 ---
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,8 +88,15 @@ def record(harness_dir: Path, task: dict) -> dict:
     signals["harness_version"] = "v3"
     signals["tasks"] = tasks
     signals["aggregates"] = recompute_aggregates(tasks, signals.get("aggregates"))
-    with signals_path.open("w", encoding="utf-8") as fh:
+    # Escrita atomica: tmp -> flush+fsync -> os.replace. Evita signals.json
+    # corrompido se o processo morrer no meio do dump (consistente com a escrita
+    # de state.json em harness-classify.sh). os.replace e rename atomico.
+    tmp = signals_path.parent / f"{signals_path.name}.tmp-{os.getpid()}"
+    with tmp.open("w", encoding="utf-8") as fh:
         json.dump(signals, fh, indent=2, ensure_ascii=False)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, signals_path)
     return signals
 
 
