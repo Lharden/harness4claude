@@ -81,6 +81,22 @@ python << 'PYEOF'
 import os, re, json
 from datetime import datetime, timezone
 
+
+def _atomic_write_json(path, data):
+    """Escreve JSON de forma atomica: tmp no mesmo dir -> flush+fsync -> os.replace.
+
+    Evita state.json/counter corrompido se o processo morrer no meio do dump (a
+    janela existia porque o release do lock e via trap EXIT). os.replace e rename
+    atomico no mesmo filesystem (NTFS via Git Bash, ext4, APFS).
+    """
+    tmp = f"{path}.tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 msg = os.environ["HARNESS_MSG_LOWER"]
 state_file = os.environ["HARNESS_STATE_FILE"]
 counter_file = os.environ["HARNESS_COUNTER_FILE"]
@@ -305,12 +321,20 @@ PIPELINES = {
 }
 # L0 has no pipeline
 pipeline = PIPELINES.get(classification, [])
+# Guard defensivo: um {level}-{type} L1+ sem pipeline mapeado nao deve seguir
+# silenciosamente (status ficaria 'active' sem nenhuma fase a executar). Hoje
+# inalcancavel (qualquer keyword de arquitetura forca L2), mas protege contra
+# novos types/keywords adicionados no futuro.
+pipeline_unmapped = level != "L0" and not pipeline
 
 # ============================================================================
 # Generate task_id and timestamps
 # ============================================================================
 now = datetime.now(timezone.utc)
-task_id = now.strftime("t-%Y%m%d-%H%M%S")
+# Microssegundos (%f) SEM traco extra: garante unicidade entre prompts no mesmo
+# segundo (evita colisao de task_id + sobrescrita destrutiva no record_signal.py)
+# e ainda casa o pattern do state.schema.json (^t-[0-9]{8}-[0-9A-Za-z]+$).
+task_id = now.strftime("t-%Y%m%d-%H%M%S%f")
 started_at = now.isoformat()
 
 # ============================================================================
@@ -346,15 +370,13 @@ new_state = {
     "prompt_excerpt": msg[:300],
 }
 
-with open(state_file, "w", encoding="utf-8") as f:
-    json.dump(new_state, f, indent=2, ensure_ascii=False)
+_atomic_write_json(state_file, new_state)
 
 # ============================================================================
 # Reset counter file
 # ============================================================================
 counter = {"count": 0, "files": [], "task_id": task_id}
-with open(counter_file, "w", encoding="utf-8") as f:
-    json.dump(counter, f, indent=2, ensure_ascii=False)
+_atomic_write_json(counter_file, counter)
 
 # ============================================================================
 # Emit classification block
@@ -372,6 +394,15 @@ status: {status}
 pipeline: {pipeline_display}
 started_at: {started_at}
 </harness-classification>""")
+elif pipeline_unmapped:
+    # Classificado L1+ porem sem pipeline mapeado: avisa em vez de seguir vazio.
+    print(json.dumps({
+        "systemMessage": (
+            f"HARNESS v3 WARNING: classificacao '{classification}' (task {task_id}) "
+            f"nao tem pipeline mapeado. Trate como L1-feature ou confirme o tipo "
+            f"manualmente — nao ha fases a executar. Nao prossiga em silencio."
+        )
+    }))
 else:
     # L1+: emit systemMessage JSON to force workflow activation
     output = json.dumps({

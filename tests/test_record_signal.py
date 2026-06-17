@@ -73,6 +73,34 @@ def test_record_idempotent(rec, tmp_path):
     assert len(out["tasks"]) == 1  # nao duplicou
 
 
+def test_record_distinct_tasks_coexist(rec, tmp_path):
+    """P1.2: task_ids distintos coexistem (microssegundo evita colisao/sobrescrita)."""
+    (tmp_path / "signals.json").write_text(
+        json.dumps({"version": 3, "harness_version": "v3", "tasks": [], "aggregates": {}}),
+        encoding="utf-8")
+    base = {"classification": "L1-feature", "actual_level": "L1",
+            "pipeline_completed": True, "steps_executed": [], "files_modified": 2,
+            "classification_meta": {"agreed": True}}
+    rec.record(tmp_path, {**base, "task_id": "t-20260616-2147381234"})
+    rec.record(tmp_path, {**base, "task_id": "t-20260616-2147389876"})
+    out = json.loads((tmp_path / "signals.json").read_text(encoding="utf-8"))
+    assert {t["task_id"] for t in out["tasks"]} == {
+        "t-20260616-2147381234", "t-20260616-2147389876"}  # ambas preservadas
+
+
+def test_record_atomic_leaves_no_tmp(rec, tmp_path):
+    """P1.1: escrita atomica nao deixa arquivo .tmp e produz JSON valido."""
+    (tmp_path / "signals.json").write_text(
+        json.dumps({"version": 3, "harness_version": "v3", "tasks": [], "aggregates": {}}),
+        encoding="utf-8")
+    rec.record(tmp_path, {"task_id": "t-atomic", "classification": "L1-feature",
+                          "actual_level": "L1", "pipeline_completed": True,
+                          "steps_executed": [], "files_modified": 1,
+                          "classification_meta": {"agreed": True}})
+    assert list(tmp_path.glob("signals.json.tmp-*")) == []  # nenhum temporario
+    json.loads((tmp_path / "signals.json").read_text(encoding="utf-8"))  # parseavel
+
+
 def test_record_updates_accuracy(rec, tmp_path):
     (tmp_path / "signals.json").write_text(
         json.dumps({"version": 3, "tasks": [], "aggregates": {}}), encoding="utf-8")
