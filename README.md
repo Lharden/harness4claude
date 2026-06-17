@@ -345,6 +345,29 @@ desktop and a laptop). Runtime state lives in `~/.claude/harness/` and is
 specs and design docs live in each project's `./docs/`, which travels with the
 repo via git.
 
+### One-command sync (Harness + Obsidian + Graphify)
+
+The plugin code travels via the marketplace, but the **host-local wiring** that
+makes the pipeline fire (the `Harness v3 SDD` block in the global `~/.claude/CLAUDE.md`,
+`env`/marketplace keys in `settings.json`, and the Obsidian MCP servers in
+`~/.claude.json`) does not. To replicate **the same configs** on a new machine,
+cross-OS (Windows/Git Bash, macOS, Linux):
+
+```bash
+git clone git@github.com:Lharden/harness4claude.git ~/.claude/plugins/local/harness4claude
+export VAULT_PATH="$HOME/Documents/Obsidian Vault"   # adjust to your vault root
+export OBSIDIAN_API_KEY="<Local REST API key>"        # secret, never committed
+cd ~/.claude/plugins/local/harness4claude
+bash scripts/sync-machine.sh --dry-run                # preview
+bash scripts/sync-machine.sh                          # apply (additive merge + backup)
+```
+
+The script does an **additive, idempotent** merge (never clobbers existing keys),
+backs up every file it touches as `*.bak-sync-<timestamp>`, and substitutes paths
+from your environment — no hardcoded user paths. Templates live in
+[`sync/templates/`](sync/templates/); the full runbook is in
+[`docs/SYNC.md`](docs/SYNC.md).
+
 What ports automatically vs. what each machine needs once:
 
 | Concern | Travels with the plugin? | Action per machine |
@@ -352,7 +375,8 @@ What ports automatically vs. what each machine needs once:
 | Hooks, skills, scripts, schemas | ✅ Yes (plugin install) | `/plugin install harness` |
 | `state.json` / `signals.json` | ❌ No (per-machine, by design) | Created/migrated automatically on first `SessionStart` |
 | Schema version (v2 → v3) | n/a | **Auto-migrated** — the `SessionStart` hook runs `migrate_state.py` when it detects pre-v3 files, creating a timestamped `.bak-migrate-*` backup |
-| Obsidian `vault-bridge` MCP server | ❌ No (MCP config is host-local) | Configure the MCP server + Obsidian app plugins manually (see below) |
+| Global `CLAUDE.md` Harness block, `settings.json` env/marketplace, Obsidian MCP servers | ❌ No (host-local) | **`scripts/sync-machine.sh`** merges all three from `sync/templates/` |
+| Obsidian REST API key, app plugins, REST cert | ❌ No (secret/GUI) | Manual: set `OBSIDIAN_API_KEY`, install the Local REST API plugin (see `docs/SYNC.md`) |
 
 ### Upgrading an existing install to v3.1
 

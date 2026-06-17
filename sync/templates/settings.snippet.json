@@ -1,0 +1,27 @@
+{
+  "_comment": "Fragmento de ~/.claude/settings.json necessario para o Harness + Obsidian + Graphify. Mesclado de forma aditiva por scripts/sync-machine.sh (faz deep-merge, nunca sobrescreve chaves existentes alem das listadas). Placeholders: __VAULT_ROOT__ = raiz do vault Obsidian; __CERT_PATH__ = caminho do cert do Obsidian Local REST API; __PLUGIN_LOCAL_DIR__ = diretorio do marketplace local (~/.claude/plugins/local).",
+  "env": {
+    "VAULT_PATH": "__VAULT_ROOT__",
+    "NODE_EXTRA_CA_CERTS": "__CERT_PATH__"
+  },
+  "extraKnownMarketplaces": {
+    "harness4claude": {
+      "source": {
+        "source": "github",
+        "repo": "Lharden/harness4claude"
+      }
+    },
+    "local": {
+      "source": {
+        "source": "directory",
+        "path": "__PLUGIN_LOCAL_DIR__"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "harness4claude@local": true,
+    "superpowers@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "hookify@claude-plugins-official": true
+  }
+}
