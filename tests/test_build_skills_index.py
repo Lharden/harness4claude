@@ -86,3 +86,35 @@ def test_scan_skills(tmp_path, monkeypatch):
     assert by_id["meu-skill"]["usage_count"] == 2
     assert all(s["vec_row"] == -1 for s in skills)
     assert [s["id"] for s in skills] == sorted(s["id"] for s in skills)
+
+
+def _fake_skills(tmp_path):
+    md = tmp_path / "SKILL.md"
+    md.write_text("---\nname: x\ndescription: d\n---\n", encoding="utf-8")
+    return [{"id": "p:x", "name": "x", "plugin": "p@m", "source": "marketplace",
+             "enabled": True, "path": str(md), "description": "d", "desc_chars": 1,
+             "aliases": [], "usage_count": 0, "last_used_at": None, "vec_row": -1}]
+
+
+def test_build_no_embed_and_check_stale(tmp_path):
+    skills = _fake_skills(tmp_path)
+    out = str(tmp_path / "idx")
+    n = bsi.build(out_dir=out, no_embed=True, skills=skills)
+    assert n == 1
+    idx = json.load(open(os.path.join(out, "skills-index.json"), encoding="utf-8"))
+    meta = json.load(open(os.path.join(out, "meta.json"), encoding="utf-8"))
+    assert idx["dim"] == 0 and idx["skills"][0]["vec_row"] == -1
+    assert meta["count"] == 1
+    assert os.path.getsize(os.path.join(out, "embeddings.f16.bin")) == 0
+    # mesmo conteudo => fresco
+    assert bsi.check_stale(out, skills=skills) is False
+    # mudou o SKILL.md => stale
+    p = skills[0]["path"]
+    with open(p, "a", encoding="utf-8") as f:
+        f.write("mudou\n")
+    os.utime(p, (os.path.getmtime(p) + 5, os.path.getmtime(p) + 5))
+    assert bsi.check_stale(out, skills=skills) is True
+
+
+def test_check_stale_missing_index(tmp_path):
+    assert bsi.check_stale(str(tmp_path / "nao-existe"), skills=[]) is True
