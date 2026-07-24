@@ -11,6 +11,16 @@
             "statusMessage": "Classificando tarefa..."
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-skill-router.sh\"",
+            "timeout": 5000,
+            "statusMessage": "Skill router..."
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -64,6 +74,16 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-graphify-autosetup.sh\"",
             "timeout": 10000,
             "statusMessage": "Graphify auto-setup..."
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-router-warmup.sh\"",
+            "timeout": 5000,
+            "statusMessage": "Router warmup..."
           }
         ]
       }
