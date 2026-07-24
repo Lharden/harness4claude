@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -87,6 +88,43 @@ def test_render_hint_disabled_line():
     assert text.startswith("[skill-hint]")
     assert "a:1" in text and "/plugin enable off" in text
     assert "ignore este bloco" in text
+
+
+def test_main_gates_layer_b_on_layer_a_hit(tmp_path, monkeypatch, capsys):
+    idx = {"skills": [_skill("p:deckmaker", aliases=["deck"])], "dim": 2}
+    idx["skills"][0]["vec_row"] = 0
+    monkeypatch.setattr(sr, "load_index", lambda *a, **k: (idx, [(1.0, 0.0)]))
+    calls = []
+    def _boom(prompt):
+        calls.append(prompt)  # tracked out-of-band: main()'s except Exception
+        raise AssertionError("embed_query must NOT run when Layer A hits")  # would swallow a bare raise
+    monkeypatch.setattr(sr, "embed_query", _boom)
+    monkeypatch.setattr(sr, "ROUTER_DIR", str(tmp_path))
+    monkeypatch.setattr(sr, "passes_guards", lambda *a, **k: True)
+    monkeypatch.setattr("sys.stdin",
+                        io.StringIO(json.dumps({"session_id": "g", "prompt": "quero um deck bonito"})))
+    rc = sr.main()
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "p:deckmaker" in out
+    assert calls == []  # embed_query genuinely not invoked (not just its exception swallowed)
+
+
+def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch):
+    idx = {"skills": [_skill("p:foo")], "dim": 2}
+    idx["skills"][0]["vec_row"] = 0
+    monkeypatch.setattr(sr, "load_index", lambda *a, **k: (idx, [(1.0, 0.0)]))
+    called = {"embed": 0}
+    def _fake_embed(prompt):
+        called["embed"] += 1
+        return [1.0, 0.0]
+    monkeypatch.setattr(sr, "embed_query", _fake_embed)
+    monkeypatch.setattr(sr, "ROUTER_DIR", str(tmp_path))
+    monkeypatch.setattr(sr, "passes_guards", lambda *a, **k: True)
+    monkeypatch.setattr("sys.stdin",
+                        io.StringIO(json.dumps({"session_id": "h", "prompt": "algo totalmente novo aqui"})))
+    sr.main()
+    assert called["embed"] == 1
 
 
 def test_main_subprocess_no_index(tmp_path):

@@ -211,7 +211,7 @@ def main():
     skills = index.get("skills", [])
     a_hits = layer_a(prompt.lower(), skills)
     b_scored = []
-    if vecs:
+    if vecs and not a_hits:  # Camada B (embed ~900ms) so quando a Camada A nao acha nada
         try:
             b_scored = layer_b(embed_query(prompt), skills, vecs)
         except Exception as e:  # timeout/conexao: degrada p/ Camada A
