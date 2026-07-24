@@ -1,6 +1,6 @@
 {
   "name": "harness4claude",
-  "version": "3.2.0",
+  "version": "3.3.0-beta.1",
   "description": "Spec-Driven Development orchestrator with L0/L1/L2 classification, structured pipelines, quality gates, and multi-model review. Classifies tasks by complexity, routes through SDD skills (write-spec, design-doc, verify-against-spec), and manages pipeline state.",
   "author": {
     "name": "Leonardo",

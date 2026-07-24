@@ -151,6 +151,21 @@ else
 fi
 echo ""
 
+echo "--- Skill Router (opcional) ---"
+IDX="$HOME/.claude/harness/skills-index"
+if [ -f "$IDX/meta.json" ]; then
+    echo "[OK]     skills-index presente"
+    [ -f "$IDX/.stale" ] && warn "skills-index stale (rebuild pendente)"
+else
+    warn "skills-index ausente — rode: python scripts/build_skills_index.py"
+fi
+if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/tags" 2>/dev/null | grep -q nomic-embed-text-v2-moe; then
+    echo "[OK]     Ollama + nomic-embed-text-v2-moe"
+else
+    warn "Ollama/modelo indisponivel — router degrada p/ camada A"
+fi
+echo ""
+
 echo "--- Plugin load (Claude Code) ---"
 # Plugin em disco != plugin CARREGADO. Sem o marketplace 'local' registrado, o
 # sufixo @local nao resolve e os hooks nunca disparam (falha silenciosa). Esta
