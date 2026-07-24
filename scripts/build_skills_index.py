@@ -160,6 +160,19 @@ def pack_f16(rows):
     return bytes(buf)
 
 
+def ollama_embed(texts, timeout=180):
+    out = []
+    for i in range(0, len(texts), 64):
+        req = urllib.request.Request(
+            OLLAMA_URL.rstrip("/") + "/api/embed",
+            data=json.dumps({"model": EMBED_MODEL, "input": texts[i:i + 64],
+                             "keep_alive": "30m"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out.extend(json.load(r)["embeddings"])
+    return out
+
+
 def build(out_dir=DEFAULT_OUT, no_embed=False, skills=None):
     if skills is None:
         skills = scan_skills()

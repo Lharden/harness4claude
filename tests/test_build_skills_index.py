@@ -37,6 +37,22 @@ def test_frontmatter_missing():
 
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class _FakeOllama(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        vecs = [[1.0, 2.0, 2.0] for _ in body["input"]]  # norma 3 -> [1/3,2/3,2/3]
+        out = json.dumps({"embeddings": vecs}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
 
 
 def _mk_skill(root, plugin_dirname, skill, desc):
@@ -118,3 +134,21 @@ def test_build_no_embed_and_check_stale(tmp_path):
 
 def test_check_stale_missing_index(tmp_path):
     assert bsi.check_stale(str(tmp_path / "nao-existe"), skills=[]) is True
+
+
+def test_build_with_fake_embeddings(tmp_path, monkeypatch):
+    srv = HTTPServer(("127.0.0.1", 0), _FakeOllama)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.setattr(bsi, "OLLAMA_URL", f"http://127.0.0.1:{srv.server_port}")
+    try:
+        skills = _fake_skills(tmp_path)
+        out = str(tmp_path / "idx")
+        assert bsi.build(out_dir=out, skills=skills) == 1
+        idx = json.load(open(os.path.join(out, "skills-index.json"), encoding="utf-8"))
+        assert idx["dim"] == 3 and idx["skills"][0]["vec_row"] == 0
+        import struct as st
+        raw = open(os.path.join(out, "embeddings.f16.bin"), "rb").read()
+        v = st.unpack("<3e", raw)
+        assert abs(v[0] - 1 / 3) < 1e-2 and abs(sum(x * x for x in v) - 1.0) < 1e-2
+    finally:
+        srv.shutdown()
