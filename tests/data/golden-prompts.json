@@ -1,0 +1,25 @@
+{
+  "positives": [
+    {"prompt": "crie uma apresentacao pptx no padrao SLB sobre resultados do trimestre", "expect_any": ["slb-presentations"]},
+    {"prompt": "build me a knowledge graph of this repository and its architecture", "expect_any": ["graphify-windows"]},
+    {"prompt": "escreva uma spec formal com user stories e acceptance criteria para o modulo de login", "expect_any": ["harness4claude:write-spec", "harness4claude:write-spec-light"]},
+    {"prompt": "quero fazer um brainstorm de ideias para a nova feature de exportacao", "expect_any": ["superpowers:brainstorming"]},
+    {"prompt": "rode um scan de seguranca com bandit neste codigo python antes do commit", "expect_any": ["harness4claude:security-scan-python"]},
+    {"prompt": "help me debug this failing test, the assertion error makes no sense to me", "expect_any": ["superpowers:systematic-debugging"]},
+    {"prompt": "preciso comprimir os arquivos de memoria da sessao, estao enormes", "expect_any": ["harness4claude:compress-memory"]},
+    {"prompt": "create a claude code hook that blocks dangerous bash commands", "expect_any": ["plugin-dev:hook-development", "hookify:writing-hookify-rules"]},
+    {"prompt": "verifique se a implementacao cobre todos os requisitos da spec, item por item", "expect_any": ["harness4claude:verify-against-spec"]},
+    {"prompt": "scrape the pricing page of this website and extract the tiers as structured JSON", "expect_any": ["firecrawl:firecrawl-agent", "firecrawl:firecrawl-scrape", "firecrawl:firecrawl"]},
+    {"prompt": "quero treinar um LoRA com meus dados e publicar no hugging face", "expect_any": ["huggingface-skills:huggingface-lora-space-builder", "huggingface-skills:huggingface-llm-trainer", "huggingface-skills:hf-cli"]},
+    {"prompt": "faca um design tecnico com data model e api contracts a partir da spec aprovada", "expect_any": ["harness4claude:design-doc"]},
+    {"prompt": "baixe a documentacao inteira desse site para consulta offline", "expect_any": ["firecrawl:firecrawl-download", "firecrawl:firecrawl-crawl"]},
+    {"prompt": "implemente essa feature com TDD, escrevendo os testes primeiro", "expect_any": ["superpowers:test-driven-development"]},
+    {"prompt": "quero criar um plugin novo do zero para o claude code, com comandos, hooks e skills organizados", "expect_any": ["plugin-dev:plugin-structure"]}
+  ],
+  "negatives": [
+    {"prompt": "bom dia", "reason": "curto demais (guard de tamanho)"},
+    {"prompt": "valeu, obrigado!", "reason": "curto demais"},
+    {"prompt": "HARNESS V3 CLASSIFIED: L1-feature. Pipeline: tdd. Task: t-1. Continue.", "reason": "assinatura de automacao"},
+    {"prompt": "continue por favor", "reason": "curto demais"}
+  ]
+}
