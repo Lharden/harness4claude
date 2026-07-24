@@ -1,4 +1,6 @@
+import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "hooks"))
@@ -48,3 +50,52 @@ def test_pick_thresholds_and_disabled_bar():
     a = [{"id": "a:1", "score": 1.0, "layer": "A", "skill": _skill("a:1")}]
     got3 = [h["id"] for h in sr.pick(a, b)]
     assert got3[0] == "a:1" and got3.count("a:1") == 1 and len(got3) <= sr.TOP_K
+
+
+def test_guards(tmp_path):
+    st = tmp_path / "state.json"
+    assert sr.passes_guards("prompt curto", state_json=str(st)) is False  # 12 chars < 20
+    assert sr.passes_guards("x" * 30001, state_json=str(st)) is False
+    assert sr.passes_guards(
+        "You are summarizing a Claude Code session for handoff purposes ok",
+        state_json=str(st)) is False
+    ok = "refatore o modulo de autenticacao por favor"
+    assert sr.passes_guards(ok, state_json=str(st)) is True  # state ausente = ok
+    st.write_text(json.dumps({"status": "active", "pipeline": ["tdd"]}), encoding="utf-8")
+    assert sr.passes_guards(ok, state_json=str(st)) is False  # pipeline ativo suprime
+    st.write_text("{{{lixo", encoding="utf-8")
+    assert sr.passes_guards(ok, state_json=str(st)) is True   # torn read = sem pipeline
+
+
+def test_dedupe(tmp_path, monkeypatch):
+    monkeypatch.setattr(sr, "ROUTER_DIR", str(tmp_path))
+    h = [{"id": "a:1", "score": 1.0, "layer": "A", "skill": _skill("a:1")}]
+    assert [x["id"] for x in sr.apply_dedupe(list(h), "s1")] == ["a:1"]
+    assert sr.apply_dedupe(list(h), "s1") == []            # mesmo conjunto consecutivo
+    h2 = h + [{"id": "b:2", "score": 0.9, "layer": "B", "cos": 0.9,
+               "skill": _skill("b:2")}]
+    assert len(sr.apply_dedupe(list(h2), "s1")) == 2       # conjunto diferente, a:1 2a oferta
+    # 4a chamada: a:1 estourou MAX_OFFERS_PER_SKILL (2 ofertas) e sai; sobra b:2
+    assert [x["id"] for x in sr.apply_dedupe(list(h2), "s1")] == ["b:2"]
+
+
+def test_render_hint_disabled_line():
+    on = {"id": "a:1", "score": 1.0, "layer": "A", "skill": _skill("a:1")}
+    off = {"id": "off:9", "score": 0.7, "cos": 0.7, "layer": "B",
+           "skill": _skill("off:9", enabled=False)}
+    text = sr.render_hint([on, off])
+    assert text.startswith("[skill-hint]")
+    assert "a:1" in text and "/plugin enable off" in text
+    assert "ignore este bloco" in text
+
+
+def test_main_subprocess_no_index(tmp_path):
+    """Sem indice e sem state: stdout vazio, exit 0 (contrato nunca-falhar)."""
+    env = dict(os.environ,
+               HOME=str(tmp_path), USERPROFILE=str(tmp_path),
+               HARNESS_SKILLS_INDEX=str(tmp_path / "nao-existe"))
+    p = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(sr.__file__), "skill_router.py")],
+        input=json.dumps({"session_id": "t", "prompt": "refatore o modulo de login"}),
+        capture_output=True, text=True, env=env, timeout=30)
+    assert p.returncode == 0 and p.stdout == ""
