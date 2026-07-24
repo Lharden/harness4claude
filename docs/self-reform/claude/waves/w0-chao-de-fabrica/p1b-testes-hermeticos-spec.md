@@ -1,6 +1,6 @@
 # Spec: P-1.b — Testes Herméticos (`HARNESS_DIR` override)
 
-**Status**: Draft — aguardando resolução de `[NEEDS CLARIFICATION]`
+**Status**: Grilled (round 1) — pronta para `design-doc`
 **Created**: 2026-07-24
 **Updated**: 2026-07-24
 **Branch**: `self-reform/w0-chao-de-fabrica` (a criar a partir de `self-reform/main`)
@@ -65,6 +65,19 @@ Já conformes (referência de padrão): `scripts/state-lock.sh`, `hooks/harness-
 
 Fora de escopo (documentação, tratada em P-1.d): `README.md`, `skills/**/SKILL.md`, `sync/templates/`.
 
+**Fronteira de escopo do lado dos testes** — verificada no grill-me (round 1), declarada aqui para evitar retrabalho na revisão:
+
+| Arquivo de teste | N | Situação |
+|---|---|---|
+| `test_harness.py` | 56 | **único que precisa migrar** — usa backup/restore sobre o diretório real |
+| `test_state_lock.py` | 9 | já isolado; **é o modelo a promover** para o conftest |
+| `test_record_signal.py` | 9 | já usa `tmp_path` puro |
+| `test_build_skills_index.py` | 9 | já isolado, inclusive com embeddings falsos |
+| `test_router_golden.py` | 2 | precisa do ambiente real por definição — vira `integration` + `touches_real` |
+| `test_compress_memory.py` | 34 | verificado: não toca o diretório de estado — **fora de escopo** |
+| `test_context7_trigger.py` | 21 | verificado: não toca o diretório de estado — **fora de escopo** |
+| demais | 8 | doctor, workflows, export, vault sync — não tocam o diretório de estado |
+
 ### Dependências
 
 - **pytest** — já em `requirements.txt`; a fixture usa apenas `tmp_path_factory` e `monkeypatch`, nada novo.
@@ -100,7 +113,7 @@ Fora de escopo (documentação, tratada em P-1.d): `README.md`, `skills/**/SKILL
 
 ---
 
-### US-2: Fixture hermética com assert de segurança (Priority: P1) — MVP
+### US-2: Promover a fixture existente para `conftest.py`, com assert de segurança (Priority: P1) — MVP
 
 **Como** desenvolvedor rodando a suíte
 **Quero** que cada classe de teste receba um `HARNESS_DIR` temporário automaticamente, e que a suíte falhe se algum teste escapar para o caminho real
@@ -108,19 +121,22 @@ Fora de escopo (documentação, tratada em P-1.d): `README.md`, `skills/**/SKILL
 
 **Why this priority**: o override sem enforcement volta a degradar no primeiro teste escrito sem atenção. O assert é o que torna a propriedade durável.
 
+> **Achado do grill-me (round 1):** a fixture **já existe** em `tests/test_state_lock.py:38-55` — `harness_dir(tmp_path)` mais o helper `_env()` que injeta `HARNESS_DIR` no ambiente do subprocess. Está validada por 9 testes de concorrência. Esta user story é **promover e generalizar** esse padrão, não criar um novo. Divergir dele seria regressão.
+
 **Independence**: testável por meta-teste — um teste que deliberadamente tenta resolver o path real deve fazer a verificação disparar.
 
 **Acceptance Criteria**:
 
 - **AC-1**: Given a suíte iniciando, When `pytest` roda, Then `HARNESS_DIR` aponta para um diretório temporário e `HOME` do usuário não é modificado.
-- **AC-2**: Given um teste hipotético que resolva `HARNESS_DIR` para `~/.claude/harness`, When a suíte roda, Then a execução falha com mensagem explícita identificando o teste infrator.
-- **AC-3**: Given a suíte completa executada, When termina, Then o hash SHA-256 de cada arquivo em `~/.claude/harness/` é idêntico ao de antes da execução.
+- **AC-2**: Given um teste que resolva `HARNESS_DIR` para o caminho real **sem** a marca `@pytest.mark.touches_real`, When a suíte roda, Then a execução falha com mensagem explícita identificando o teste infrator.
+- **AC-3**: Given a suíte completa executada, When termina, Then o hash SHA-256 de cada arquivo do **conjunto protegido** é idêntico ao de antes da execução. Conjunto protegido: `state.json`, `signals.json`, `.session-files-count`, `trace-current.md`, `traces/**`. Explicitamente **fora** do conjunto: `router/`, `skills-index/`, `graphify-autosetup/` — são cache derivado e log, escritos pela sessão do Claude Code que executa a própria suíte, e verificá-los produziria falha garantida por motivo alheio aos testes.
 - **AC-4**: Given duas classes de teste distintas, When ambas rodam na mesma sessão, Then cada uma recebe um diretório próprio e não observa artefatos da outra.
 - **AC-5**: Given a suíte executada três vezes consecutivas, When comparados os resultados, Then são idênticos — sem flakiness introduzida por estado residual.
+- **AC-6**: Given um teste marcado `@pytest.mark.touches_real`, When a suíte roda, Then ele é permitido a resolver para o caminho real e aparece nomeado no sumário da execução.
 
 **Edge Cases**:
-- Teste que invoca hook por `subprocess`: o ambiente do filho precisa herdar o `HARNESS_DIR` da fixture.
-- Falha no meio da suíte: o diretório temporário fica para inspeção ou é removido? Ver `[CLARIF-2]`.
+- Teste que invoca hook por `subprocess`: o ambiente do filho precisa herdar o `HARNESS_DIR` da fixture — o helper `_env()` de `test_state_lock.py` já resolve isso.
+- Falha no meio da suíte: `tmp_path_factory` retém as três execuções mais recentes (CLARIF-2).
 
 ---
 
@@ -153,7 +169,7 @@ Fora de escopo (documentação, tratada em P-1.d): `README.md`, `skills/**/SKILL
 
 **Acceptance Criteria**:
 
-- **AC-1**: Given a suíte completa, When executada com o hook de verificação ativo, Then um relatório confirma que nenhum arquivo em `~/.claude/harness/` mudou de hash.
+- **AC-1**: Given a suíte completa, When executada com o hook de verificação ativo, Then um relatório confirma que nenhum arquivo do conjunto protegido (AC-3 da US-2) mudou de hash.
 - **AC-2**: Given um teste que deliberadamente escreva no diretório real, When a verificação roda, Then ela falha nomeando o arquivo alterado.
 
 ---
@@ -204,17 +220,25 @@ pytest → HarnessTestBase.setUpClass
 - [ ] **REQ-F1**: Todo componente resolve o diretório de estado por `HARNESS_DIR`, com fallback `~/.claude/harness`, usando o padrão já presente em `state-lock.sh:21`. [traces: US-1]
 - [ ] **REQ-F2**: A variável atravessa a fronteira bash → Python inline (heredoc) e bash → subprocess. [traces: US-1, US-3]
 - [ ] **REQ-F3**: Scripts com `--harness-dir` passam a usar `HARNESS_DIR` como default, mantendo a flag como override de maior precedência. [traces: US-1]
-- [ ] **REQ-F4**: `tests/conftest.py` provê fixture autouse com diretório temporário por classe. [traces: US-2]
-- [ ] **REQ-F5**: A fixture inclui verificação que falha a suíte se o `HARNESS_DIR` efetivo resolver para o caminho real. [traces: US-2]
+- [ ] **REQ-F4**: `tests/conftest.py` provê fixture autouse com diretório temporário por classe, **generalizando o padrão já existente em `tests/test_state_lock.py:38-55`** (`harness_dir(tmp_path)` + helper `_env()`); `test_state_lock.py` passa a consumir a fixture promovida em vez da local. [traces: US-2]
+- [ ] **REQ-F5**: A fixture inclui verificação que falha a suíte se o `HARNESS_DIR` efetivo resolver para o caminho real, com opt-out explícito por `@pytest.mark.touches_real` — declarado no teste e visível no sumário. [traces: US-2]
 - [ ] **REQ-F6**: `HarnessTestBase` deixa de fazer backup/restore. [traces: US-3]
 - [ ] **REQ-F7**: Meta-teste demonstra que a verificação de segurança dispara quando violada. [traces: US-2, US-4]
+- [ ] **REQ-F8**: `HarnessTestBase.setUpClass` cria o diretório temporário quando `HARNESS_DIR` não estiver definida, de modo que o isolamento valha também na execução standalone; o assert de segurança opera nos dois modos. [traces: US-3; resolve CLARIF-1]
+- [ ] **REQ-F9**: A fixture pytest usa `tmp_path_factory`; o modo standalone usa `tempfile.mkdtemp()` com remoção apenas em sucesso e caminho impresso no stderr em caso de falha. [traces: US-2; resolve CLARIF-2]
+- [ ] **REQ-F10**: `test_router_golden.py` recebe `@pytest.mark.integration` e `@pytest.mark.touches_real`, mantém o `skip` condicional e sai do gate hermético, documentado no `TEST_MATRIX.md` com pré-condição declarada. [traces: US-2; resolve CLARIF-3]
+      *Nota do grill-me (round 1):* a outra metade da CLARIF-3 — tornar `test_build_skills_index.py` hermético — **já está satisfeita no código atual**: ele usa `tmp_path` e `out = str(tmp_path / "idx")` (L115-117, L153-159), inclusive com embeddings falsos. Nenhuma ação necessária ali.
+- [ ] **REQ-F11**: `health-check.sh` resolve o diretório por `HARNESS_DIR` e imprime no cabeçalho qual está inspecionando. [traces: US-1; resolve CLARIF-4]
+- [ ] **REQ-F12**: Quando `HARNESS_DIR` estiver definida e divergir do default, os hooks registram o caminho resolvido em `debug-classify.log` e o `health-check.sh` emite WARN visível no cabeçalho. [traces: US-1; mitiga o risco introduzido pela própria feature — ver Riscos]
+- [ ] **REQ-F13**: Quando `--harness-dir` e `HARNESS_DIR` estiverem ambos definidos e divergirem, a flag prevalece **e** um aviso é emitido no stderr identificando os dois valores. [traces: US-1]
 
 ### Non-Functional
 
 - [ ] **REQ-NF1 (Compatibilidade)**: Com `HARNESS_DIR` ausente, o comportamento em runtime é idêntico ao atual — nenhum usuário percebe a mudança. [traces: all]
 - [ ] **REQ-NF2 (Segurança de dados)**: Nenhum caminho de execução da suíte escreve fora do diretório temporário. [traces: US-2, US-4]
-- [ ] **REQ-NF3 (Performance)**: Tempo total da suíte não aumenta mais que 10% em relação ao baseline medido antes da mudança. [traces: all]
+- [ ] **REQ-NF3 (Performance)**: Tempo total da suíte não aumenta mais que 10% em relação ao baseline. **Pré-condição**: a primeira ação da fase `tdd` — antes de tocar em qualquer arquivo — é executar a suíte 3× e gravar tempos e variância em `waves/w0-chao-de-fabrica/baseline-suite.json`. Sem isso o requisito é circular, já que o `BASELINE.md` é entregável posterior da mesma onda. [traces: all]
 - [ ] **REQ-NF4 (Portabilidade)**: Funciona em Git Bash no Windows, incluindo paths com espaço. [traces: US-1]
+- [ ] **REQ-NF5 (Corretude de diagnóstico)**: O bloco de proveniência do `health-check.sh` (introduzido em P-1.a) inspeciona sempre o cache real do plugin, **ignorando** `HARNESS_DIR` — "qual código roda" e "qual estado" não compartilham variável. [traces: US-1; resolve CLARIF-4]
 
 ---
 
@@ -243,12 +267,51 @@ pytest → HarnessTestBase.setUpClass
 
 ---
 
-## [NEEDS CLARIFICATION]
+## [NEEDS CLARIFICATION] — todas resolvidas
 
-- [ ] **CLARIF-1**: `test_harness.py` documenta execução standalone (`python test_harness.py`, docstring L7-10), que não passa pelo `conftest.py`. Três opções: **(a)** manter o modo standalone criando o tempdir também no `setUpClass` quando `HARNESS_DIR` não estiver definida; **(b)** abandonar o modo standalone e exigir pytest, atualizando o docstring; **(c)** fazer o standalone falhar com mensagem explícita instruindo a usar pytest. Qual?
-- [ ] **CLARIF-2**: Quando um teste falha, o diretório temporário deve ser **preservado para inspeção** (útil em depuração, mas acumula lixo em `/tmp`) ou **removido sempre**? Sugestão: preservar apenas em falha, via `tmp_path_factory` do pytest, que já mantém as últimas três execuções.
-- [ ] **CLARIF-3**: `scripts/build_skills_index.py` grava o índice de skills (276 entradas, embeddings f16) em `~/.claude/harness/skills-index/`. Reconstruí-lo por teste é caro e depende do Ollama. Isolar também (testes passam a usar índice sintético pequeno), ou tratar o índice como recurso externo somente-leitura, fora do escopo do `HARNESS_DIR`? Isso afeta `test_build_skills_index.py` e `test_router_golden.py`.
-- [ ] **CLARIF-4**: `scripts/health-check.sh` é ferramenta de diagnóstico do ambiente real do usuário. Ele deve respeitar `HARNESS_DIR` (útil para diagnosticar um ambiente isolado) ou permanecer sempre apontado para o real (evita relatório enganoso)? Sugestão: respeitar a variável e imprimir qual diretório está inspecionando.
+Resolvidas por Leonardo em 2026-07-24. Registradas com o racional, porque cada decisão tem consequência de desenho.
+
+- [x] **CLARIF-1 — modo standalone do `test_harness.py`**
+  **Decisão: manter, com o tempdir criado no próprio `setUpClass` quando `HARNESS_DIR` não estiver definida.**
+  Racional: o invariante nº 3 da estratégia diz que nenhum invariante pode depender de disciplina. Se o isolamento existisse apenas no `conftest.py`, seria propriedade do *caminho de invocação* — rodar o arquivo por qualquer outra via (standalone, runner futuro, crash test que executa direto) perderia a proteção em silêncio. Com a criação no `setUpClass`, o isolamento vira propriedade do arquivo de teste, e o conftest apenas reforça. Consequência: o assert de segurança precisa valer nos dois modos.
+  → gera **REQ-F8**
+
+- [x] **CLARIF-2 — retenção do diretório temporário**
+  **Decisão: `tmp_path_factory` do pytest, sem lógica própria de limpeza.**
+  Racional: já retém as três execuções mais recentes e descarta as anteriores — em falha há o que inspecionar, em uso normal não acumula. No modo standalone, `tempfile.mkdtemp()` com remoção apenas em sucesso e o caminho impresso no stderr em caso de falha.
+  → gera **REQ-F9**
+
+- [x] **CLARIF-3 — `skills-index`**
+  **Decisão: separar por natureza do teste. O índice é cache derivado, não estado do harness.**
+  - `test_build_skills_index.py` testa a *construção*: torna-se hermético, com `HARNESS_DIR` isolado e fixture sintética de 3–5 skills, usando a flag **`--no-embed` já existente**. Rápido, determinístico, sem Ollama.
+  - `test_router_golden.py` é o *gate de acurácia* (93,3% contra as 276 skills reais): precisa do artefato real e do Ollama por definição. Mantém o `skip` atual, ganha marca `@pytest.mark.integration`, sai do gate hermético e entra no `TEST_MATRIX.md` como teste de integração com pré-condição declarada.
+  Consequência: o gate "suíte verde 3× sem tocar o real" passa a ser honesto, e o golden set continua medido — em outra categoria.
+  → gera **REQ-F10**
+
+- [x] **CLARIF-4 — `health-check.sh`**
+  **Decisão: respeitar `HARNESS_DIR` e imprimir no cabeçalho qual diretório está sendo inspecionado — com uma exceção.**
+  Racional: a partir da Onda 2 haverá store em shadow e canários; diagnosticar ambiente isolado sem editar o script deixa de ser conveniência. O risco de relatório enganoso é eliminado pela linha de cabeçalho.
+  **Exceção explícita:** o bloco de **proveniência** introduzido em P-1.a inspeciona sempre o cache real do plugin, ignorando `HARNESS_DIR`. A pergunta dele é *"qual código está rodando"*, não *"qual estado"* — as duas não devem compartilhar a mesma variável, sob pena de bug sutil na P-1.a.
+  → gera **REQ-F11** e **REQ-NF5**
+
+---
+
+## Riscos introduzidos por esta feature
+
+Levantado no grill-me (round 1). O plano §4.3 exige registro de riscos de cada mudança; este é específico desta task e será propagado ao `RISK_REGISTER.md` como **R10** ao fim da implementação.
+
+### R10 — `HARNESS_DIR` vazada redireciona o estado de produção em silêncio
+
+**Causa.** Hoje o caminho é hardcoded, o que torna impossível apontar o harness para o lugar errado por acidente. Ao tornar a variável efetiva em runtime, uma definição esquecida em `.bashrc`, herdada de um terminal, ou vazada de uma execução de teste passa a redirecionar as escritas de produção.
+
+**Efeito.** O usuário perde continuidade de estado sem qualquer sinal — o sintoma aparente é "o harness esqueceu a task", e a causa real fica invisível.
+
+**Probabilidade.** Baixa, mas com janela permanente após esta feature.
+**Impacto.** Médio — recuperável, porém confuso e demorado de diagnosticar.
+
+**Mitigação.** REQ-F12: os hooks registram o caminho resolvido em `debug-classify.log` sempre que ele divergir do default, e o `health-check.sh` emite WARN visível no cabeçalho. Custo baixo, elimina a classe inteira de confusão.
+
+**Rollback.** Nenhum necessário — o default preserva o comportamento atual.
 
 ---
 
@@ -256,9 +319,10 @@ pytest → HarnessTestBase.setUpClass
 
 - [ ] Todos os AC de P1 (US-1, US-2, US-3) passando em testes automatizados
 - [ ] Suíte completa verde **três vezes consecutivas**
-- [ ] SHA-256 de todos os arquivos em `~/.claude/harness/` idêntico antes e depois das três execuções
-- [ ] Meta-teste do assert de segurança passando (a verificação dispara quando violada)
-- [ ] Tempo da suíte dentro de +10% do baseline pré-mudança
+- [ ] SHA-256 do **conjunto protegido** (AC-3 da US-2) idêntico antes e depois das três execuções
+- [ ] Meta-teste do assert de segurança passando (a verificação dispara quando violada, e a marca `touches_real` a suprime)
+- [ ] `baseline-suite.json` gravado **antes** da primeira alteração de arquivo
+- [ ] Tempo da suíte dentro de +10% do baseline registrado em `baseline-suite.json`
 - [ ] Zero findings críticos em `verify-against-spec`
 - [ ] Zero findings críticos/altos em `wf-verify-multimodel`
 - [ ] Todos os `[NEEDS CLARIFICATION]` resolvidos
@@ -277,9 +341,15 @@ pytest → HarnessTestBase.setUpClass
   "generated_by": "write-spec skill",
   "generated_at": "2026-07-24",
   "priorities": ["P1", "P2", "P3"],
-  "requirement_count": 11,
+  "requirement_count": 18,
   "user_story_count": 5,
-  "needs_clarification_count": 4,
+  "needs_clarification_count": 0,
+  "needs_clarification_resolved": 4,
+  "grilled": true,
+  "grill_rounds": 1,
+  "grill_findings": 7,
+  "scope_reductions": 2,
+  "new_risks": ["R10"],
   "risk_refs": ["R2"],
   "plan_refs": ["§5"]
 }
