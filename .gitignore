@@ -7,6 +7,9 @@ trace-current.md
 traces/
 backups/
 
+# Worktrees da autorreforma (git worktree aninhado, nao versionado)
+worktrees/
+
 # Python
 __pycache__/
 *.pyc
