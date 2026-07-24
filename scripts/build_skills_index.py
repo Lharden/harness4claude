@@ -59,3 +59,61 @@ def parse_frontmatter(text):
             out[key] = val
             i += 1
     return out
+
+
+def _load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
+                claude_json=CLAUDE_JSON, personal_dir=PERSONAL_SKILLS_DIR):
+    """Lista skills de plugins instalados (via installPath) + pessoais, sem embeddings."""
+    enabled_map = _load_json(settings_json, {}).get("enabledPlugins", {})
+    usage = _load_json(claude_json, {}).get("skillUsage", {})
+    aliases = _load_json(ALIASES_JSON, {})
+    skills = []
+
+    def add(plugin_label, source, enabled, skill_dir):
+        md = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.isfile(md):
+            return
+        try:
+            with open(md, encoding="utf-8", errors="replace") as f:
+                fm = parse_frontmatter(f.read(16384))
+        except OSError:
+            return
+        name = fm.get("name") or os.path.basename(skill_dir)
+        desc = (fm.get("description") or "").strip()
+        short = plugin_label.split("@")[0]
+        sid = name if source == "personal" else f"{short}:{name}"
+        u = usage.get(sid) or usage.get(name) or {}
+        skills.append({
+            "id": sid, "name": name, "plugin": plugin_label, "source": source,
+            "enabled": enabled, "path": md, "description": desc,
+            "desc_chars": len(desc), "aliases": list(aliases.get(sid, [])),
+            "usage_count": int(u.get("usageCount", 0)),
+            "last_used_at": u.get("lastUsedAt"), "vec_row": -1,
+        })
+
+    for pid, entries in _load_json(installed_json, {}).get("plugins", {}).items():
+        for entry in entries or []:
+            root = entry.get("installPath")
+            if not root or not os.path.isdir(root):
+                continue
+            sroot = os.path.join(root, "skills")
+            if not os.path.isdir(sroot):
+                continue
+            enabled = bool(enabled_map.get(pid, False))
+            for d in sorted(os.listdir(sroot)):
+                add(pid, "marketplace", enabled, os.path.join(sroot, d))
+
+    if os.path.isdir(personal_dir):
+        for d in sorted(os.listdir(personal_dir)):
+            add(d, "personal", True, os.path.join(personal_dir, d))
+
+    skills.sort(key=lambda s: s["id"])
+    return skills
