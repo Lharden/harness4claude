@@ -58,6 +58,12 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-session-start.sh\"",
             "timeout": 15000,
             "statusMessage": "Inicializando Harness v3..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-graphify-autosetup.sh\"",
+            "timeout": 10000,
+            "statusMessage": "Graphify auto-setup..."
           }
         ]
       }
