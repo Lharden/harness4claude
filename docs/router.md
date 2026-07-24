@@ -63,6 +63,25 @@ Todos os números abaixo foram medidos e confirmados de forma independente.
 - **Pipeline ativo suprime dicas** (por design). Um state.json com task abandonada `status: active` silencia o router — concluir/limpar a task pendente do harness resolve.
 - Rebuild em background pode morrer com o hook (MSYS): o marker `.stale` fica e o próximo SessionStart retenta; índice velho continua servível. (Deviação deliberada do design: o router NÃO retenta spawn no hot path.)
 
+## Riscos conhecidos
+
+**Race de leitura no `state.json` (Windows).** O router abre
+`~/.claude/harness/state.json` em modo leitura (`passes_guards`) a cada prompt
+elegível, concorrentemente com `harness-classify.sh`, que grava o mesmo arquivo
+via `os.replace` (escrita atômica) sem retry. No Windows, `os.replace` sobre um
+arquivo aberto por outro processo pode falhar com uma sharing violation
+(`PermissionError`/`WinError 32`) em vez de suceder silenciosamente como no
+POSIX — isto é uma característica do filesystem do Windows, não um bug de
+lógica. Em teoria isto pode, raramente, fazer a escrita atômica de
+`harness-classify` falhar.
+
+Mitigação em escopo nesta branch: apenas esta documentação — o router já é
+read-only e tolera qualquer falha de leitura (`OSError`/`ValueError` viram
+"sem pipeline ativo", nunca uma exceção que escape do hook). Endurecer
+`_atomic_write_json` do classify com um retry loop é um follow-up fora de
+escopo aqui: `harness-classify.sh` é arquivo protegido e não deve ser tocado
+por esta branch.
+
 ## Rollback
 1. Remover os 2 blocos novos (router em UserPromptSubmit, warmup em SessionStart) de `hooks/hooks.json`.
 2. Opcional: apagar `~/.claude/harness/skills-index/` e `~/.claude/harness/router/` (dados inertes).

@@ -49,10 +49,20 @@ def _dbg(msg):
         pass
 
 
+def _is_specific_name(name):
+    """Nome de skill so entra na Camada A se for distintivo (multi-token ou longo),
+    para uma palavra comum como 'configure'/'access' nao suprimir a Camada B."""
+    n = name.strip()
+    return "-" in n or "_" in n or " " in n or len(n) >= 12
+
+
 def layer_a(prompt_low, skills):
     hits = []
     for s in skills:
-        for term in [s["name"]] + list(s.get("aliases", [])):
+        terms = list(s.get("aliases", []))
+        if _is_specific_name(s["name"]):
+            terms = [s["name"]] + terms
+        for term in terms:
             t = term.strip().lower()
             if len(t) < 3:
                 continue
@@ -104,6 +114,19 @@ def pick(a_hits, b_scored):
             chosen.append(h)
             seen.add(h["id"])
     return chosen[:TOP_K]
+
+
+def route(prompt, skills, vecs):
+    """Orquestra Camada A + gating + Camada B + pick. Retorna chosen (pre-dedupe).
+    Camada B (embed) so dispara quando a Camada A nao acha nada."""
+    a_hits = layer_a(prompt.lower(), skills)
+    b_scored = []
+    if vecs and not a_hits:
+        try:
+            b_scored = layer_b(embed_query(prompt), skills, vecs)
+        except Exception as e:  # timeout/conexao: degrada p/ Camada A
+            _dbg(f"layer B degraded: {type(e).__name__}: {e}")
+    return pick(a_hits, b_scored)
 
 
 def passes_guards(prompt, state_json=STATE_JSON):
@@ -209,14 +232,7 @@ def main():
         _dbg(f"index load failed: {e}")
         return 0
     skills = index.get("skills", [])
-    a_hits = layer_a(prompt.lower(), skills)
-    b_scored = []
-    if vecs and not a_hits:  # Camada B (embed ~900ms) so quando a Camada A nao acha nada
-        try:
-            b_scored = layer_b(embed_query(prompt), skills, vecs)
-        except Exception as e:  # timeout/conexao: degrada p/ Camada A
-            _dbg(f"layer B degraded: {type(e).__name__}: {e}")
-    chosen = apply_dedupe(pick(a_hits, b_scored), payload.get("session_id", ""))
+    chosen = apply_dedupe(route(prompt, skills, vecs), payload.get("session_id", ""))
     if not chosen:
         return 0
     sys.stdout.write(json.dumps({

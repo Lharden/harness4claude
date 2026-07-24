@@ -24,6 +24,20 @@ def test_layer_a_name_and_alias():
     assert sr.layer_a("undeckable", [_skill("q:deck-maker", aliases=["deck"])]) == []
 
 
+def test_layer_a_generic_name_needs_alias_or_specificity():
+    # nome generico de uma palavra, sem alias: NAO deve fast-pathear via Camada A
+    generic = [_skill("t:configure")]
+    assert sr.layer_a("please configure the deployment pipeline", generic) == []
+    # mesmo nome generico, mas com alias cadastrado: o alias SIM casa
+    generic_with_alias = [_skill("t:configure", aliases=["configurar deploy"])]
+    hits = sr.layer_a("preciso configurar deploy agora", generic_with_alias)
+    assert {h["id"] for h in hits} == {"t:configure"}
+    # nome hifenizado (especifico) casa mesmo sem alias
+    specific = [_skill("p:write-spec")]
+    hits2 = sr.layer_a("quero um write-spec para essa feature", specific)
+    assert {h["id"] for h in hits2} == {"p:write-spec"}
+
+
 def test_layer_b_scores_and_boost():
     skills = [_skill("a:x", usage=0), _skill("b:y", usage=50)]
     skills[0]["vec_row"], skills[1]["vec_row"] = 0, 1

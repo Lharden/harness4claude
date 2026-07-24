@@ -35,9 +35,7 @@ def test_golden_top3_hit_rate():
     for case in data["positives"]:
         expect = [e for e in case["expect_any"] if e in known]
         assert expect, f"nenhum id esperado existe no indice: {case['expect_any']}"
-        a = sr.layer_a(case["prompt"].lower(), skills)
-        b = sr.layer_b(sr.embed_query(case["prompt"]), skills, vecs)
-        top = [h["id"] for h in sr.pick(a, b)]
+        top = [h["id"] for h in sr.route(case["prompt"], skills, vecs)]
         ok = any(e in top for e in expect)
         hits += ok
         details.append(f"{'OK ' if ok else 'MISS'} {case['prompt'][:50]} -> {top}")
@@ -46,7 +44,6 @@ def test_golden_top3_hit_rate():
     assert rate >= 0.80, f"top-3 hit rate {rate:.0%} < 80%"
 
 
-@needs_stack
 def test_golden_negatives_no_injection():
     for case in data_negatives():
         assert sr.passes_guards(case["prompt"],

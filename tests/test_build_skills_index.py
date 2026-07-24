@@ -136,6 +136,20 @@ def test_check_stale_missing_index(tmp_path):
     assert bsi.check_stale(str(tmp_path / "nao-existe"), skills=[]) is True
 
 
+def test_alias_keys_resolve_to_real_skill_ids():
+    """Toda chave de skill-aliases.json deve bater com um id real do scan_skills()
+    do sistema atual, senao o alias fica orfao e nunca casa na Camada A."""
+    aliases = bsi._load_json(bsi.ALIASES_JSON, {})
+    if not aliases:
+        return  # sem aliases cadastrados: nada a verificar
+    skills = bsi.scan_skills()
+    if not skills:
+        return  # sistema sem skills escaneaveis (ambiente de teste isolado)
+    known = {s["id"] for s in skills}
+    dangling = [key for key in aliases if key not in known]
+    assert not dangling, f"chaves de alias sem skill correspondente: {dangling}"
+
+
 def test_build_with_fake_embeddings(tmp_path, monkeypatch):
     srv = HTTPServer(("127.0.0.1", 0), _FakeOllama)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
