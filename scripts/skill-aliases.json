@@ -1,0 +1,10 @@
+{
+  "harness4claude:write-spec": ["spec formal", "user stories", "acceptance criteria"],
+  "harness4claude:design-doc": ["design tecnico", "design doc"],
+  "harness4claude:grill-me": ["perguntas adversariais"],
+  "harness4claude:security-scan-python": ["bandit", "pip-audit", "scan de seguranca", "security scan"],
+  "slb-presentations": ["deck", "pptx", "powerpoint", "apresentacao"],
+  "graphify": ["knowledge graph", "grafo de conhecimento", "god nodes"],
+  "superpowers:brainstorming": ["brainstorm", "brainstorming"],
+  "superpowers:test-driven-development": ["tdd"]
+}
