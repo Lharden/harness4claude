@@ -228,28 +228,44 @@ class TestOverrideLeavesTrace:
 # ---------------------------------------------------------------------------
 # INV-4: nenhum expanduser compondo caminho de estado
 # ---------------------------------------------------------------------------
-def test_inv4_no_unguarded_expanduser_state_paths():
+# Janela de contexto para a checagem do INV-4. Cobre o padrao
+#   env = os.environ.get("HARNESS_DIR")
+#   if env: return Path(env)
+#   return Path.home() / ".claude" / "harness"
+# onde a consulta e a composicao do default ficam em linhas distintas.
+_INV4_CONTEXT_LINES = 5
+
+
+def test_inv4_no_unguarded_default_path_composition():
     """Criterio de conclusao da Fase 1, nao sugestao de revisao.
 
-    INV-4 nao proibe expanduser: o fallback legitimo PRECISA compor
-    ~/.claude/harness quando a variavel esta ausente. O que a regra proibe e
-    compor esse caminho *sem consultar HARNESS_DIR primeiro*.
+    INV-4 nao proibe compor `~/.claude/harness` — o fallback legitimo PRECISA
+    faze-lo quando a variavel esta ausente, que e o proprio REQ-NF1. O que a
+    regra proibe e compor esse caminho *sem consultar HARNESS_DIR por perto*.
 
-    A deteccao e por linha: uma linha que compoe o caminho de estado deve, ela
-    mesma, conter a consulta a variavel (o padrao `os.environ.get("HARNESS_DIR")
-    or ...`). Linha que compoe sem consultar e violacao.
+    Deteccao: uma linha que resolve o home (`expanduser` ou `Path.home()`) e
+    menciona `.claude` deve ter `HARNESS_DIR` nela ou nas linhas imediatamente
+    anteriores.
+
+    NOTA DE FRAGILIDADE: este criterio ja foi refinado duas vezes — a primeira
+    proibia o fallback legitimo, a segunda dava falso positivo em
+    `args.harness_dir.expanduser()`, que nao compoe default nenhum. Deteccao
+    textual e heuristica: aproxima a intencao do invariante, nao o prova. A
+    prova real esta nos testes de comportamento acima, que verificam ONDE cada
+    hook efetivamente escreve.
     """
     offenders: list[str] = []
     for d in (HOOKS, SCRIPTS):
         for f in list(d.glob("*.sh")) + list(d.glob("*.py")):
-            for n, line in enumerate(
-                f.read_text(encoding="utf-8", errors="replace").splitlines(), 1
-            ):
-                composes_state_path = "expanduser" in line and "harness" in line
-                consults_env = "HARNESS_DIR" in line
-                if composes_state_path and not consults_env:
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            for n, line in enumerate(lines, 1):
+                resolves_home = "expanduser" in line or "Path.home()" in line
+                if not (resolves_home and ".claude" in line):
+                    continue
+                window = lines[max(0, n - 1 - _INV4_CONTEXT_LINES):n]
+                if not any("HARNESS_DIR" in w for w in window):
                     offenders.append(f"{f.name}:{n}  |  {line.strip()[:70]}")
     assert not offenders, (
-        "caminho de estado composto sem consultar HARNESS_DIR (viola INV-4):\n  "
+        "caminho default composto sem consultar HARNESS_DIR (viola INV-4):\n  "
         + "\n  ".join(offenders)
     )

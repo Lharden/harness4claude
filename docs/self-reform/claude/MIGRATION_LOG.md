@@ -238,6 +238,66 @@ Ou seja: é o hook `PostToolUse` (`harness-reclassify.sh`) da sessão ativa do C
 
 **O que isso significa para o gate:** `state.json`, `signals.json` e `trace-current.md` — os três arquivos que os testes de fato corrompiam antes — ficaram **intactos** ao longo de uma suíte completa. Antes desta task, `state.json` era sobrescrito por `t-test-snap` e `signals.json` chegou a mudar de hash entre execuções. O hermetismo funcionou no que importa.
 
+---
+
+## 2026-07-25 — Fases 4 e 5 de P-1.b, e o fechamento das medições
+
+### Fase 4 — verificação de integridade como código
+
+`scripts/check_hermeticity.py` (`--snapshot` / `--verify`, com `--include-volatile` para o nível B) e `tests/test_check_hermeticity.py` (8 casos). Existe como script separado, e não apenas como teste, porque uma suíte interrompida nunca executa o teardown de um teste session-scoped — e o gate precisa de verificação externa.
+
+`scripts/bench_stats.py` — Mann-Whitney U com correção de empates e bootstrap de IC da mediana, em stdlib. É o D5 do ADR-002, antecipado porque o REQ-NF3 exige a comparação agora.
+
+**Um bug de fórmula pego pelo teste.** `test_identical_samples_give_no_evidence` falhou com p=0,819 onde deveria dar ≈1,0. Causa: a correção de continuidade era aplicada como `(u - μ + 0.5)/σ`, o que produz z ≠ 0 quando `U == μ` — ou seja, **fabricava evidência a partir de amostras idênticas**. Corrigido com clamp em zero: `max(0, |u − μ| − 0.5)`. O teste foi escrito contra um valor conhecido, não contra a implementação; um teste que apenas confirmasse o comportamento do código não teria detectado nada.
+
+### O gate INV-4 encontrou um arquivo que eu havia esquecido
+
+Nos runs finais, `test_inv4_no_unguarded_default_path_composition` acusou `scripts/vault_sync.py:115` — que compõe o default sem consultar `HARNESS_DIR`. **Não era falso positivo: era um gap real da Fase 1.** A spec listou 13 arquivos e `vault_sync.py` não estava entre eles; o gate pegou o que o inventário deixou passar. Corrigido com o mesmo padrão dos demais (`_default_harness_dir()`).
+
+**Terceira refinada do critério INV-4**, e vale registrar por quê:
+
+1. a primeira versão proibia o fallback legítimo — que é o próprio REQ-NF1;
+2. a segunda dava falso positivo em `args.harness_dir.expanduser()`, que não compõe default nenhum;
+3. a terceira usa janela de contexto de 5 linhas, verificada contra a linha original do bug (pega) e contra a versão corrigida (aceita).
+
+A nota de fragilidade ficou escrita no docstring do teste: **detecção textual é heurística — aproxima a intenção do invariante, não o prova.** A prova real está nos testes de comportamento, que verificam onde cada hook efetivamente escreve.
+
+### Fase 5 — contrato documentado
+
+`docs/HARNESS_DIR.md`: contrato, precedência, o que a variável **não** cobre (código do plugin, índice de skills, vault), usos legítimos, e o risco R10 com os dois mecanismos de rastro. A boundary NEVER da spec proíbe tocar README nesta task — isso fica com P-1.d.
+
+### Verificação de hermetismo — resultado final
+
+Três suítes completas consecutivas, com snapshot antes e verificação depois:
+
+```
+OK: conjunto protegido intacto (nivel A, 3 arquivos)
+```
+
+`state.json`, `signals.json` e `trace-current.md` **inalterados**. É o gate central da task, e passou.
+
+### REQ-NF3 — tempo
+
+| | Baseline | Pós-P-1.b |
+|---|---|---|
+| Execuções | 308,91 / 288,90 / 291,76 | 319,09 / 314,31 / 339,49 |
+| Média | 296,52 s | 324,30 s |
+| Desvio | 10,82 s (CV 3,6%) | 13,37 s (CV 4,1%) |
+
+Teto do REQ-NF3 (+10%): **326,18 s**. Medido: **324,30 s** → **dentro, por 1,88 s**.
+
+Mann-Whitney: **U=0, z=−1,746, p=0,0809** → com α=0,05, a diferença é **indistinguível do ruído**. Ou seja: nem a margem apertada contra o teto é estatisticamente sustentável como "ficou mais lento".
+
+**A leitura honesta, porém, é outra.** A suíte cresceu de **185 para 226 testes** (+22%) — comparar tempo absoluto de suítes de tamanhos diferentes engana. Normalizado:
+
+| | s/teste |
+|---|---|
+| Baseline | 1,603 |
+| Pós-P-1.b | 1,435 |
+| **Delta** | **−10,5%** |
+
+O custo por teste **caiu**. O aumento de 9,4% no total é o preço de 41 testes novos, e o requisito foi redigido antes de saber quantos seriam. Registro ambas as leituras porque a segunda favorece o resultado, e apresentar só ela seria conveniente demais.
+
 ### Pendências abertas ao fim desta entrada
 
 - P-1.a — ship 3.3.0 e proveniência (não iniciado)
