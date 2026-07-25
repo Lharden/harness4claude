@@ -142,6 +142,22 @@ Probabilidade e impacto em escala baixa/média/alta. `status`: aberto · mitigan
 | **Owner** | reforma |
 | **Status** | aberto |
 
+### R10 — `HARNESS_DIR` vazada redireciona o estado de produção em silêncio
+
+*Criado pela própria feature P-1.b; propagado da spec em 2026-07-25.*
+
+| Campo | Conteúdo |
+|---|---|
+| **Causa** | Antes de P-1.b o caminho era fixo, o que tornava impossível apontar o harness para o lugar errado por acidente. Com a variável efetiva em runtime, uma definição esquecida no `.bashrc`, herdada de um terminal ou vazada de um teste passa a redirecionar as escritas de produção. |
+| **Efeito** | O usuário perde continuidade de estado sem sinal. O sintoma aparente é "o harness esqueceu a task", e a causa fica invisível. |
+| **Probabilidade** | baixa, mas com janela permanente a partir desta feature |
+| **Impacto** | médio — recuperável, porém confuso e demorado de diagnosticar |
+| **Detecção** | `harness-classify.sh` registra o caminho resolvido em `debug-classify.log` quando difere do default; `health-check.sh` imprime `Inspecionando: <dir>` e emite WARN no cabeçalho. Primeira verificação diante do sintoma: `echo $HARNESS_DIR`. |
+| **Mitigação** | REQ-F12, implementado e testado (`TestOverrideLeavesTrace`). Contrato documentado em `docs/HARNESS_DIR.md`. |
+| **Rollback** | Nenhum necessário — o default preserva o comportamento anterior (REQ-NF1). |
+| **Owner** | reforma |
+| **Status** | mitigado |
+
 ---
 
 ## Seção P — Riscos mínimos exigidos pelo plano §4.3
