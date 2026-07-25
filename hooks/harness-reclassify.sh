@@ -2,8 +2,12 @@
 # harness-reclassify.sh — Conta arquivos, reclassifica L0→L1 se 3+
 set -euo pipefail
 
+# Resolve HARNESS_DIR ANTES do cygpath (INV-3): converter primeiro descartaria
+# o override, pois cygpath operaria sobre o default.
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
+
 # Convert paths for Python on Windows
-HARNESS_DIR="$HOME/.claude/harness"
 if command -v cygpath &>/dev/null; then
     HARNESS_DIR_WIN=$(cygpath -w "$HARNESS_DIR")
 else

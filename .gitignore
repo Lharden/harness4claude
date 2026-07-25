@@ -10,6 +10,9 @@ backups/
 # Worktrees da autorreforma (git worktree aninhado, nao versionado)
 worktrees/
 
+# Cache do pip criado no cwd quando um subprocess roda com HOME sobrescrito
+pip/
+
 # Python
 __pycache__/
 *.pyc

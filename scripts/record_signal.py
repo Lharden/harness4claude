@@ -100,10 +100,28 @@ def record(harness_dir: Path, task: dict) -> dict:
     return signals
 
 
+def default_harness_dir() -> Path:
+    """Diretorio de estado: HARNESS_DIR se definida, senao ~/.claude/harness."""
+    env = os.environ.get("HARNESS_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path.home() / ".claude" / "harness"
+
+
+def warn_if_flag_diverges_from_env(chosen: Path) -> None:
+    """REQ-F13: a flag vence, mas divergencia silenciosa esconde bug."""
+    env = os.environ.get("HARNESS_DIR")
+    if env and Path(env).expanduser().resolve() != Path(chosen).expanduser().resolve():
+        print(
+            f"aviso: --harness-dir={chosen} sobrepoe HARNESS_DIR={env}",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     """Ponto de entrada CLI."""
     parser = argparse.ArgumentParser(description="Registra task em signals.json.")
-    default_dir = Path.home() / ".claude" / "harness"
+    default_dir = default_harness_dir()
     parser.add_argument("--harness-dir", type=Path, default=default_dir)
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--completed", action="store_true", help="pipeline concluido")
@@ -118,6 +136,7 @@ def main() -> int:
         "(proteção contra state sobrescrito por sessão paralela)",
     )
     args = parser.parse_args()
+    warn_if_flag_diverges_from_env(args.harness_dir)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     state = load_json(args.harness_dir / "state.json")

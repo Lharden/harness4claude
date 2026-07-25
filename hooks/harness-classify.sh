@@ -11,12 +11,20 @@ export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 export LANG=C.UTF-8
 
-HARNESS_DIR="$HOME/.claude/harness"
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR   # necessario: o python inline abaixo le via os.environ
 STATE_FILE="$HARNESS_DIR/state.json"
 COUNTER_FILE="$HARNESS_DIR/.session-files-count"
 
 # Ensure harness dir exists
 mkdir -p "$HARNESS_DIR"
+
+# REQ-F12 (mitiga R10): um HARNESS_DIR vazado do ambiente redirecionaria o
+# estado de producao em silencio. O override e legitimo, mas nunca invisivel.
+if [ "$HARNESS_DIR" != "$HOME/.claude/harness" ]; then
+    printf 'HARNESS_DIR override ativo: %s (default: %s/.claude/harness)\n' \
+        "$HARNESS_DIR" "$HOME" >> "$HARNESS_DIR/debug-classify.log" 2>/dev/null || true
+fi
 
 # Acquire exclusive lock on state.json before any read/modify/write.
 # Without this, parallel sessions in Claude Code Desktop App can corrupt state.
@@ -53,7 +61,8 @@ try:
     print(clean)
 except Exception as e:
     import os
-    debug = os.path.join(os.path.expanduser('~'), '.claude', 'harness', 'debug-classify.log')
+    _hd = os.environ.get('HARNESS_DIR') or os.path.join(os.path.expanduser('~'), '.claude', 'harness')
+    debug = os.path.join(_hd, 'debug-classify.log')
     with open(debug, 'a', encoding='utf-8') as f:
         f.write(f'{e}\n')
     sys.exit(1)

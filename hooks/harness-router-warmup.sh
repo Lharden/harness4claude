@@ -5,7 +5,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONUTF8=1
 PY="$(command -v python3 || command -v python || true)"
 [ -z "$PY" ] && exit 0
-IDX="$HOME/.claude/harness/skills-index"
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
+IDX="$HARNESS_DIR/skills-index"
 BUILDER="$DIR/../scripts/build_skills_index.py"
 mkdir -p "$IDX" 2>/dev/null || true
 if ! "$PY" "$BUILDER" --check-stale >/dev/null 2>&1; then

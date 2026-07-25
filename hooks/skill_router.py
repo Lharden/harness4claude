@@ -15,7 +15,7 @@ import time
 import urllib.request
 
 HOME = os.path.expanduser("~")
-HARNESS_DIR = os.path.join(HOME, ".claude", "harness")
+HARNESS_DIR = os.environ.get("HARNESS_DIR") or os.path.join(HOME, ".claude", "harness")
 IDX_DIR = os.environ.get("HARNESS_SKILLS_INDEX",
                          os.path.join(HARNESS_DIR, "skills-index"))
 ROUTER_DIR = os.path.join(HARNESS_DIR, "router")

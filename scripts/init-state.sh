@@ -5,7 +5,8 @@
 
 set -euo pipefail
 
-HARNESS_DIR="$HOME/.claude/harness"
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
 mkdir -p "$HARNESS_DIR"
 
 if [ ! -f "$HARNESS_DIR/state.json" ]; then

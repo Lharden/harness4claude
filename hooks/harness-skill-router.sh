@@ -5,6 +5,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONUTF8=1
 PY="$(command -v python3 || command -v python || true)"
 [ -z "$PY" ] && exit 0
-mkdir -p "$HOME/.claude/harness/router" 2>/dev/null || true
-"$PY" "$DIR/skill_router.py" 2>>"$HOME/.claude/harness/router/shim-errors.log" || true
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
+mkdir -p "$HARNESS_DIR/router" 2>/dev/null || true
+"$PY" "$DIR/skill_router.py" 2>>"$HARNESS_DIR/router/shim-errors.log" || true
 exit 0

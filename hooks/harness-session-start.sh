@@ -7,7 +7,8 @@ set -euo pipefail
 # ============================================================================
 # Bootstrap: create state directory and files on first run
 # ============================================================================
-HARNESS_DIR="$HOME/.claude/harness"
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
 mkdir -p "$HARNESS_DIR"
 
 if [ ! -f "$HARNESS_DIR/state.json" ]; then
@@ -96,8 +97,15 @@ print(need)
 fi
 
 # Dep check (first run only)
+#
+# HARNESS_SKIP_DEPCHECK=1 pula este bloco. Necessario para testes hermeticos:
+# com HARNESS_DIR temporario o flag .bootstrap-done nunca existe, entao cada
+# invocacao dispararia um "pip install --user" — lento, dependente de rede, e
+# com efeito colateral fora do diretorio isolado.
 BOOTSTRAP_FLAG="$HARNESS_DIR/.bootstrap-done"
-if [ ! -f "$BOOTSTRAP_FLAG" ]; then
+if [ -n "${HARNESS_SKIP_DEPCHECK:-}" ]; then
+    touch "$BOOTSTRAP_FLAG" 2>/dev/null || true
+elif [ ! -f "$BOOTSTRAP_FLAG" ]; then
     MISSING=""
     command -v python >/dev/null 2>&1 || MISSING="$MISSING python"
     command -v jq >/dev/null 2>&1 || MISSING="$MISSING jq"

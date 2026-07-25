@@ -45,7 +45,8 @@ REPO="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)"
 # ----------------------------------------------------------------------------
 # 4. Marker global: nudge/AST apenas UMA vez por repo
 # ----------------------------------------------------------------------------
-MARKER_DIR="$HOME/.claude/harness/graphify-autosetup"
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+MARKER_DIR="$HARNESS_DIR/graphify-autosetup"
 mkdir -p "$MARKER_DIR" 2>/dev/null
 SAFE="$(printf '%s' "$REPO" | tr '/\\: ' '____')"
 MARKER="$MARKER_DIR/$SAFE"

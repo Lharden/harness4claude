@@ -12,9 +12,22 @@ else
     PLUGIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 fi
 
-HARNESS_DIR="$HOME/.claude/harness"
+# REQ-F11: o diagnostico segue HARNESS_DIR, para permitir inspecionar ambientes
+# isolados (store em shadow, canarios) sem editar este script.
+#
+# ATENCAO (REQ-NF5, handoff para P-1.a): o futuro bloco de PROVENIENCIA — que
+# compara cache do plugin x git HEAD x marketplace — deve inspecionar sempre o
+# cache real, IGNORANDO HARNESS_DIR. Ele responde "qual codigo roda", nao "qual
+# estado"; as duas perguntas nao compartilham variavel.
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
 HOOKS_DIR="$PLUGIN_DIR/hooks"
 SKILLS_DIR="$PLUGIN_DIR/skills"
+
+echo "Inspecionando: $HARNESS_DIR"
+if [ "$HARNESS_DIR" != "$HOME/.claude/harness" ]; then
+    echo "WARN: HARNESS_DIR override ativo (default: $HOME/.claude/harness)"
+fi
 
 EXIT_CODE=0
 
@@ -52,8 +65,8 @@ echo ""
 echo "--- Harness state ---"
 check "state.json"                 "test -f '$HARNESS_DIR/state.json'"
 check "signals.json"               "test -f '$HARNESS_DIR/signals.json'"
-check "state.json is valid JSON"   "python -c 'import os, json; json.load(open(os.path.expanduser(\"~/.claude/harness/state.json\"), encoding=\"utf-8\"))'"
-check "signals.json is valid JSON" "python -c 'import os, json; json.load(open(os.path.expanduser(\"~/.claude/harness/signals.json\"), encoding=\"utf-8\"))'"
+check "state.json is valid JSON"   "python -c 'import json,sys; json.load(open(sys.argv[1], encoding=\"utf-8\"))' \"$HARNESS_DIR/state.json\""
+check "signals.json is valid JSON" "python -c 'import json,sys; json.load(open(sys.argv[1], encoding=\"utf-8\"))' \"$HARNESS_DIR/signals.json\""
 echo ""
 
 echo "--- Hooks ---"
@@ -89,7 +102,7 @@ check "record_signal.py"         "test -f '$PLUGIN_DIR/scripts/record_signal.py'
 check "vault_sync.py"            "test -f '$PLUGIN_DIR/scripts/vault_sync.py'"
 check "wf-verify-multimodel.js"  "test -f '$PLUGIN_DIR/scripts/workflows/wf-verify-multimodel.js'"
 check "wf-context-scan.js"       "test -f '$PLUGIN_DIR/scripts/workflows/wf-context-scan.js'"
-check "signals.version == 3"     "python -c \"import os,json,sys; d=json.load(open(os.path.expanduser('~/.claude/harness/signals.json'),encoding='utf-8')); sys.exit(0 if d.get('version')==3 else 1)\""
+check "signals.version == 3"     "python -c \"import json,sys; d=json.load(open(sys.argv[1],encoding='utf-8')); sys.exit(0 if d.get('version')==3 else 1)\" \"$HARNESS_DIR/signals.json\""
 if command -v node >/dev/null 2>&1; then
     check "Workflows validam (node)" "node '$PLUGIN_DIR/scripts/workflows/validate_workflows.cjs'"
 else
@@ -111,7 +124,7 @@ STALE_CHECK=$(python -c "
 import json, os, sys
 from datetime import datetime, timezone, timedelta
 try:
-    path = os.path.expanduser('~/.claude/harness/state.json')
+    path = os.path.join(os.environ['HARNESS_DIR'], 'state.json')
     with open(path, encoding='utf-8') as f:
         s = json.load(f)
     if s.get('status') == 'active' and s.get('started_at'):
