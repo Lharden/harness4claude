@@ -177,6 +177,21 @@ A segunda exigia investigação antes de qualquer conclusão. Evidências de que
 
 **Nenhuma regressão identificada.** Os 184 testes que passavam antes continuam passando.
 
+### Efeito colateral descoberto no commit — `pip install` disparado pelos testes
+
+O `git add -A` do commit da Fase 1 capturou **129 arquivos de `pip/cache/http-v2/`** (4.416 linhas) dentro do repositório. Investigação da causa:
+
+`hooks/harness-session-start.sh:98-112` roda `pip install --user -q -r requirements.txt` no dep-check de primeira execução, guardado pelo flag `.bootstrap-done`. Como os testes novos usam `HARNESS_DIR` temporário, **o flag nunca existe** — então cada invocação do hook nos testes disparava uma instalação de dependências. Lento, dependente de rede, e com efeito colateral fora do diretório supostamente isolado.
+
+Ironia registrada: um teste escrito para provar hermetismo estava, ele mesmo, vazando para fora do sandbox.
+
+**Correção em duas pontas:**
+1. Guard `HARNESS_SKIP_DEPCHECK` no hook (test seam mínimo, com o motivo em comentário) — quando ativo, apenas cria o flag e pula a instalação.
+2. Os testes o setam em `_env()`. Efeito medido: a suíte do arquivo caiu de **29 s para 22 s**.
+3. `pip/` adicionado ao `.gitignore`.
+
+**Sobre o histórico:** o commit foi corrigido por `--amend`, não por um commit de remoção. Justificativa: não havia sido publicado, e um commit posterior deixaria os 129 blobs binários permanentemente no histórico da reforma. O commit original permanece no reflog. Registrado aqui porque reescrita de histórico, mesmo local e mesmo justificada, não deve acontecer sem rastro.
+
 ### Pendências abertas ao fim desta entrada
 
 - P-1.a — ship 3.3.0 e proveniência (não iniciado)
