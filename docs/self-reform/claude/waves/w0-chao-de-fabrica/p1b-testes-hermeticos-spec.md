@@ -226,7 +226,8 @@ pytest → HarnessTestBase.setUpClass
 - [ ] **REQ-F7**: Meta-teste demonstra que a verificação de segurança dispara quando violada. [traces: US-2, US-4]
 - [ ] **REQ-F8**: `HarnessTestBase.setUpClass` cria o diretório temporário quando `HARNESS_DIR` não estiver definida, de modo que o isolamento valha também na execução standalone; o assert de segurança opera nos dois modos. [traces: US-3; resolve CLARIF-1]
 - [ ] **REQ-F9**: A fixture pytest usa `tmp_path_factory`; o modo standalone usa `tempfile.mkdtemp()` com remoção apenas em sucesso e caminho impresso no stderr em caso de falha. [traces: US-2; resolve CLARIF-2]
-- [ ] **REQ-F10**: `test_router_golden.py` recebe `@pytest.mark.integration` e `@pytest.mark.touches_real`, mantém o `skip` condicional e sai do gate hermético, documentado no `TEST_MATRIX.md` com pré-condição declarada. [traces: US-2; resolve CLARIF-3]
+- [ ] **REQ-F10**: `test_router_golden.py` recebe `@pytest.mark.integration` e `@pytest.mark.touches_real`, mantém o `skip` condicional e sai do gate hermético. **Esta task cria `docs/self-reform/claude/TEST_MATRIX.md`** em versão mínima — as duas marcas, os testes que as usam e suas pré-condições — a ser expandida ao longo da Onda 0. [traces: US-2; resolve CLARIF-3]
+      *Ajuste do validate-plan (GAP-1):* o requisito referenciava o `TEST_MATRIX.md` como se existisse; ele é entregável da Onda 0 sem dono declarado. Criar a versão mínima aqui custa pouco e remove a dependência pendente.
       *Nota do grill-me (round 1):* a outra metade da CLARIF-3 — tornar `test_build_skills_index.py` hermético — **já está satisfeita no código atual**: ele usa `tmp_path` e `out = str(tmp_path / "idx")` (L115-117, L153-159), inclusive com embeddings falsos. Nenhuma ação necessária ali.
 - [ ] **REQ-F11**: `health-check.sh` resolve o diretório por `HARNESS_DIR` e imprime no cabeçalho qual está inspecionando. [traces: US-1; resolve CLARIF-4]
 - [ ] **REQ-F12**: Quando `HARNESS_DIR` estiver definida e divergir do default, os hooks registram o caminho resolvido em `debug-classify.log` e o `health-check.sh` emite WARN visível no cabeçalho. [traces: US-1; mitiga o risco introduzido pela própria feature — ver Riscos]
@@ -235,10 +236,12 @@ pytest → HarnessTestBase.setUpClass
 ### Non-Functional
 
 - [ ] **REQ-NF1 (Compatibilidade)**: Com `HARNESS_DIR` ausente, o comportamento em runtime é idêntico ao atual — nenhum usuário percebe a mudança. [traces: all]
-- [ ] **REQ-NF2 (Segurança de dados)**: Nenhum caminho de execução da suíte escreve fora do diretório temporário. [traces: US-2, US-4]
+- [ ] **REQ-NF2 (Segurança de dados)**: Nenhuma execução da suíte altera qualquer arquivo do **conjunto protegido** em `~/.claude/harness/` (definido no AC-3 da US-2). [traces: US-2, US-4]
+      *Ajuste do validate-plan (GAP-4):* a redação anterior — "não escreve fora do diretório temporário" — prometia mais do que qualquer mecanismo desta task verifica. O assert cobre a resolução de `HARNESS_DIR`; a checagem de integridade cobre o conjunto protegido. Escritas em outros pontos do `$HOME` (por exemplo `~/.claude/settings.json`) não são detectadas por nenhum dos dois. Requisito redigido no que é de fato verificável; a lacuna fica registrada como limitação conhecida.
 - [ ] **REQ-NF3 (Performance)**: Tempo total da suíte não aumenta mais que 10% em relação ao baseline. **Pré-condição**: a primeira ação da fase `tdd` — antes de tocar em qualquer arquivo — é executar a suíte 3× e gravar tempos e variância em `waves/w0-chao-de-fabrica/baseline-suite.json`. Sem isso o requisito é circular, já que o `BASELINE.md` é entregável posterior da mesma onda. [traces: all]
 - [ ] **REQ-NF4 (Portabilidade)**: Funciona em Git Bash no Windows, incluindo paths com espaço. [traces: US-1]
-- [ ] **REQ-NF5 (Corretude de diagnóstico)**: O bloco de proveniência do `health-check.sh` (introduzido em P-1.a) inspeciona sempre o cache real do plugin, **ignorando** `HARNESS_DIR` — "qual código roda" e "qual estado" não compartilham variável. [traces: US-1; resolve CLARIF-4]
+- [ ] **REQ-NF5 (Corretude de diagnóstico)** — **transferido para P-1.a**: o bloco de proveniência do `health-check.sh` inspeciona sempre o cache real do plugin, **ignorando** `HARNESS_DIR`. "Qual código roda" e "qual estado" não compartilham variável.
+      *Ajuste do validate-plan (GAP-2):* o bloco de proveniência é entregue por P-1.a, que ainda não começou — logo este requisito não é verificável dentro de P-1.b e seria um FAIL permanente no gate. Sai do escopo verificável desta task e entra como **pré-requisito documentado de P-1.a**. P-1.b entrega apenas o comentário-âncora no `health-check.sh` avisando que o futuro bloco não deve usar `HARNESS_DIR` — porque é exatamente o tipo de coisa que alguém "corrige" meses depois sem entender o motivo. [traces: US-1; resolve CLARIF-4; handoff → P-1.a]
 
 ---
 

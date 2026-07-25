@@ -298,7 +298,27 @@ Nenhuma. As quatro clarificações foram resolvidas antes do grill-me, e os sete
 
 ## Phases
 
-Organizadas por prioridade de user story, conforme o princípio do design-doc. Cada fase é independentemente verificável.
+Organizadas por prioridade de user story, conforme o princípio do design-doc.
+
+### Dependência de ordem entre as fases `[ajuste do validate-plan, GAP-3]`
+
+As fases **não** são livremente ordenáveis, ao contrário do que a redação anterior sugeria. A ordem `1 → 2 → 3` é obrigatória:
+
+```
+Fase 1 (hooks respeitam HARNESS_DIR)
+   │  sem ela, os hooks invocados por subprocess continuam escrevendo no
+   │  diretório real — e o assert da Fase 2 NÃO detecta, porque ele inspeciona
+   │  a variável do processo pytest, não o destino real da escrita do filho
+   ▼
+Fase 2 (fixture + assert)
+   │  a Fase 3 depende da fixture promovida para o conftest
+   ▼
+Fase 3 (migração do test_harness.py)
+```
+
+O ponto sutil: entre as fases 2 e 1, o `AC-2` da US-3 ("os 56 testes passam") seria satisfeito com os hooks ainda escrevendo em produção. Verde enganoso. Só a verificação de integridade da Fase 4 pegaria — tarde demais.
+
+**Dentro** da Fase 1 a ordem entre os 13 arquivos permanece livre: o fallback preserva o comportamento, então cada arquivo é migrável e revertível isoladamente.
 
 ### Fase 1 — US-1 (P1): resolução por `HARNESS_DIR`
 
@@ -307,7 +327,7 @@ Camadas 1, 2 e 3 nos 13 arquivos de produção. Ordem livre entre eles — o fal
 
 ### Fase 2 — US-2 (P1): fixture promovida + assert
 
-`conftest.py` recebe a fixture de `test_state_lock.py`, o hook `pytest_runtest_setup`, as duas marcas, e o meta-teste. `test_state_lock.py` passa a consumir a fixture promovida.
+`conftest.py` recebe a fixture de `test_state_lock.py`, o hook `pytest_runtest_setup`, as duas marcas, e o meta-teste. `test_state_lock.py` passa a consumir a fixture promovida. `test_router_golden.py` recebe as marcas. Cria-se `TEST_MATRIX.md` em versão mínima.
 `[traces: REQ-F4, F5, F7, F9, F10]`
 
 ### Fase 3 — US-3 (P1): migração do `test_harness.py`
@@ -326,6 +346,60 @@ Camadas 1, 2 e 3 nos 13 arquivos de produção. Ordem livre entre eles — o fal
 
 `HARNESS_DIR` documentada. **Nota de fronteira**: a boundary NEVER da spec proíbe tocar documentação nesta task — esta fase entrega apenas a seção do contrato em `docs/`, e as correções de README ficam com P-1.d.
 `[traces: US-5]`
+
+---
+
+## Validation Report
+
+- **Status**: PASS (after revision 1)
+- **Validado em**: 2026-07-24
+- **Artefatos conferidos**: spec (18 REQs, 5 US), design (5 componentes, 4 invariantes, 5 fases), `docs/CONTEXT.md`
+
+### Cobertura de requisitos
+
+Todos os 18 requisitos mapeiam para pelo menos uma fase e um componente. Matriz:
+
+| Fase | Requisitos cobertos |
+|---|---|
+| 1 | REQ-F1, F2, F3, F11, F12, F13, NF1, NF4 |
+| 2 | REQ-F4, F5, F7, F9, F10 |
+| 3 | REQ-F6, F8 |
+| 4 | REQ-F7 (integridade), NF2 |
+| 5 | US-5 |
+| Test Strategy | REQ-NF3 (com pré-condição `baseline-suite.json`) |
+| **transferido** | REQ-NF5 → P-1.a |
+
+`docs/CONTEXT.md` verificado: escopo é a integração Graphify (L1–L4 Locked, D1–D5 Discretion, DF1–DF3 Deferred). **Nenhuma decisão Locked impacta P-1.b, e nenhum item Deferred aparece no escopo** — sem scope leak.
+
+### Gaps encontrados e corrigidos
+
+| # | Gap | Correção aplicada |
+|---|---|---|
+| **GAP-1** | REQ-F10 referenciava `TEST_MATRIX.md` como se existisse; é entregável da Onda 0 sem dono declarado | Criar versão mínima nesta task (Fase 2), expandida ao longo da onda |
+| **GAP-2** | REQ-NF5 depende do bloco de proveniência, entregue por P-1.a — seria FAIL permanente no gate de P-1.b | Transferido para P-1.a como pré-requisito documentado; P-1.b entrega só o comentário-âncora no `health-check.sh` |
+| **GAP-3** | Design declarava as fases "independentemente verificáveis", mas a ordem 1→2→3 é obrigatória: sem a Fase 1, os 56 testes passariam com os hooks ainda escrevendo em produção — **verde enganoso** que só a Fase 4 detectaria | Dependência de ordem declarada explicitamente, com o mecanismo do falso-verde documentado |
+| **GAP-4** | REQ-NF2 prometia "nenhuma escrita fora do tmp", mais amplo do que qualquer mecanismo da task verifica | Redigido no verificável (conjunto protegido); lacuna registrada como limitação conhecida |
+
+### Integridade de dependências
+
+- Sem dependências circulares. Cadeia única: Fase 1 → Fase 2 → Fase 3 → (4, 5).
+- Dentro da Fase 1, os 13 arquivos são independentes entre si — propriedade do fallback compatível.
+- Dependência externa declarada: `baseline-suite.json` precisa existir **antes** da primeira alteração de arquivo (REQ-NF3).
+
+### Completude técnica
+
+- Sem mudança de schema, endpoint ou API pública — nada a migrar ou versionar.
+- Contrato público novo (`HARNESS_DIR`) tem documentação prevista na Fase 5.
+- Novas marcas pytest têm registro previsto em `pytest_configure`.
+
+### Viabilidade
+
+- Zero dependências novas; tudo em stdlib, pytest e bash já presentes.
+- Nenhuma fase é "faça tudo": a maior (Fase 1) são 13 edições mecânicas do mesmo padrão, verificáveis uma a uma.
+
+### Revisões aplicadas
+
+Quatro correções pontuais em spec e design (GAP-1 a GAP-4). Nenhuma reescrita estrutural — a arquitetura passou sem alteração.
 
 ---
 
