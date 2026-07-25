@@ -51,6 +51,58 @@ Destino: `docs/self-reform/claude/backups/2026-07-24/` — **gitignored por desi
 
 **Inalterado.** Nenhum ship executado. O plugin em cache permanece em `3.2.0 @ 24c1812`. Conforme ADR-000, a promoção de P-1.a ocorre apenas na fronteira da Onda 0, em commit único, com gate humano.
 
+### Auditoria de meio de onda (2026-07-24, durante a medição do baseline)
+
+Verificação por comando das afirmações registradas nos documentos, mais os primeiros dados reais da suíte.
+
+**Confirmado:** 185 testes coletados · 89 arquivos versionados em `a56ee80` · divergência `plugin.json` 3.3.0-beta.1 × `marketplace.json` 3.2.0 · 7 ocorrências de `expanduser` compondo caminho de estado em `hooks/` e `scripts/`, consistentes com o INV-4 do design.
+
+**Corrigido:** a contagem de "10 caminhos hardcoded" estava errada — são **18 ocorrências em 9 arquivos**, e três delas **não são defeito** (`sync-machine.sh:88` é o script que clona para o destino; dois documentos são registro histórico). O INVENTORY foi corrigido com a tabela de natureza por arquivo, para que P-1.a não "conserte" o que está certo.
+
+#### ACHADO-1 — O baseline não é verde: `test_router_golden` falha a 47%
+
+Primeira execução do baseline: **1 failed, 184 passed em 308,91 s**.
+
+```
+FAILED tests/test_router_golden.py::test_golden_top3_hit_rate
+AssertionError: top-3 hit rate 47% < 80%   (7/15)
+```
+
+`docs/router.md` documenta **93,3% (14/15)** medido em 2026-07-23. O comportamento atual é metade disso.
+
+**Descartado por verificação direta:** Ollama responde e tem o modelo (`nomic-embed-text-v2-moe:latest` entre 8 modelos) · índice presente, 276 skills, dim 768, sem marker `.stale` · `embeddings.f16.bin` tem 423.936 bytes = 276 × 768 × 2, exatamente o esperado para embeddings reais.
+
+**Padrão observado:** os 8 MISS retornam lista vazia — o router não devolve *nada*, em vez de devolver a skill errada. Os 7 OK são casos que a Camada A resolve.
+
+**Hipóteses abertas, em ordem de plausibilidade:**
+
+1. **Contaminação cruzada dentro da própria suíte.** `skill_router.passes_guards()` lê o `state.json` **real** (hardcoded em `skill_router.py:22`) e retorna `False` quando `status ∈ {active, awaiting_gate}` e `pipeline` não está vazio. `test_harness.py` roda antes de `test_router_golden.py` na ordem alfabética e escreve tasks ativas nesse mesmo arquivo. Se o estado ficar sujo, o router é suprimido e devolve `[]` — exatamente o padrão observado.
+2. **Composição do índice mudou.** O índice foi reconstruído às 15:59 de 2026-07-24, depois da medição dos 93,3%. Um conjunto diferente de plugins habilitados altera o ranking e pode derrubar candidatos abaixo de `MIN_COS=0.45` ou da margem sobre a mediana.
+3. **Efeito da mudança de política do commit `1b42240`** (Camada B só dispara quando a Camada A não acha nada) sobre prompts que antes eram resolvidos por B.
+
+**Não determinado.** A causa raiz exige investigação dedicada com o state limpo e o índice controlado — o que não pode ser feito enquanto o baseline ocupa a suíte. Fica registrado como **task L1 separada**, fora do escopo de P-1.b.
+
+**Consequências imediatas:**
+
+- O REQ-F10 (marcar `test_router_golden` como `integration` + `touches_real`) ganha justificativa empírica: é o único teste da suíte que depende de ambiente externo e de estado compartilhado, e é o único que falha.
+- O gate "suíte verde 3×" de P-1.b passa a significar **184 passed, 1 known-fail documentado** — e não pode ser declarado verde sem essa nota, sob pena de mascarar uma regressão real.
+- `docs/router.md` está desatualizado em relação ao comportamento observável. Corrigir faz parte de P-1.d.
+- **Não afirmar que P-1.b corrige isso.** Se a hipótese 1 estiver certa, o hermetismo elimina a causa como efeito colateral — mas isso é previsão, não resultado, e só a medição pós-implementação decide.
+
+#### ACHADO-2 — Evidência ao vivo do risco R2
+
+Durante a execução do baseline, uma inspeção do `state.json` **de produção** retornou:
+
+```
+task: t-test-snap | status: active
+```
+
+`t-test-snap` é um artefato de teste. O estado real do usuário esteve, naquele instante, ocupado por dado sintético de uma suíte em execução. É a demonstração direta — não hipotética — do risco R2, colhida no próprio ato de medir.
+
+**Tempo real da suíte: 308,91 s**, não os ~231 s que o MOC do vault registrava. O `baseline-suite.json` usará o valor medido.
+
+---
+
 ### Pendências abertas ao fim desta entrada
 
 - P-1.a — ship 3.3.0 e proveniência (não iniciado)

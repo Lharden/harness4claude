@@ -13,7 +13,7 @@ Levantamento por exploração direta do código em 2026-07-24. Satisfaz o artefa
 
 ## 1. Árvore relevante
 
-89 arquivos versionados. **Não há** `src/`, `lib/`, pacote instalável, `pyproject.toml`, `.github/` (nenhum CI), `CHANGELOG`, `docs/self-reform/` (criado agora) nem `worktrees/`.
+89 arquivos versionados em `a56ee80` (verificado por `git ls-tree -r a56ee80 --name-only | wc -l`; a contagem no HEAD atual é maior porque inclui os artefatos desta reforma). **Não há** `src/`, `lib/`, pacote instalável, `pyproject.toml`, `.github/` (nenhum CI), `CHANGELOG`, `docs/self-reform/` (criado agora) nem `worktrees/`.
 
 ```
 .claude-plugin/   marketplace.json (3.2.0), plugin.json (3.3.0-beta.1)   ← divergentes
@@ -43,7 +43,23 @@ Inspeção do cache confirma ausência de `harness-skill-router.sh`, `skill_rout
 
 **Consequências.** O skill-router e o graphify-autosetup estão mergeados em main e **inativos em runtime**. O índice em `~/.claude/harness/skills-index/` (276 skills, 2026-07-24T15:59) veio de execução manual, não do hook. A mensagem do commit `bfa4a93` — "já ativo no cache 3.2.0" — é factualmente incorreta.
 
-**Agravante.** 10 caminhos hardcoded para o clone dev em `skills/harness-workflow/SKILL.md` (L35, 83, 264, 269), `skills/compress-memory/SKILL.md:37`, `sync/templates/claude-md.harness.snippet.md` (L34, 46), `setup-graphify.sh`, `README.md:357-360`, `docs/SYNC.md`. O LLM é instruído a executar scripts de **uma** árvore enquanto os hooks rodam de **outra**.
+**Agravante.** Caminhos hardcoded para o clone dev fazem o LLM executar scripts de **uma** árvore enquanto os hooks rodam de **outra**.
+
+> **Correção da auditoria (2026-07-24):** a primeira redação dizia "10 caminhos". A contagem verificada é de **18 ocorrências em 9 arquivos** — e, mais importante, **nem todas são defeito**. Distribuição real:
+>
+> | Arquivo | Natureza |
+> |---|---|
+> | `skills/harness-workflow/SKILL.md` (L35, 83, 264, 269) | **defeito** — instrui o LLM a rodar o clone dev |
+> | `skills/compress-memory/SKILL.md:37` | **defeito** |
+> | `sync/templates/claude-md.harness.snippet.md` (L34, 46) | **defeito** — propaga o erro para novas máquinas |
+> | `scripts/setup-graphify.sh` | **defeito** |
+> | `README.md:357-360` | **defeito** |
+> | `docs/SYNC.md` | contextual — runbook de sincronização |
+> | `scripts/sync-machine.sh:88` | **uso legítimo** — é o script que *clona* para `~/.claude/plugins/local/`; a referência é a função dele |
+> | `docs/specs/graphify-integration-verification.md` | registro histórico — não alterar |
+> | `docs/superpowers/plans/2026-07-23-skill-router-p1.md` | registro histórico — não alterar |
+>
+> P-1.a deve corrigir apenas as cinco primeiras linhas da tabela. Trocar as demais seria erro: quebraria o `sync-machine.sh` e reescreveria registro histórico.
 
 `docs/router.md:89-93` já documenta o caminho correto de ship (push + `/plugin update`) e alerta para nunca editar só o cache. O único mecanismo de resolução é `CLAUDE_PLUGIN_ROOT`, com fallback `$(cd "$(dirname "$0")/.." && pwd)`.
 
