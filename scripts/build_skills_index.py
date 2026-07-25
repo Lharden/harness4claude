@@ -26,10 +26,11 @@ INSTALLED_JSON = os.path.join(CLAUDE_DIR, "plugins", "installed_plugins.json")
 SETTINGS_JSON = os.path.join(CLAUDE_DIR, "settings.json")
 CLAUDE_JSON = os.path.join(HOME, ".claude.json")
 PERSONAL_SKILLS_DIR = os.path.join(CLAUDE_DIR, "skills")
-DEFAULT_OUT = os.path.join(CLAUDE_DIR, "harness", "skills-index")
+_HARNESS_DIR = os.environ.get("HARNESS_DIR") or os.path.join(CLAUDE_DIR, "harness")
+DEFAULT_OUT = os.path.join(_HARNESS_DIR, "skills-index")
 ALIASES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skill-aliases.json")
 OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
-EMBED_MODEL = "nomic-embed-text-v2-moe"
+EMBED_MODEL = os.environ.get("HARNESS_EMBED_MODEL", "nomic-embed-text-v2-moe")
 
 _FM_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 

@@ -31,7 +31,7 @@
 - Spec e living doc (spec-anchored para L2)
 
 ### Health check
-- Rodar `bash ~/.claude/plugins/local/harness4claude/scripts/health-check.sh` para verificar dependencies, state, hooks e skills
+- Rodar `bash "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/health-check.sh"` para verificar dependencies, state, hooks e skills
 - Requer `jq` instalado (Windows: `winget install jqlang.jq`; macOS: `brew install jq`; Linux: `apt install jq`)
 
 ## Obsidian (vault-bridge)
@@ -43,5 +43,5 @@
 - **graphify** (`~/.claude/skills/graphify/SKILL.md`) — qualquer input vira knowledge graph. Trigger: `/graphify`
 - Para perguntas sobre codebase: rodar `graphify query "<pergunta>"` quando `graphify-out/graph.json` existir; `graphify path "<A>" "<B>"` para relacoes; `graphify explain "<conceito>"` para conceitos
 - Apos modificar codigo: `graphify update .` (AST-only, sem custo de API)
-- Setup por maquina: `bash ~/.claude/plugins/local/harness4claude/scripts/setup-graphify.sh`
+- Setup por maquina: `bash "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/setup-graphify.sh"`
 <!-- HARNESS4CLAUDE:END -->

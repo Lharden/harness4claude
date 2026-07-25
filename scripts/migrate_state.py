@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -205,7 +206,12 @@ def run(harness_dir: Path, schemas_dir: Path, *, dry_run: bool, do_backup: bool)
 def main() -> int:
     """Ponto de entrada CLI."""
     parser = argparse.ArgumentParser(description="Migra state/signals do Harness para v3.")
-    default_dir = Path.home() / ".claude" / "harness"
+    _env_dir = os.environ.get("HARNESS_DIR")
+    default_dir = (
+        Path(_env_dir).expanduser().resolve()
+        if _env_dir
+        else Path.home() / ".claude" / "harness"
+    )
     parser.add_argument("--harness-dir", type=Path, default=default_dir)
     parser.add_argument("--schemas-dir", type=Path,
                         default=Path(__file__).resolve().parent.parent / "schemas")

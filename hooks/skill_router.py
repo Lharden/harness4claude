@@ -15,13 +15,13 @@ import time
 import urllib.request
 
 HOME = os.path.expanduser("~")
-HARNESS_DIR = os.path.join(HOME, ".claude", "harness")
+HARNESS_DIR = os.environ.get("HARNESS_DIR") or os.path.join(HOME, ".claude", "harness")
 IDX_DIR = os.environ.get("HARNESS_SKILLS_INDEX",
                          os.path.join(HARNESS_DIR, "skills-index"))
 ROUTER_DIR = os.path.join(HARNESS_DIR, "router")
 STATE_JSON = os.path.join(HARNESS_DIR, "state.json")
 OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
-EMBED_MODEL = "nomic-embed-text-v2-moe"
+EMBED_MODEL = os.environ.get("HARNESS_EMBED_MODEL", "nomic-embed-text-v2-moe")
 
 TOP_K = 3
 MIN_COS = 0.45

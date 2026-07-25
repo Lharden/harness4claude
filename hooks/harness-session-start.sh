@@ -7,8 +7,30 @@ set -euo pipefail
 # ============================================================================
 # Bootstrap: create state directory and files on first run
 # ============================================================================
-HARNESS_DIR="$HOME/.claude/harness"
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
+export HARNESS_DIR
 mkdir -p "$HARNESS_DIR"
+
+# ---------------------------------------------------------------------------
+# Plugin root portavel
+# ---------------------------------------------------------------------------
+# CLAUDE_PLUGIN_ROOT so existe no ambiente dos HOOKS. O modelo, ao executar os
+# comandos das skills via Bash, nao a enxerga — e um caminho absoluto de uma
+# maquina especifica (~/.claude/plugins/local/...) pode nem existir em outra
+# instalacao. Este hook, que tem a variavel, persiste o valor resolvido para que
+# as skills o leiam:
+#
+#     python "$(cat ~/.claude/harness/plugin-root)/scripts/record_signal.py" ...
+#
+# Reescrito a cada sessao: acompanha update de versao ou mudanca de caminho.
+PLUGIN_ROOT_RESOLVED="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Formato misto no Windows (C:/Users/... com barras normais): o unico que
+# funciona tanto no Git Bash quanto no PowerShell. O formato MSYS (/c/Users/...)
+# quebra em PowerShell, e o nativo com contrabarras quebra em bash.
+if command -v cygpath >/dev/null 2>&1; then
+    PLUGIN_ROOT_RESOLVED="$(cygpath -m "$PLUGIN_ROOT_RESOLVED" 2>/dev/null || printf '%s' "$PLUGIN_ROOT_RESOLVED")"
+fi
+printf '%s\n' "$PLUGIN_ROOT_RESOLVED" > "$HARNESS_DIR/plugin-root" 2>/dev/null || true
 
 if [ ! -f "$HARNESS_DIR/state.json" ]; then
     cat > "$HARNESS_DIR/state.json" << 'INITEOF'
@@ -96,8 +118,15 @@ print(need)
 fi
 
 # Dep check (first run only)
+#
+# HARNESS_SKIP_DEPCHECK=1 pula este bloco. Necessario para testes hermeticos:
+# com HARNESS_DIR temporario o flag .bootstrap-done nunca existe, entao cada
+# invocacao dispararia um "pip install --user" — lento, dependente de rede, e
+# com efeito colateral fora do diretorio isolado.
 BOOTSTRAP_FLAG="$HARNESS_DIR/.bootstrap-done"
-if [ ! -f "$BOOTSTRAP_FLAG" ]; then
+if [ -n "${HARNESS_SKIP_DEPCHECK:-}" ]; then
+    touch "$BOOTSTRAP_FLAG" 2>/dev/null || true
+elif [ ! -f "$BOOTSTRAP_FLAG" ]; then
     MISSING=""
     command -v python >/dev/null 2>&1 || MISSING="$MISSING python"
     command -v jq >/dev/null 2>&1 || MISSING="$MISSING jq"

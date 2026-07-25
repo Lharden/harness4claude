@@ -107,12 +107,18 @@ def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
     return counts
 
 
+def _default_harness_dir() -> Path:
+    """Diretorio de estado: HARNESS_DIR se definida, senao ~/.claude/harness."""
+    env = os.environ.get("HARNESS_DIR")
+    return Path(env).expanduser().resolve() if env else Path.home() / ".claude" / "harness"
+
+
 def main() -> int:
     """Ponto de entrada CLI."""
     parser = argparse.ArgumentParser(description="Espelha artefatos do Harness para o vault.")
     # DEFAULT_VAULT ja resolve AI_BRAIN_PATH / VAULT_PATH / ~ de forma portavel.
     parser.add_argument("--vault", type=Path, default=DEFAULT_VAULT)
-    parser.add_argument("--harness-dir", type=Path, default=Path.home() / ".claude" / "harness")
+    parser.add_argument("--harness-dir", type=Path, default=_default_harness_dir())
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 

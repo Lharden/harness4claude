@@ -25,8 +25,18 @@ needs_stack = pytest.mark.skipif(
     reason="indice real ou Ollama indisponivel")
 
 
+@pytest.mark.integration
+@pytest.mark.touches_real
 @needs_stack
 def test_golden_top3_hit_rate():
+    """Gate de acuracia do router. REQ-F10: fora do gate hermetico.
+
+    Depende de dois recursos externos por definicao — o indice real de skills
+    (276 entradas) e o Ollama com o modelo de embedding. `touches_real` porque
+    `skill_router.IDX_DIR` e resolvido no import, apontando para o diretorio
+    real; isolar HARNESS_DIR aqui nao teria efeito e apenas mascararia a
+    dependencia. Ver docs/self-reform/claude/TEST_MATRIX.md.
+    """
     data = json.load(open(GOLDEN, encoding="utf-8"))
     index, vecs = sr.load_index()
     skills = index["skills"]

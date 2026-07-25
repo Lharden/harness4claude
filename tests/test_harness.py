@@ -36,10 +36,28 @@ HOME = os.path.expanduser("~")
 HOOKS_DIR = os.path.join(_PLUGIN_ROOT, "hooks")
 SKILLS_DIR = os.path.join(_PLUGIN_ROOT, "skills")
 SCHEMAS_DIR = os.path.join(_PLUGIN_ROOT, "schemas")
-HARNESS_DIR = os.path.join(HOME, ".claude", "harness")
-STATE_FILE = os.path.join(HARNESS_DIR, "state.json")
-COUNTER_FILE = os.path.join(HARNESS_DIR, ".session-files-count")
-TRACE_FILE = os.path.join(HARNESS_DIR, "trace-current.md")
+
+
+def _harness_dir() -> str:
+    """Diretorio de estado da execucao corrente.
+
+    Resolvido a cada chamada, e nao uma vez no import: sob pytest, a fixture
+    `harness_dir` do conftest define HARNESS_DIR por classe, e o valor muda
+    entre classes. Uma constante de modulo congelaria a primeira classe.
+    """
+    return os.environ.get("HARNESS_DIR") or os.path.join(HOME, ".claude", "harness")
+
+
+def _state_file() -> str:
+    return os.path.join(_harness_dir(), "state.json")
+
+
+def _counter_file() -> str:
+    return os.path.join(_harness_dir(), ".session-files-count")
+
+
+def _trace_file() -> str:
+    return os.path.join(_harness_dir(), "trace-current.md")
 
 # Detect bash
 _bash_path = shutil.which("bash")
@@ -73,25 +91,25 @@ def run_hook(
 
 def write_state(data: dict) -> None:
     """Escreve state.json para setup de testes."""
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
+    with open(_state_file(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
 def read_state() -> dict:
     """Lê state.json após execução de hook."""
-    with open(STATE_FILE, encoding="utf-8") as f:
+    with open(_state_file(), encoding="utf-8") as f:
         return json.load(f)
 
 
 def write_counter(data: dict) -> None:
     """Escreve .session-files-count para setup de testes."""
-    with open(COUNTER_FILE, "w", encoding="utf-8") as f:
+    with open(_counter_file(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
 def read_counter() -> dict:
     """Lê .session-files-count após execução de hook."""
-    with open(COUNTER_FILE, encoding="utf-8") as f:
+    with open(_counter_file(), encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -106,36 +124,39 @@ def fresh_counter() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backup / Restore fixtures
+# Isolamento (task P-1.b)
 # ---------------------------------------------------------------------------
 class HarnessTestBase(unittest.TestCase):
-    """Base class que faz backup e restore dos arquivos do harness."""
+    """Base class com diretorio de estado isolado.
 
-    _backup_dir: str
+    Substitui o antigo backup/restore de ~/.claude/harness, que protegia
+    producao por best-effort e falhava em silencio quando um teste crashava.
+
+    Sob pytest, a fixture `harness_dir` do conftest ja definiu HARNESS_DIR e
+    esta classe apenas a consome. No modo standalone (`python test_harness.py`,
+    documentado no docstring do modulo) nao ha conftest, entao o isolamento e
+    criado aqui — propriedade DESTE arquivo, e nao do caminho de invocacao.
+    """
+
+    _own_tmp: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
-        # Garante que o diretorio do harness existe antes do backup. Sem isto,
-        # ambientes ainda nao-bootstrapped (CI limpo, Desktop App recem-instalado,
-        # sandbox de health-check) falham com FileNotFoundError no setUpClass.
-        os.makedirs(HARNESS_DIR, exist_ok=True)
-        cls._backup_dir = tempfile.mkdtemp(prefix="harness-test-backup-")
-        for fname in ("state.json", ".session-files-count", "trace-current.md"):
-            src = os.path.join(HARNESS_DIR, fname)
-            if os.path.exists(src):
-                shutil.copy2(src, os.path.join(cls._backup_dir, fname))
+        cls._own_tmp = None
+        if not os.environ.get("HARNESS_DIR"):
+            cls._own_tmp = tempfile.mkdtemp(prefix="harness-test-")
+            os.environ["HARNESS_DIR"] = cls._own_tmp
+            # Sem o flag .bootstrap-done num dir novo, o dep-check do
+            # session-start dispararia "pip install --user" a cada invocacao.
+            os.environ.setdefault("HARNESS_SKIP_DEPCHECK", "1")
+        os.makedirs(_harness_dir(), exist_ok=True)
 
     @classmethod
     def tearDownClass(cls) -> None:
-        for fname in ("state.json", ".session-files-count", "trace-current.md"):
-            backup = os.path.join(cls._backup_dir, fname)
-            dst = os.path.join(HARNESS_DIR, fname)
-            if os.path.exists(backup):
-                shutil.copy2(backup, dst)
-            elif os.path.exists(dst):
-                # Se não havia backup mas o teste criou, limpa
-                pass
-        shutil.rmtree(cls._backup_dir, ignore_errors=True)
+        if cls._own_tmp:
+            os.environ.pop("HARNESS_DIR", None)
+            shutil.rmtree(cls._own_tmp, ignore_errors=True)
+            cls._own_tmp = None
 
     def setUp(self) -> None:
         fresh_state()
@@ -1147,14 +1168,14 @@ class TestPrecompact(HarnessTestBase):
         })
 
         # Limpa trace antes do teste
-        if os.path.exists(TRACE_FILE):
-            os.remove(TRACE_FILE)
+        if os.path.exists(_trace_file()):
+            os.remove(_trace_file())
 
         code, out, err = run_hook(self.HOOK, {})
         self.assertEqual(code, 0)
-        self.assertTrue(os.path.exists(TRACE_FILE), "trace-current.md deve existir")
+        self.assertTrue(os.path.exists(_trace_file()), "trace-current.md deve existir")
 
-        with open(TRACE_FILE, encoding="utf-8") as f:
+        with open(_trace_file(), encoding="utf-8") as f:
             content = f.read()
         self.assertIn("[SNAPSHOT]", content)
         self.assertIn("t-test-snap", content)
@@ -1235,8 +1256,8 @@ class TestIntegration(HarnessTestBase):
     # --- Cenário 30: Classify → Precompact snapshot ---
     def test_30_classify_then_precompact(self):
         """Classificação seguida de precompact deve gerar snapshot correto."""
-        if os.path.exists(TRACE_FILE):
-            os.remove(TRACE_FILE)
+        if os.path.exists(_trace_file()):
+            os.remove(_trace_file())
 
         # Step 1: Classificar
         run_hook("harness-classify.sh", {
@@ -1248,7 +1269,7 @@ class TestIntegration(HarnessTestBase):
         run_hook("harness-precompact.sh", {})
 
         # Step 3: Verificar trace
-        with open(TRACE_FILE, encoding="utf-8") as f:
+        with open(_trace_file(), encoding="utf-8") as f:
             content = f.read()
         self.assertIn(state["task_id"], content)
         self.assertIn(state["classification"], content)

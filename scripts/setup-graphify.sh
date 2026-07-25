@@ -5,7 +5,7 @@
 # Cadeia de confiança: graphify.net (fonte dada pelo usuário) → repo oficial safishamsi/graphify
 # → PyPI "graphifyy" (duplo y — o README v3 alerta que outros graphify* no PyPI são typosquats).
 #
-# Uso: bash ~/.claude/plugins/local/harness4claude/scripts/setup-graphify.sh
+# Uso: bash "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/setup-graphify.sh"
 #      GRAPHIFY_VERSION=x.y.z bash setup-graphify.sh   # opcional: pin de versão
 set -euo pipefail
 
@@ -28,7 +28,7 @@ echo "   ~/.claude/settings.json   (hook PreToolUse)"
 echo "   CLAUDE.md                 (seção 'leia GRAPH_REPORT.md antes de arquitetura')"
 echo ""
 echo "== Smoke test =="
-echo "   cd ~/.claude/plugins/local/harness4claude"
+echo "   cd \"$(cat \"${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root\")\""
 echo "   graphify .   # passe 1 (AST) é local e sem LLM"
 echo "   graphify query \"estrutura geral\" --graph graphify-out/graph.json"
 echo ""
