@@ -19,7 +19,7 @@ fi
 if command -v curl >/dev/null 2>&1; then
   ( curl -s -m 3 -X POST "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/embed" \
       -H "Content-Type: application/json" \
-      -d '{"model":"nomic-embed-text-v2-moe","input":["warmup"],"keep_alive":"30m"}' \
+      -d '{"model":"'"${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"'","input":["warmup"],"keep_alive":"30m"}' \
       >/dev/null 2>&1 ) &
 fi
 exit 0

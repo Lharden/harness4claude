@@ -298,6 +298,51 @@ Mann-Whitney: **U=0, z=−1,746, p=0,0809** → com α=0,05, a diferença é **i
 
 O custo por teste **caiu**. O aumento de 9,4% no total é o preço de 41 testes novos, e o requisito foi redigido antes de saber quantos seriam. Registro ambas as leituras porque a segunda favorece o resultado, e apresentar só ela seria conveniente demais.
 
+---
+
+## 2026-07-25 — P-1.a antecipada: universalização e ship
+
+**Mudança de sequência, com justificativa.** A estratégia colocava P-1.a por último na Onda 0. A razão era não promover código sem uma suíte hermética para testá-lo — precondição satisfeita por P-1.b. Necessidade prática: atualizar o harness na máquina desktop (mainframe). Antecipar não fura a fila; cumpre a condição que a justificava.
+
+### Achado que mudou a abordagem
+
+A correção óbvia seria trocar os caminhos hardcoded por `${CLAUDE_PLUGIN_ROOT}`. **Não funcionaria**: a variável só existe no ambiente dos *hooks*. Verificado por medição direta — no ambiente onde o modelo executa comandos, `CLAUDE_PLUGIN_ROOT` está **ausente**. As skills passariam a montar comandos com a variável vazia, o que é pior que o caminho errado: falha silenciosa em vez de erro.
+
+**Solução:** o `SessionStart` — que tem a variável — persiste o valor resolvido em `$HARNESS_DIR/plugin-root`, reescrito a cada sessão. As skills leem esse arquivo:
+
+```bash
+python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" ...
+```
+
+Gravado em **formato misto no Windows** (`C:/Users/...` com barras normais) — o único que funciona tanto no Git Bash quanto no PowerShell. O formato MSYS (`/c/Users/...`) quebra em PowerShell; o nativo com contrabarras quebra em bash.
+
+### Entregue
+
+| Item | Detalhe |
+|---|---|
+| Resolvedor de plugin root | `harness-session-start.sh` + 5 testes (`test_plugin_root_resolver.py`) |
+| Skills universalizadas | `harness-workflow` (3 ocorrências), `compress-memory`, `sync/templates/`, `setup-graphify.sh` |
+| `scriptPath` do Workflow | Caso especial: vai para a **tool**, não para um shell — `$(cat ...)` não seria expandido. A skill agora instrui resolver antes e substituir `<PLUGIN_ROOT>` |
+| Versões alinhadas | `plugin.json` e `marketplace.json` em **3.3.0** (eram 3.3.0-beta.1 e 3.2.0) |
+| Bloco de proveniência | `health-check.sh` compara árvore local × plugin carregado; ignora `HARNESS_DIR` de propósito (REQ-NF5 do handoff de P-1.b — **fechado**) |
+| Modelo de embedding configurável | `HARNESS_EMBED_MODEL` em `skill_router.py`, `build_skills_index.py` e no warmup |
+| Dois hardcodes residuais | `health-check.sh` usava `$HOME/.claude/harness/skills-index` e o nome do modelo literal |
+| Runbook | `SHIP.md` — ship, update em outra máquina, instalação limpa, Ollama, variáveis, rollback |
+
+### O bloco de proveniência funcionou na primeira execução
+
+```
+plugin.json (arvore atual): 3.3.0
+instalado (Claude Code):    3.2.0
+[WARN] DIVERGENCIA de versao: o codigo que roda NAO e o que voce esta editando.
+```
+
+Detectou exatamente a condição que motivou o ADR-000 — e que passou semanas invisível.
+
+### O que **não** foi alterado, deliberadamente
+
+`README.md:357-360` e `sync-machine.sh:88` referenciam `~/.claude/plugins/local/harness4claude`. São instruções de **instalação limpa** — é onde o repositório é clonado. Trocar quebraria o procedimento. Consistente com a tabela de natureza por arquivo registrada na auditoria do INVENTORY.
+
 ### Pendências abertas ao fim desta entrada
 
 - P-1.a — ship 3.3.0 e proveniência (não iniciado)

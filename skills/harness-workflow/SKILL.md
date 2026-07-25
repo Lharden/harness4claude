@@ -32,7 +32,7 @@ Para L0, NÃO ative — execute direto sem pipeline.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
 6. **Flexibilidade** — pular etapas se justificar (ex.: spec já existe, bug óbvio).
 7. **DONE** — marcar `status: done` e registrar a task executando:
-   `python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed --steps "step1,step2,..." --expect-task "<task_id>"`
+   `python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" --completed --steps "step1,step2,..." --expect-task "<task_id>"`
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
    **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma — nesse caso, restaure o state da sua task antes de registrar.
 
@@ -78,9 +78,17 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 
 Na fase mapeada para Workflow, chame a tool **Workflow** com o script e os `args`:
 
+Primeiro resolva o caminho do plugin — ele varia por máquina e por versão instalada:
+
+```bash
+cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root"
+```
+
+Depois use o valor retornado como prefixo. `scriptPath` vai para a tool, **não para um shell** — substitua `<PLUGIN_ROOT>` pelo caminho literal que o comando acima imprimiu:
+
 ```
 Workflow({
-  scriptPath: "~/.claude/plugins/local/harness4claude/scripts/workflows/wf-verify-multimodel.js",
+  scriptPath: "<PLUGIN_ROOT>/scripts/workflows/wf-verify-multimodel.js",
   args: { task_id, changed_files: [...], spec_path: "docs/specs/<slug>-spec.md", base_ref: "HEAD" }
 })
 ```
@@ -261,12 +269,12 @@ Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. U
 ```bash
 # Pipeline concluído com sucesso (--expect-task = task_id do INÍCIO do pipeline;
 # aborta com exit 2 se o state global foi trocado por outra sessão no meio)
-python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --completed \
+python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" --completed \
   --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec" \
   --expect-task "t-20260612-033900"
 
 # Tarefa abandonada (troca de assunto / cancelamento)
-python ~/.claude/plugins/local/harness4claude/scripts/record_signal.py --abandoned --reason "user_switch"
+python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" --abandoned --reason "user_switch"
 ```
 
 O script (idempotente por `task_id`):

@@ -247,12 +247,20 @@ def test_inv4_no_unguarded_default_path_composition():
     menciona `.claude` deve ter `HARNESS_DIR` nela ou nas linhas imediatamente
     anteriores.
 
-    NOTA DE FRAGILIDADE: este criterio ja foi refinado duas vezes — a primeira
-    proibia o fallback legitimo, a segunda dava falso positivo em
-    `args.harness_dir.expanduser()`, que nao compoe default nenhum. Deteccao
-    textual e heuristica: aproxima a intencao do invariante, nao o prova. A
-    prova real esta nos testes de comportamento acima, que verificam ONDE cada
-    hook efetivamente escreve.
+    O alvo e o diretorio de ESTADO (`~/.claude/harness`), nao qualquer caminho
+    sob `~/.claude`. `~/.claude/plugins/installed_plugins.json`, por exemplo,
+    responde "qual codigo roda" e deve ignorar HARNESS_DIR de proposito
+    (REQ-NF5) — acusa-lo seria pedir a correcao errada.
+
+    NOTA DE FRAGILIDADE: este criterio foi refinado tres vezes. A primeira
+    proibia o fallback legitimo, que e o proprio REQ-NF1. A segunda dava falso
+    positivo em `args.harness_dir.expanduser()`, que nao compoe default nenhum.
+    A terceira acusava o caminho do plugin, que legitimamente ignora a variavel.
+
+    Deteccao textual e heuristica: aproxima a intencao do invariante, nao o
+    prova. Ainda assim paga — foi ela que encontrou `vault_sync.py`, esquecido
+    pelo inventario da Fase 1. A prova real esta nos testes de comportamento
+    acima, que verificam ONDE cada hook efetivamente escreve.
     """
     offenders: list[str] = []
     for d in (HOOKS, SCRIPTS):
@@ -260,7 +268,8 @@ def test_inv4_no_unguarded_default_path_composition():
             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
             for n, line in enumerate(lines, 1):
                 resolves_home = "expanduser" in line or "Path.home()" in line
-                if not (resolves_home and ".claude" in line):
+                composes_state = ".claude" in line and "harness" in line
+                if not (resolves_home and composes_state):
                     continue
                 window = lines[max(0, n - 1 - _INV4_CONTEXT_LINES):n]
                 if not any("HARNESS_DIR" in w for w in window):

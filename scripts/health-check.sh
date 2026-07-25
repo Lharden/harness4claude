@@ -165,15 +165,15 @@ fi
 echo ""
 
 echo "--- Skill Router (opcional) ---"
-IDX="$HOME/.claude/harness/skills-index"
+IDX="$HARNESS_DIR/skills-index"
 if [ -f "$IDX/meta.json" ]; then
     echo "[OK]     skills-index presente"
     [ -f "$IDX/.stale" ] && warn "skills-index stale (rebuild pendente)"
 else
     warn "skills-index ausente — rode: python scripts/build_skills_index.py"
 fi
-if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/tags" 2>/dev/null | grep -q nomic-embed-text-v2-moe; then
-    echo "[OK]     Ollama + nomic-embed-text-v2-moe"
+if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/tags" 2>/dev/null | grep -q "${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"; then
+    echo "[OK]     Ollama + ${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"
 else
     warn "Ollama/modelo indisponivel — router degrada p/ camada A"
 fi
@@ -194,6 +194,48 @@ if command -v claude >/dev/null 2>&1; then
     fi
 else
     warn "claude CLI ausente no PATH — nao foi possivel verificar carga do plugin"
+fi
+
+echo ""
+echo "--- Proveniencia (qual codigo esta rodando) ---"
+# ADR-000: o objeto-de-medicao e o plugin CARREGADO, nao o clone de trabalho.
+# Este bloco responde "qual codigo roda" — pergunta distinta de "qual estado",
+# entao ele IGNORA HARNESS_DIR de proposito (REQ-NF5). Sem isto, uma divergencia
+# entre cache e main faz diagnosticos apontarem para o codigo errado.
+PLUGIN_VERSION="$(python -c "
+import json,sys
+try:
+    d=json.load(open(sys.argv[1],encoding='utf-8'))
+    print(d.get('version','?'))
+except Exception:
+    print('?')
+" "$PLUGIN_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo "?")"
+
+INSTALLED_VERSION="$(python -c "
+import json,os,sys
+p=os.path.join(os.path.expanduser('~'),'.claude','plugins','installed_plugins.json')
+try:
+    d=json.load(open(p,encoding='utf-8'))
+    for k,v in d.get('plugins',{}).items():
+        if k.startswith('harness4claude') and v:
+            print(v[0].get('version','?')); break
+    else:
+        print('nao-instalado')
+except Exception:
+    print('?')
+" 2>/dev/null || echo "?")"
+
+echo "         plugin.json (arvore atual): $PLUGIN_VERSION"
+echo "         instalado (Claude Code):    $INSTALLED_VERSION"
+
+if [ "$INSTALLED_VERSION" = "nao-instalado" ]; then
+    warn "plugin nao consta em installed_plugins.json"
+elif [ "$PLUGIN_VERSION" != "$INSTALLED_VERSION" ]; then
+    warn "DIVERGENCIA de versao: a arvore local esta em $PLUGIN_VERSION mas o Claude Code carrega $INSTALLED_VERSION."
+    echo "         O codigo que roda NAO e o que voce esta editando."
+    echo "         Corrija com: git push && /plugin update harness4claude"
+else
+    echo "[OK]     versao coerente entre arvore local e plugin carregado"
 fi
 
 echo ""
