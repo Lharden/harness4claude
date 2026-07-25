@@ -76,8 +76,8 @@ AssertionError: top-3 hit rate 47% < 80%   (7/15)
 
 **Hipóteses abertas, em ordem de plausibilidade:**
 
-1. **Contaminação cruzada dentro da própria suíte.** `skill_router.passes_guards()` lê o `state.json` **real** (hardcoded em `skill_router.py:22`) e retorna `False` quando `status ∈ {active, awaiting_gate}` e `pipeline` não está vazio. `test_harness.py` roda antes de `test_router_golden.py` na ordem alfabética e escreve tasks ativas nesse mesmo arquivo. Se o estado ficar sujo, o router é suprimido e devolve `[]` — exatamente o padrão observado.
-2. **Composição do índice mudou.** O índice foi reconstruído às 15:59 de 2026-07-24, depois da medição dos 93,3%. Um conjunto diferente de plugins habilitados altera o ranking e pode derrubar candidatos abaixo de `MIN_COS=0.45` ou da margem sobre a mediana.
+1. ~~**Contaminação cruzada dentro da própria suíte.**~~ **DESCARTADA em 2026-07-25.** A hipótese era que `skill_router.passes_guards()` — que lê o `state.json` real e suprime o router quando há pipeline ativo — estivesse sendo envenenado por `test_harness.py`, que roda antes na ordem alfabética. A leitura do teste desmente: `test_router_golden.py:39` chama **`sr.route(...)` diretamente**, sem passar por `passes_guards()`. O guard nunca esteve no caminho de execução deste teste. Registro o erro porque a hipótese era plausível pelo padrão observado (lista vazia) e ainda assim estava errada — foi construída sobre o mecanismo do router em geral, não sobre o código deste teste em particular.
+2. **Composição do índice mudou.** O índice foi reconstruído às 15:59 de 2026-07-24, depois da medição dos 93,3%. Um conjunto diferente de plugins habilitados altera o ranking e pode derrubar candidatos abaixo de `MIN_COS=0.45` ou da margem sobre a mediana. **Passa a ser a hipótese principal.**
 3. **Efeito da mudança de política do commit `1b42240`** (Camada B só dispara quando a Camada A não acha nada) sobre prompts que antes eram resolvidos por B.
 
 **Não determinado.** A causa raiz exige investigação dedicada com o state limpo e o índice controlado — o que não pode ser feito enquanto o baseline ocupa a suíte. Fica registrado como **task L1 separada**, fora do escopo de P-1.b.
@@ -191,6 +191,52 @@ Ironia registrada: um teste escrito para provar hermetismo estava, ele mesmo, va
 3. `pip/` adicionado ao `.gitignore`.
 
 **Sobre o histórico:** o commit foi corrigido por `--amend`, não por um commit de remoção. Justificativa: não havia sido publicado, e um commit posterior deixaria os 129 blobs binários permanentemente no histórico da reforma. O commit original permanece no reflog. Registrado aqui porque reescrita de histórico, mesmo local e mesmo justificada, não deve acontecer sem rastro.
+
+---
+
+## 2026-07-25 — Fases 2 e 3 de P-1.b
+
+Implementadas **no mesmo ciclo**, porque são acopladas: a Fase 2 sozinha quebraria a suíte. Com o `conftest.py` isolando `HARNESS_DIR` mas o `test_harness.py` ainda resolvendo o caminho por conta própria (constante de módulo hardcoded), os testes escreveriam em um diretório e os hooks leriam de outro.
+
+### Fase 2 — fixture promovida e assert
+
+`tests/conftest.py`: fixture `harness_dir` class-scoped autouse (promovida de `test_state_lock.py:38-55`, com `pytest.MonkeyPatch()` explícito porque `monkeypatch` é function-scoped), hook `pytest_runtest_setup` com o assert de segurança, e registro das marcas `touches_real` e `integration`.
+
+`tests/test_hermeticity_enforcement.py` — 9 casos. Dois erros de desenho do meta-teste, corrigidos:
+
+1. **Arquivos sintéticos em `/tmp` não enxergam o `conftest.py`.** O pytest descobre conftest pelo caminho do *arquivo de teste*, não pelo cwd. O meta-teste passava sem exercitar nada. Corrigido: os sintéticos são criados dentro de `tests/` e removidos no teardown.
+2. **`monkeypatch` no corpo do teste não alcança o assert.** `pytest_runtest_setup` roda **antes** de qualquer fixture — nenhuma manipulação dentro do teste consegue enganá-lo. O vetor real de vazamento é o ambiente externo, então o meta-teste passou a injetar `HARNESS_DIR=<real>` no ambiente do subprocess. Isso é fiel ao mecanismo e, de quebra, prova que o assert é inescapável por dentro.
+
+### Fase 3 — migração do `test_harness.py`
+
+As constantes de módulo `STATE_FILE`/`COUNTER_FILE`/`TRACE_FILE`/`HARNESS_DIR` viraram **funções** — `_state_file()`, `_counter_file()`, `_trace_file()`, `_harness_dir()`. O motivo é sutil: uma constante de módulo é resolvida no import, e a fixture define `HARNESS_DIR` por classe, com valor diferente a cada uma. A constante congelaria a primeira classe e todas as demais escreveriam no lugar errado.
+
+O backup/restore foi removido (REQ-F6) e substituído pelo isolamento do REQ-F8: sob pytest a classe consome o `HARNESS_DIR` da fixture; no modo standalone cria o próprio tmpdir. `test_harness.py` sozinho: **56/56 em 231,70 s**.
+
+### Hipótese descartada — ver ACHADO-1
+
+A leitura de `test_router_golden.py:39` mostrou que ele chama `sr.route(...)` **direto**, sem passar por `passes_guards()`. A hipótese de contaminação via `state.json` nunca teve caminho de execução. Corrigida no registro do ACHADO-1; a hipótese principal passa a ser a composição do índice.
+
+### Verificação de hermetismo — resultado honesto
+
+Suíte completa: **204 passed, 2 failed em 322,50 s** (os dois known-failures já caracterizados; 197 + 9 novos = 206).
+
+Snapshot do conjunto protegido antes e depois:
+
+| Arquivo | Resultado |
+|---|---|
+| `state.json` | inalterado |
+| `signals.json` | inalterado |
+| `trace-current.md` | inalterado |
+| `.session-files-count` | **alterado** |
+
+A primeira leitura foi "vazamento detectado". A inspeção do conteúdo desmentiu: o campo `files` lista **exclusivamente arquivos que esta sessão editou** — os ADRs, os hooks, o `conftest.py`, o `TEST_MATRIX.md` — e o `task_id` é o da task órfã `t-20260724-170615852523`. Nenhum caminho de teste, nenhum `tmp`, nenhum `_synthetic_`.
+
+Ou seja: é o hook `PostToolUse` (`harness-reclassify.sh`) da sessão ativa do Claude Code, escrevendo em produção a cada `Edit`/`Write` — comportamento correto de produção, não vazamento de teste.
+
+**Consequência de desenho:** o AC-3 estava incompleto. `.session-files-count` sofre do mesmo problema que motivou excluir `router/` — é escrito pela sessão que executa a própria suíte — mas eu não o percebi ao redigir. O conjunto protegido passa a ter dois níveis: **A** (sempre verificável) e **B** (só com a sessão quiescente), com o critério de distinção documentado no `TEST_MATRIX.md`: inspecionar o campo `files`.
+
+**O que isso significa para o gate:** `state.json`, `signals.json` e `trace-current.md` — os três arquivos que os testes de fato corrompiam antes — ficaram **intactos** ao longo de uma suíte completa. Antes desta task, `state.json` era sobrescrito por `t-test-snap` e `signals.json` chegou a mudar de hash entre execuções. O hermetismo funcionou no que importa.
 
 ### Pendências abertas ao fim desta entrada
 
