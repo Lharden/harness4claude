@@ -1,0 +1,49 @@
+{
+  "_comment": "Baseline da suite medido ANTES de qualquer alteracao de arquivo (REQ-NF3 da spec P-1.b). Pre-condicao da fase tdd.",
+  "measured_at": "2026-07-24",
+  "base_commit": "a56ee80",
+  "plugin_runtime": "cache 3.2.0 @ 24c1812 (nao alterado)",
+  "command": "python -m pytest tests/ -q",
+  "platform": "Windows 11 / Git Bash",
+  "conditions": {
+    "harness_dir": "~/.claude/harness (REAL — a suite ainda nao e hermetica)",
+    "claude_code_session_active": true,
+    "note": "Medido com sessao do Claude Code ativa na mesma maquina. Registrado por honestidade: a carga concorrente afeta os tempos absolutos, nao a comparacao antes/depois, que sera feita nas mesmas condicoes."
+  },
+  "runs": [
+    {"run": 1, "wall_secs": 310.355, "pytest_secs": 308.91, "passed": 184, "failed": 1},
+    {"run": 2, "wall_secs": 290.253, "pytest_secs": 288.90, "passed": 184, "failed": 1},
+    {"run": 3, "wall_secs": 293.690, "pytest_secs": 291.76, "passed": 183, "failed": 2}
+  ],
+  "statistics": {
+    "pytest_secs_mean": 296.52,
+    "pytest_secs_sd_sample": 10.82,
+    "pytest_secs_cv_pct": 3.6,
+    "pytest_secs_min": 288.90,
+    "pytest_secs_max": 308.91
+  },
+  "budget": {
+    "requirement": "REQ-NF3: +10% maximo",
+    "ceiling_secs": 326.17,
+    "note": "Comparacao pos-implementacao deve usar Mann-Whitney U (D5) sobre 3+ execucoes, nao diferenca de medias — o CV de 3,6% torna diferencas pequenas indistinguiveis do ruido."
+  },
+  "known_failures": [
+    {
+      "test": "tests/test_router_golden.py::test_golden_top3_hit_rate",
+      "runs_failed": [1, 2, 3],
+      "deterministic": true,
+      "detail": "top-3 hit rate 47% (7/15) contra os 93,3% documentados em docs/router.md. Ollama vivo com nomic-embed-text-v2-moe, indice com 276 skills nao-stale, embeddings.f16.bin com tamanho exato esperado. Os 8 MISS retornam lista VAZIA.",
+      "status": "causa raiz nao determinada — task L1 separada",
+      "impact_on_gate": "o gate 'suite verde 3x' de P-1.b significa 184 passed + este known-fail documentado"
+    },
+    {
+      "test": "tests/test_harness.py::TestReclassify::test_15_counter_increments",
+      "runs_failed": [3],
+      "deterministic": false,
+      "detail": "Falhou em 1 de 3 execucoes identicas. Flakiness real, medida — nao hipotetica.",
+      "status": "evidencia direta do risco R2: o contador .session-files-count e o state sao compartilhados entre classes de teste no diretorio real",
+      "impact_on_gate": "P-1.b deve eliminar esta flakiness; se persistir apos o hermetismo, a causa e outra e vira task propria"
+    }
+  ],
+  "conclusion": "O baseline NAO e verde. Qualquer afirmacao de 'suite verde' apos a implementacao deve ser lida contra estes dois known-failures, sob pena de mascarar regressao."
+}

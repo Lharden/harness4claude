@@ -89,6 +89,26 @@ AssertionError: top-3 hit rate 47% < 80%   (7/15)
 - `docs/router.md` está desatualizado em relação ao comportamento observável. Corrigir faz parte de P-1.d.
 - **Não afirmar que P-1.b corrige isso.** Se a hipótese 1 estiver certa, o hermetismo elimina a causa como efeito colateral — mas isso é previsão, não resultado, e só a medição pós-implementação decide.
 
+#### ACHADO-1b — `test_15_counter_increments` é flaky (medido, não hipotético)
+
+Com as três execuções concluídas, os resultados foram:
+
+| Run | Tempo (pytest) | Resultado |
+|---|---|---|
+| 1 | 308,91 s | 1 failed, 184 passed |
+| 2 | 288,90 s | 1 failed, 184 passed |
+| 3 | 291,76 s | **2 failed**, 183 passed |
+
+A segunda falha do run 3 é `tests/test_harness.py::TestReclassify::test_15_counter_increments` — **falhou em 1 de 3 execuções idênticas**.
+
+Isto é flakiness real, medida, no exato mecanismo que P-1.b existe para corrigir: `.session-files-count` e `state.json` são compartilhados entre classes de teste dentro do diretório real. Deixa de ser argumento de projeto e passa a ser dado.
+
+Também **enfraquece parcialmente a hipótese 1 do ACHADO-1**: o hit rate de 47% foi *idêntico* nas três execuções, o que indica causa determinística. Contaminação por ordem de execução seria consistente (a ordem é fixa), então a hipótese continua viva — mas a estabilidade do número aponta mais para composição do índice ou efeito da mudança de política do commit `1b42240` do que para uma race.
+
+**Consequência para o gate de P-1.b:** se o hermetismo eliminar a flakiness do `test_15`, isso é resultado verificável do trabalho. Se persistir, a causa é outra e vira task própria. Nos dois casos, mensurável — que é o ponto.
+
+Baseline gravado em `waves/w0-chao-de-fabrica/baseline-suite.json`: média 296,52 s, desvio amostral 10,82 s, CV 3,6%, teto de +10% em 326,17 s. A comparação pós-implementação usará Mann-Whitney U (D5), porque com CV de 3,6% diferenças pequenas são indistinguíveis do ruído.
+
 #### ACHADO-2 — Evidência ao vivo do risco R2
 
 Durante a execução do baseline, uma inspeção do `state.json` **de produção** retornou:
