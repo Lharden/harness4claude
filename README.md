@@ -73,7 +73,7 @@ On first launch, the `SessionStart` hook automatically:
 
 1. Creates the state directory at `~/.claude/harness/` if it does not exist
 2. Initializes `state.json` and `signals.json` with default values
-3. Checks for required dependencies (Python, jq, pytest)
+3. Checks for required dependencies (Python is the hard one; see below)
 4. Installs pip requirements from `requirements.txt` if missing
 
 If anything goes wrong, run the diagnostic script:
@@ -102,8 +102,14 @@ Example output:
 | Dependency | Minimum Version | Install (Windows) | Install (macOS) | Install (Linux) |
 |------------|----------------|--------------------|-----------------|-----------------|
 | Python | 3.10+ | `winget install Python.Python.3.12` | `brew install python@3.12` | `apt install python3` |
-| jq | 1.7+ | `winget install jqlang.jq` | `brew install jq` | `apt install jq` |
 | pytest | 7+ | `pip install pytest` | `pip install pytest` | `pip install pytest` |
+| jq | 1.7+ | `winget install jqlang.jq` | `brew install jq` | `apt install jq` |
+
+**Python is the only hard dependency.** Every hook parses JSON through inline
+`python -c`, never `jq` — the audit of 2026-07-28 found zero `jq` invocations in
+`hooks/` or `scripts/`. `jq` is listed because the health-check and the bootstrap
+still probe for it and it is handy for inspecting `signals.json` by hand, but the
+harness runs fine without it. `pytest` is only needed to run the test suite.
 
 ---
 
@@ -145,7 +151,7 @@ phases to it. The other plugins enhance the pipeline but are not strictly requir
                                   |
                                   v
                      +------------+------------+
-                     |  PreToolUse Classify     |
+                     | UserPromptSubmit Classify|
                      |  (bilingual keywords)    |
                      +------------+------------+
                                   |
@@ -180,8 +186,16 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
 
 **Key design decisions:**
 
-- Classification runs as a `PreToolUse` hook, so it fires before Claude acts on the prompt
-- State is per-machine (not per-project) to allow cross-project pipeline continuity
+- Classification runs as a `UserPromptSubmit` hook, so it fires on the prompt itself,
+  before Claude acts on it
+- Task state is **per-project**: `state.json`, `.session-files-count` and the traces
+  live in `~/.claude/harness/projects/<slug>/`, keyed by the git root of the session's
+  working directory. Set `HARNESS_SCOPE=global` for the old machine-wide state, which
+  allowed cross-project pipeline continuity at the cost of cross-project interference
+- `signals.json` stays at the root on purpose: telemetry is meant to aggregate across
+  projects, and its records are keyed by `task_id`, so there is no contamination
+- An active pipeline expires after `HARNESS_PIPELINE_TTL_H` hours (default 24) and is
+  recorded as abandoned, so a forgotten task cannot block classification indefinitely
 - Skills communicate via `signals.json` rather than direct invocation, enabling loose coupling
 - The orchestrator (`harness-workflow`) is the only skill that reads classification tags directly
 

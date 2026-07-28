@@ -50,11 +50,15 @@ echo "=== Harness v3 Health Check ==="
 echo ""
 
 echo "--- Dependencies ---"
-check "jq"               "command -v jq"
+# python e a UNICA dependencia dura: todo hook parseia JSON com `python -c`
+# inline. A auditoria 2026-07-28 nao encontrou uma unica invocacao de jq em
+# hooks/ ou scripts/ — era um gate FAIL sobre algo que nada usa. jq/ruff/pyright
+# viraram WARN: sao ferramentas de inspecao e de lint, nao do caminho de execucao.
 check "python"           "command -v python"
 check "pytest"           "python -m pytest --version"
-check "ruff"             "command -v ruff"
-check "pyright"          "command -v pyright"
+command -v jq      >/dev/null 2>&1 || warn "jq ausente (opcional — nenhum hook o usa; util para inspecionar signals.json)"
+command -v ruff    >/dev/null 2>&1 || warn "ruff ausente (opcional — lint da suite)"
+command -v pyright >/dev/null 2>&1 || warn "pyright ausente (opcional — type check da suite)"
 if command -v graphify >/dev/null 2>&1; then
     echo "[OK]     graphify (knowledge graph CLI)"
 else
@@ -197,7 +201,10 @@ echo "--- Plugin load (Claude Code) ---"
 # checagem detecta isso — a lacuna que escondeu o plugin por todo o pos-format.
 if command -v claude >/dev/null 2>&1; then
     if claude plugin list 2>/dev/null | grep -qa "harness4claude"; then
-        echo "[OK]     harness4claude carregado no Claude Code (marketplace local)"
+        # Sem parenteses sobre a origem: o grep so confirma que o nome aparece
+        # em `claude plugin list`. Ate 2026-07-28 esta linha afirmava
+        # "(marketplace local)" enquanto o plugin vinha do GitHub.
+        echo "[OK]     harness4claude carregado no Claude Code"
     else
         echo "[FAIL]   harness4claude NAO carregado — hooks inativos. Corrija com:"
         echo "         claude plugin marketplace add ~/.claude/plugins/local"
@@ -243,11 +250,33 @@ echo "         instalado (Claude Code):    $INSTALLED_VERSION"
 if [ "$INSTALLED_VERSION" = "nao-instalado" ]; then
     warn "plugin nao consta em installed_plugins.json"
 elif [ "$PLUGIN_VERSION" != "$INSTALLED_VERSION" ]; then
-    warn "DIVERGENCIA de versao: a arvore local esta em $PLUGIN_VERSION mas o Claude Code carrega $INSTALLED_VERSION."
+    # FAIL, nao WARN (auditoria 2026-07-28). Este bloco JA detectava a
+    # divergencia 3.3.0 vs 3.2.0 — o defeito que escondia todos os outros por 41
+    # dias — mas saia com exit 0, entao nenhum gate reagia. Um health-check que
+    # passa enquanto "o codigo que roda nao e o seu" nao esta checando nada.
+    echo "[FAIL]   DIVERGENCIA de versao: a arvore local esta em $PLUGIN_VERSION mas o Claude Code carrega $INSTALLED_VERSION."
     echo "         O codigo que roda NAO e o que voce esta editando."
-    echo "         Corrija com: git push && /plugin update harness4claude"
+    echo "         Corrija com:"
+    echo "           git push"
+    echo "           claude plugin marketplace update harness4claude"
+    echo "           claude plugin update harness4claude@harness4claude   (e reinicie)"
+    EXIT_CODE=1
 else
     echo "[OK]     versao coerente entre arvore local e plugin carregado"
+fi
+
+# plugin-root e compartilhado entre CLIs no mesmo $HOME (last-writer-wins). Com
+# versoes identicas nao ha dano; com versoes divergentes as skills executariam
+# scripts da arvore errada. Barato de detectar, caro de diagnosticar depois.
+PLUGIN_ROOT_FILE="$HARNESS_DIR/plugin-root"
+if [ -f "$PLUGIN_ROOT_FILE" ]; then
+    PR_VALUE="$(cat "$PLUGIN_ROOT_FILE" 2>/dev/null || echo "")"
+    case "$PR_VALUE" in
+        *"/.claude/"*|*"\\.claude\\"*) : ;;
+        "") warn "plugin-root vazio" ;;
+        *) warn "plugin-root aponta para fora de uma arvore .claude: $PR_VALUE"
+           echo "         (outro CLI no mesmo \$HOME sobrescreveu o arquivo; as skills leem dele)" ;;
+    esac
 fi
 
 echo ""
