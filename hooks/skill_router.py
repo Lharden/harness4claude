@@ -32,6 +32,18 @@ MAX_OFFERS_PER_SKILL = 2
 EMBED_TIMEOUT = 1.2
 MIN_LEN, MAX_LEN = 20, 30000
 
+# Disjuntor da Camada B (auditoria 2026-07-28)
+# --------------------------------------------
+# Com o Ollama fora do ar o router acumulou 88 falhas consecutivas, todas
+# identicas ("layer B degraded: TimeoutError"), pagando EMBED_TIMEOUT a cada
+# prompt para nada e enchendo o log de ruido. Depois de BREAKER_THRESHOLD falhas
+# seguidas a Camada B entra em cooldown: nem tenta, nem loga. Um sucesso zera.
+BREAKER_THRESHOLD = 3
+BREAKER_COOLDOWN_S = 900
+# Mensagem identica so volta ao log depois desta janela — falha cronica vira
+# uma linha por hora em vez de uma por prompt.
+DBG_REPEAT_WINDOW_S = 3600
+
 AUTOMATION_SIGS = (
     "you are summarizing a claude code session",
     "harness v3 classified",
@@ -39,10 +51,72 @@ AUTOMATION_SIGS = (
 )
 
 
-def _dbg(msg):
+def _breaker_path(router_dir=None):
+    return os.path.join(router_dir or ROUTER_DIR, "layer-b-breaker.json")
+
+
+def read_breaker(router_dir=None):
+    """Estado do disjuntor + dedupe do log. Ausente/corrompido => zerado."""
     try:
-        os.makedirs(ROUTER_DIR, exist_ok=True)
-        with open(os.path.join(ROUTER_DIR, "debug-router.log"), "a",
+        with open(_breaker_path(router_dir), encoding="utf-8") as f:
+            st = json.load(f)
+        if not isinstance(st, dict):
+            raise ValueError("breaker nao e objeto")
+        return st
+    except (OSError, ValueError):
+        return {"failures": 0, "opened_at": 0.0, "last_msg": "", "last_msg_ts": 0.0}
+
+
+def write_breaker(st, router_dir=None):
+    try:
+        os.makedirs(router_dir or ROUTER_DIR, exist_ok=True)
+        with open(_breaker_path(router_dir), "w", encoding="utf-8") as f:
+            json.dump(st, f)
+    except OSError:
+        pass
+
+
+def breaker_open(st, now):
+    """True enquanto a Camada B esta em cooldown apos falhas seguidas."""
+    if (st.get("failures") or 0) < BREAKER_THRESHOLD:
+        return False
+    return (now - (st.get("opened_at") or 0.0)) < BREAKER_COOLDOWN_S
+
+
+def breaker_record(st, ok, now):
+    """Aplica o resultado de uma tentativa da Camada B. Sucesso zera o disjuntor."""
+    if ok:
+        st["failures"] = 0
+        st["opened_at"] = 0.0
+        return st
+    st["failures"] = (st.get("failures") or 0) + 1
+    # `opened_at` marca o inicio do cooldown corrente: so avanca ao cruzar o
+    # limiar, senao cada falha nova adiaria a reabertura para sempre.
+    if st["failures"] == BREAKER_THRESHOLD or (
+        st["failures"] > BREAKER_THRESHOLD and not breaker_open(st, now)
+    ):
+        st["opened_at"] = now
+    return st
+
+
+def should_log(st, msg, now):
+    """Suprime repeticao da MESMA mensagem dentro de DBG_REPEAT_WINDOW_S."""
+    if st.get("last_msg") != msg:
+        return True
+    return (now - (st.get("last_msg_ts") or 0.0)) >= DBG_REPEAT_WINDOW_S
+
+
+def _dbg(msg, st=None, now=None, router_dir=None):
+    """Loga em debug-router.log com dedupe. `st` None => sem dedupe (erros raros)."""
+    now = now if now is not None else time.time()
+    if st is not None:
+        if not should_log(st, msg, now):
+            return
+        st["last_msg"] = msg
+        st["last_msg_ts"] = now
+    try:
+        os.makedirs(router_dir or ROUTER_DIR, exist_ok=True)
+        with open(os.path.join(router_dir or ROUTER_DIR, "debug-router.log"), "a",
                   encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {msg}\n")
     except OSError:
@@ -122,10 +196,16 @@ def route(prompt, skills, vecs):
     a_hits = layer_a(prompt.lower(), skills)
     b_scored = []
     if vecs and not a_hits:
-        try:
-            b_scored = layer_b(embed_query(prompt), skills, vecs)
-        except Exception as e:  # timeout/conexao: degrada p/ Camada A
-            _dbg(f"layer B degraded: {type(e).__name__}: {e}")
+        now = time.time()
+        st = read_breaker()
+        if not breaker_open(st, now):
+            try:
+                b_scored = layer_b(embed_query(prompt), skills, vecs)
+                breaker_record(st, True, now)
+            except Exception as e:  # timeout/conexao: degrada p/ Camada A
+                breaker_record(st, False, now)
+                _dbg(f"layer B degraded: {type(e).__name__}: {e}", st, now)
+            write_breaker(st)
     return pick(a_hits, b_scored)
 
 

@@ -164,18 +164,30 @@ else
 fi
 echo ""
 
-echo "--- Skill Router (opcional) ---"
-IDX="$HARNESS_DIR/skills-index"
-if [ -f "$IDX/meta.json" ]; then
-    echo "[OK]     skills-index presente"
-    [ -f "$IDX/.stale" ] && warn "skills-index stale (rebuild pendente)"
+echo "--- Skill Router (opt-in) ---"
+# Desde a auditoria 2026-07-28 o router so roda com HARNESS_ROUTER=1. Avisar
+# sobre Ollama para quem nao ligou o router e ruido puro: nada nesse caminho
+# executa, entao nao ha degradacao a reportar.
+if [ "${HARNESS_ROUTER:-0}" != "1" ]; then
+    echo "[OK]     router desligado (HARNESS_ROUTER != 1) — nada a verificar"
 else
-    warn "skills-index ausente — rode: python scripts/build_skills_index.py"
-fi
-if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/tags" 2>/dev/null | grep -q "${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"; then
-    echo "[OK]     Ollama + ${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"
-else
-    warn "Ollama/modelo indisponivel — router degrada p/ camada A"
+    IDX="$HARNESS_DIR/skills-index"
+    if [ -f "$IDX/meta.json" ]; then
+        echo "[OK]     skills-index presente"
+        [ -f "$IDX/.stale" ] && warn "skills-index stale (rebuild pendente)"
+    else
+        warn "skills-index ausente — rode: python scripts/build_skills_index.py"
+    fi
+    if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/tags" 2>/dev/null | grep -q "${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"; then
+        echo "[OK]     Ollama + ${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"
+    else
+        warn "HARNESS_ROUTER=1 mas Ollama/modelo indisponivel — camada B nunca respondera"
+    fi
+    BREAKER="$HARNESS_DIR/router/layer-b-breaker.json"
+    if [ -f "$BREAKER" ]; then
+        FAILS="$(python -c "import json,sys;print(json.load(open(sys.argv[1])).get('failures',0))" "$BREAKER" 2>/dev/null || echo 0)"
+        [ "${FAILS:-0}" -ge 3 ] && warn "camada B em cooldown ($FAILS falhas seguidas)"
+    fi
 fi
 echo ""
 
