@@ -49,12 +49,24 @@ def _run_session_start(env: dict[str, str]) -> subprocess.CompletedProcess:
     )
 
 
+def _fake_plugin(path: Path) -> Path:
+    """Arvore minima que o hook aceita como plugin.
+
+    Desde o incidente de 2026-07-28 o SessionStart so grava em `plugin-root` uma
+    arvore que contenha `scripts/record_signal.py` — um valor podre quebra TODAS
+    as skills de uma vez, entao um diretorio vazio deixou de ser um plugin root
+    valido. Ver tests/test_plugin_root_integrity.py.
+    """
+    (path / "scripts").mkdir(parents=True, exist_ok=True)
+    (path / "scripts" / "record_signal.py").write_text("", encoding="utf-8")
+    return path
+
+
 class TestPluginRootPersistence:
     def test_writes_plugin_root_from_env(self, tmp_path):
         """Given CLAUDE_PLUGIN_ROOT definida, Then persiste em plugin-root."""
         harness = tmp_path / "h"
-        fake_plugin = tmp_path / "plugin"
-        fake_plugin.mkdir()
+        fake_plugin = _fake_plugin(tmp_path / "plugin")
         env = _env(HARNESS_DIR=str(harness), CLAUDE_PLUGIN_ROOT=str(fake_plugin))
         proc = _run_session_start(env)
         assert proc.returncode == 0, proc.stderr[:400]
@@ -82,10 +94,8 @@ class TestPluginRootPersistence:
     def test_is_rewritten_on_each_session(self, tmp_path):
         """Plugin movido/atualizado entre sessoes -> marker acompanha."""
         harness = tmp_path / "h"
-        first = tmp_path / "p1"
-        second = tmp_path / "p2"
-        first.mkdir()
-        second.mkdir()
+        first = _fake_plugin(tmp_path / "p1")
+        second = _fake_plugin(tmp_path / "p2")
 
         _run_session_start(_env(HARNESS_DIR=str(harness), CLAUDE_PLUGIN_ROOT=str(first)))
         _run_session_start(_env(HARNESS_DIR=str(harness), CLAUDE_PLUGIN_ROOT=str(second)))

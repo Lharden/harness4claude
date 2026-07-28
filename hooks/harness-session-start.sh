@@ -30,7 +30,20 @@ PLUGIN_ROOT_RESOLVED="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")
 if command -v cygpath >/dev/null 2>&1; then
     PLUGIN_ROOT_RESOLVED="$(cygpath -m "$PLUGIN_ROOT_RESOLVED" 2>/dev/null || printf '%s' "$PLUGIN_ROOT_RESOLVED")"
 fi
-printf '%s\n' "$PLUGIN_ROOT_RESOLVED" > "$HARNESS_DIR/plugin-root" 2>/dev/null || true
+
+# So grava se a arvore resolvida realmente contiver os scripts. O arquivo e
+# compartilhado entre CLIs no mesmo $HOME (last-writer-wins) e as skills o usam
+# como prefixo de execucao: um valor podre quebra TODAS elas de uma vez.
+# Aconteceu em 2026-07-28 — o Codex apontou para o proprio cache, esse cache foi
+# removido no upgrade de versao, e o arquivo passou a nomear um caminho
+# inexistente. Se o valor atual esta podre, sobrescreve mesmo assim.
+if [ -f "$PLUGIN_ROOT_RESOLVED/scripts/record_signal.py" ]; then
+    PLUGIN_ROOT_CURRENT="$(cat "$HARNESS_DIR/plugin-root" 2>/dev/null || echo "")"
+    if [ -z "$PLUGIN_ROOT_CURRENT" ] || [ ! -f "$PLUGIN_ROOT_CURRENT/scripts/record_signal.py" ] \
+       || [ "$PLUGIN_ROOT_CURRENT" != "$PLUGIN_ROOT_RESOLVED" ]; then
+        printf '%s\n' "$PLUGIN_ROOT_RESOLVED" > "$HARNESS_DIR/plugin-root" 2>/dev/null || true
+    fi
+fi
 
 if [ ! -f "$HARNESS_DIR/state.json" ]; then
     cat > "$HARNESS_DIR/state.json" << 'INITEOF'

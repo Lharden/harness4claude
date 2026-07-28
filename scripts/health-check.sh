@@ -268,15 +268,40 @@ fi
 # plugin-root e compartilhado entre CLIs no mesmo $HOME (last-writer-wins). Com
 # versoes identicas nao ha dano; com versoes divergentes as skills executariam
 # scripts da arvore errada. Barato de detectar, caro de diagnosticar depois.
+# As skills usam plugin-root como prefixo de execucao. O que importa nao e de
+# qual CLI a arvore veio — e se ela EXISTE e esta na mesma versao. Avisar so por
+# ser de outro CLI, com versoes iguais, seria alarme falso; e alarme falso vira
+# alarme ignorado.
 PLUGIN_ROOT_FILE="$HARNESS_DIR/plugin-root"
-if [ -f "$PLUGIN_ROOT_FILE" ]; then
+if [ ! -f "$PLUGIN_ROOT_FILE" ]; then
+    warn "plugin-root ausente — sera criado no proximo SessionStart"
+else
     PR_VALUE="$(cat "$PLUGIN_ROOT_FILE" 2>/dev/null || echo "")"
-    case "$PR_VALUE" in
-        *"/.claude/"*|*"\\.claude\\"*) : ;;
-        "") warn "plugin-root vazio" ;;
-        *) warn "plugin-root aponta para fora de uma arvore .claude: $PR_VALUE"
-           echo "         (outro CLI no mesmo \$HOME sobrescreveu o arquivo; as skills leem dele)" ;;
-    esac
+    if [ -z "$PR_VALUE" ]; then
+        echo "[FAIL]   plugin-root vazio — toda skill que o usa como prefixo falha"
+        EXIT_CODE=1
+    elif [ ! -f "$PR_VALUE/scripts/record_signal.py" ]; then
+        echo "[FAIL]   plugin-root aponta para arvore inexistente ou incompleta:"
+        echo "         $PR_VALUE"
+        echo "         Toda skill que o usa como prefixo falha. Corrija reiniciando a sessao"
+        echo "         (o SessionStart reescreve) ou: printf '%s\\n' \"\$PLUGIN_DIR\" > $PLUGIN_ROOT_FILE"
+        EXIT_CODE=1
+    else
+        PR_VERSION="$(python -c "
+import json,sys
+try:
+    print(json.load(open(sys.argv[1],encoding='utf-8')).get('version','?'))
+except Exception:
+    print('?')
+" "$PR_VALUE/.claude-plugin/plugin.json" 2>/dev/null || echo "?")"
+        if [ "$PR_VERSION" != "$INSTALLED_VERSION" ]; then
+            warn "plugin-root em $PR_VERSION, mas o Claude Code carrega $INSTALLED_VERSION"
+            echo "         $PR_VALUE"
+            echo "         (arquivo compartilhado entre CLIs no mesmo \$HOME; as skills leem dele)"
+        else
+            echo "[OK]     plugin-root valido e na versao $PR_VERSION"
+        fi
+    fi
 fi
 
 echo ""

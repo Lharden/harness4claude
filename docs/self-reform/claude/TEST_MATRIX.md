@@ -63,9 +63,10 @@ Registrados em `waves/w0-chao-de-fabrica/baseline-suite.json`. Qualquer afirmaç
 | `test_state_lock::TestConcurrency::test_two_concurrent_acquires_serialize` | Flaky de timing — `assert elapsed <= 3` recebeu `4` sob carga da suíte | **Não reproduzido** em 3 execuções completas na auditoria 2026-07-28 |
 | `test_harness::TestReclassify::test_15_counter_increments` | Era flaky por estado compartilhado (1 de 3 execuções no baseline) | **Resolvido** por P-1.b (hermetismo) — verde nas execuções da auditoria 2026-07-28 |
 
-**Estado em 2026-07-28:** `309 passed, 1 skipped, 0 failed` (o skip é o golden do router).
-231 testes coletados antes da auditoria, 310 depois — 79 novos, cobrindo TTL de
-pipeline, escopo por projeto, disjuntor do router e confirmação de classificação.
+**Estado em 2026-07-28:** `314 passed, 1 skipped, 0 failed` (o skip é o golden do router).
+231 testes coletados antes da auditoria, 315 depois — 84 novos, cobrindo TTL de
+pipeline, escopo por projeto, disjuntor do router, confirmação de classificação e
+integridade do `plugin-root`.
 A suíte deixou de ter known-failures.
 
 ## Testes de hermetismo
