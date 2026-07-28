@@ -64,7 +64,9 @@ Registrados em `waves/w0-chao-de-fabrica/baseline-suite.json`. Qualquer afirmaç
 | `test_harness::TestReclassify::test_15_counter_increments` | Era flaky por estado compartilhado (1 de 3 execuções no baseline) | **Resolvido** por P-1.b (hermetismo) — verde nas execuções da auditoria 2026-07-28 |
 
 **Estado em 2026-07-28:** `309 passed, 1 skipped, 0 failed` (o skip é o golden do router).
-Baseline anterior: 243 passed / 6 failed. A suíte deixou de ter known-failures.
+231 testes coletados antes da auditoria, 310 depois — 79 novos, cobrindo TTL de
+pipeline, escopo por projeto, disjuntor do router e confirmação de classificação.
+A suíte deixou de ter known-failures.
 
 ## Testes de hermetismo
 
