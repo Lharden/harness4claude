@@ -153,6 +153,34 @@ else
     STATE_FILE_PY="$STATE_FILE"
 fi
 
+# ============================================================================
+# TTL: expira pipeline abandonado antes de oferecer RESUMING
+# ============================================================================
+# Sem isso o hook convida a retomar uma task morta em toda sessao de todo
+# projeto (auditoria 2026-07-28: uma task de 24/07 reaparecia 4 dias depois).
+# Quando expira, avisa EXPIRED em vez de RESUMING e nao ha o que retomar.
+EXPIRED_TASK=""
+EXPIRE_PY="$PLUGIN_DIR/scripts/expire_stale_pipeline.py"
+if [ -f "$EXPIRE_PY" ] && command -v python >/dev/null 2>&1; then
+    EXPIRED_TASK="$(python "$EXPIRE_PY" --harness-dir "$HARNESS_DIR_PY" 2>/dev/null || true)"
+fi
+
+if [ -n "$EXPIRED_TASK" ]; then
+    export HARNESS_EXPIRED_TASK="${EXPIRED_TASK#EXPIRED }"
+    python -c "
+import json, os
+tid = os.environ.get('HARNESS_EXPIRED_TASK', 'unknown')
+print(json.dumps({
+    'systemMessage': (
+        f'HARNESS v3 EXPIRED: pipeline anterior (task {tid}) passou do TTL e foi '
+        f'encerrado como abandonado. Nao ha pipeline ativo — a proxima tarefa '
+        f'sera classificada do zero.'
+    )
+}))
+" 2>/dev/null
+    exit 0
+fi
+
 export PYTHONUTF8=1
 python -c "
 import json, sys

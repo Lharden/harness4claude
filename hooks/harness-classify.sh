@@ -76,18 +76,21 @@ fi
 # 2. Delegate everything to a single Python script via env vars
 # ---------------------------------------------------------------------------
 # Convert MSYS paths to Windows paths for Python
+SCRIPTS_DIR="${HOOK_DIR_REL}/../scripts"
 if command -v cygpath &>/dev/null; then
     export HARNESS_STATE_FILE="$(cygpath -w "$STATE_FILE")"
     export HARNESS_COUNTER_FILE="$(cygpath -w "$COUNTER_FILE")"
+    export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
 else
     export HARNESS_STATE_FILE="$STATE_FILE"
     export HARNESS_COUNTER_FILE="$COUNTER_FILE"
+    export HARNESS_SCRIPTS_DIR="$SCRIPTS_DIR"
 fi
 export HARNESS_MSG_LOWER="$MSG_LOWER"
 export PYTHONUTF8=1
 
 python << 'PYEOF'
-import os, re, json
+import os, re, json, sys
 from datetime import datetime, timezone
 
 
@@ -152,6 +155,25 @@ is_task_switch = (
     len(msg) <= MAX_SWITCH_LEN
     and bool(re.search(SWITCH_PATTERNS, msg, re.IGNORECASE))
 )
+
+# ============================================================================
+# TTL: disjuntor do pipeline abandonado
+# ============================================================================
+# Auditoria 2026-07-28: o bloco de continuacao logo abaixo sai ANTES de
+# classificar sempre que status == "active". Como nada devolvia o state para
+# "idle", uma task de 24/07 ficou ativa 4 dias e bloqueou TODA classificacao
+# nova em TODOS os projetos (o state e global).
+#
+# Posicao no arquivo e deliberada: DEPOIS dos guards de automacao e de
+# comprimento. Prompt de automacao (sumarizador, colagem gigante) nunca pode
+# mutar o state — nem para expirar. Rodar isto antes dos guards reintroduziria
+# exatamente o incidente t-20260612-034438 que aqueles guards fecham.
+try:
+    sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
+    from expire_stale_pipeline import default_ttl_hours, expire
+    expire(os.path.dirname(state_file), default_ttl_hours())
+except Exception:
+    pass  # TTL e best-effort: falhar aqui nunca pode bloquear o prompt
 
 # ============================================================================
 # Check active pipeline in state.json

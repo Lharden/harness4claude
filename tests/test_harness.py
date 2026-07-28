@@ -23,6 +23,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+
+# ---------------------------------------------------------------------------
+# started_at das fixtures
+# ---------------------------------------------------------------------------
+# Desde o TTL (scripts/expire_stale_pipeline.py, auditoria 2026-07-28) a idade
+# do state deixou de ser irrelevante: um pipeline "active" com started_at de
+# 2026-01-01 e, por definicao, abandonado — o hook o expira em vez de continuar.
+# Estas fixtures verificam a semantica de CONTINUACAO, nao a de expiracao (essa
+# tem suite propria em tests/test_pipeline_ttl.py), entao precisam de um
+# timestamp recente. A cobertura de expiracao NAO deve ser movida para ca.
+RECENT_ISO = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -328,7 +340,7 @@ class TestClassify(HarnessTestBase):
             "pipeline": ["brainstorming", "tdd"],
             "current_step": "brainstorming",
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
 
         # Sem task switch → deve emitir continuation
@@ -354,7 +366,7 @@ class TestClassify(HarnessTestBase):
             "pipeline": ["systematic-debugging", "tdd"],
             "current_step": "systematic-debugging",
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
 
         code, out, _ = run_hook(self.HOOK, {
@@ -423,7 +435,7 @@ class TestClassify(HarnessTestBase):
             "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
             "current_step": "tdd",
             "artifacts_so_far": [],
-            "started_at": "2026-06-12T03:39:00+00:00",
+            "started_at": RECENT_ISO,
         })
         write_counter({"count": 2, "files": ["C:/a.py", "C:/b.py"], "task_id": task_id})
 
@@ -814,7 +826,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-reclass"})
 
@@ -888,7 +900,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z",
+            "started_at": RECENT_ISO,
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-meta"})
 
@@ -920,7 +932,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-null"})
 
@@ -1001,7 +1013,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z",
+            "started_at": RECENT_ISO,
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-locked"})
         for f in ["C:/p/m.py", "C:/p/n.py", "C:/p/o.py"]:
@@ -1028,7 +1040,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
             "current_step": "tdd",
             "artifacts_so_far": ["docs/specs/x-spec-light.md"],
-            "started_at": "2026-06-12T03:39:00+00:00",
+            "started_at": RECENT_ISO,
         }
         write_state(original)
         write_counter({"count": 0, "files": [], "task_id": "t-test-act"})
@@ -1164,7 +1176,7 @@ class TestPrecompact(HarnessTestBase):
             "pipeline": ["prd-to-plan", "tdd"],
             "current_step": "prd-to-plan",
             "artifacts_so_far": ["docs/prd.md"],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
 
         # Limpa trace antes do teste
