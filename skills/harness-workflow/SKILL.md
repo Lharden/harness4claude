@@ -22,11 +22,17 @@ Para L0, NÃO ative — execute direto sem pipeline.
 ## Protocolo
 
 1. **Ler classificação** — extraia level, type, pipeline do bloco injetado pelo hook. O `state.json` traz `classification_meta.suggested` (vindo do **regex**, rápido/offline) com `final: null` para L1+.
-2. **Confirmar classificação (camada semântica)** — ANTES de anunciar, avalie a intenção REAL do prompt do usuário e compare com o `suggested`:
-   - **Concorda** → grave `classification_meta.final = suggested`, `source = "regex"`, `agreed = true`.
-   - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → corrija: grave `classification_meta.final = <novo>`, `source = "semantic"`, `agreed = false`, atualize `classification` (string) e **troque `pipeline`** para o do novo level/type (ver tabela Pipelines).
-   - Grave com `Edit` no `state.json`. Isso alimenta o loop de accuracy (regex × semântica) em `signals.json`.
-   - Se o usuário corrigir explicitamente depois → `source = "human_override"`.
+2. **Confirmar classificação (camada semântica)** — ANTES de anunciar, avalie a intenção REAL do prompt do usuário e compare com o `suggested`. Execute **sempre**, concordando ou não:
+
+   ```bash
+   python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/confirm_classification.py" \
+     --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>"
+   ```
+
+   - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
+   - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → passe o `--final` correto: o script grava `agreed = false`, corrige `classification` e **troca `pipeline`** sozinho, lendo `scripts/pipelines.json`.
+   - Se o usuário corrigir explicitamente depois → rode de novo com `--source human_override`.
+   - **Não edite `classification_meta` à mão.** Esse era o protocolo anterior e ele não era cumprido: a auditoria de 2026-07-28 encontrou `agreed = null` em 100% das tasks e `avg_classify_accuracy = null` desde sempre, porque `recompute_aggregates` só conta tasks com `agreed is not None`. Sem este passo a métrica de accuracy é matematicamente incapaz de sair de zero.
 3. **Anunciar** — exiba: "Harness v3: {level}-{type} → {pipeline}" (sinalize se houve correção semântica).
 4. **Atualizar state.json** — marcar `current_step` conforme progride no pipeline.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
@@ -61,7 +67,7 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 
 | Fase | Mecanismo | Como |
 |---|---|---|
-| (classificação) | inline | confirmar semanticamente (Protocolo, passo 2) |
+| (classificação) | inline | confirmar via `scripts/confirm_classification.py` (Protocolo, passo 2) |
 | `discuss` | skill | `Skill(skill="discuss")` → `docs/CONTEXT.md` |
 | `brainstorming` | skill | `Skill(skill="superpowers:brainstorming")` |
 | (contexto, L2) | skill | `Skill(skill="graph-context")` — knowledge graph (graphify) primeiro; fallback `wf-context-scan` |

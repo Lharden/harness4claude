@@ -1,0 +1,12 @@
+{
+  "_comment": "Fonte unica dos pipelines por classificacao. Lido por hooks/harness-classify.sh (com fallback inline se este arquivo sumir) e por scripts/confirm_classification.py, que precisa trocar o pipeline quando a confirmacao semantica corrige o nivel. Nomes = FASES estaveis; harness-workflow mapeia cada fase ao mecanismo real (skill direta ou Workflow de fan-out). L0 nao tem pipeline.",
+  "pipelines": {
+    "L1-feature": ["write-spec-light", "tdd", "verify-against-spec"],
+    "L1-bug": ["systematic-debugging", "tdd", "verify"],
+    "L1-refactor": ["write-spec-light", "tdd", "verify-against-spec"],
+    "L2-feature": ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
+    "L2-bug": ["systematic-debugging", "grill-me", "tdd", "verify"],
+    "L2-refactor": ["discuss", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
+    "L2-architecture": ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"]
+  }
+}

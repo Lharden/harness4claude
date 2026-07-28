@@ -350,6 +350,18 @@ PIPELINES = {
     "L2-refactor":     ["discuss", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
     "L2-architecture": ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
 }
+# Fonte unica: scripts/pipelines.json, compartilhada com confirm_classification.py
+# (que precisa trocar o pipeline quando a confirmacao semantica corrige o nivel).
+# O literal acima permanece como fallback: num install quebrado, classificar com
+# o pipeline conhecido vale mais do que nao classificar.
+try:
+    with open(os.path.join(os.environ["HARNESS_SCRIPTS_DIR"], "pipelines.json"),
+              encoding="utf-8") as _f:
+        _loaded = json.load(_f).get("pipelines")
+    if _loaded:
+        PIPELINES = _loaded
+except Exception:
+    pass
 # L0 has no pipeline
 pipeline = PIPELINES.get(classification, [])
 # Guard defensivo: um {level}-{type} L1+ sem pipeline mapeado nao deve seguir
@@ -374,9 +386,13 @@ started_at = now.isoformat()
 status = "done" if level == "L0" else "active"
 
 # classification_meta: camada regex (suggested). Para L0 o regex decide sozinho
-# (final=suggested). Para L1+ a confirmacao semantica (wf-classify-semantic)
-# preenche final/source/agreed depois; ate la final=None. agreed=None em ambos
-# pois so a camada semantica avalia concordancia (entra no loop de accuracy).
+# (final=suggested). Para L1+ quem preenche final/source/agreed e a skill
+# harness-workflow, chamando scripts/confirm_classification.py no passo 2 do
+# protocolo; ate la final=None. agreed=None em ambos, pois so a camada semantica
+# avalia concordancia — e e ela que alimenta avg_classify_accuracy.
+# (Ate 2026-07-28 este comentario citava um "wf-classify-semantic" que nunca
+# existiu, e o protocolo mandava editar o JSON a mao — o que nao era cumprido:
+# 100% das tasks tinham agreed=null e a metrica de accuracy nunca saiu de zero.)
 classification_meta = {
     "suggested": classification,
     "final": classification if level == "L0" else None,
