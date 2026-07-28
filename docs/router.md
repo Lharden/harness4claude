@@ -2,6 +2,26 @@
 
 Design completo: `docs/specs/skill-router-design.md`. Este doc cobre operação.
 
+## Ligar o router (opt-in desde 2026-07-28)
+
+O router está **desligado por padrão**. Ambos os hooks (`harness-skill-router.sh`
+e `harness-router-warmup.sh`) saem imediatamente sem `HARNESS_ROUTER=1`.
+
+```bash
+export HARNESS_ROUTER=1
+```
+
+Motivo (auditoria 2026-07-28): a Camada B depende de um Ollama local. Sem ele,
+`router/debug-router.log` acumulou **88 falhas consecutivas — 100%
+`TimeoutError`, zero sucessos** — pagando `EMBED_TIMEOUT` a cada prompt e nunca
+consultando o índice de 276 skills que o warmup mantinha atualizado. Com o
+opt-in, quem não tem Ollama não paga nada; quem tem, liga a variável.
+
+Ligado, a Camada B ainda tem disjuntor: após `BREAKER_THRESHOLD` (3) falhas
+seguidas ela entra em cooldown de `BREAKER_COOLDOWN_S` (900s) sem nem tentar, e
+mensagens de erro idênticas só voltam ao log a cada `DBG_REPEAT_WINDOW_S` (1h).
+Um sucesso zera o disjuntor. Estado em `~/.claude/harness/router/layer-b-breaker.json`.
+
 ## Política de disparo (Camada A → Camada B)
 
 Resolve a decisão em aberto #2 do design doc. Implementado no commit `1b42240`
@@ -39,6 +59,12 @@ Todos os números abaixo foram medidos e confirmados de forma independente.
 - **Acurácia:** golden set top-3 hit rate **93.3% (14/15)** — gate era ≥80% → **PASS**.
   Único MISS conhecido: `"help me debug this failing test..."` (retorna zero hits; nenhum
   alias/skill cadastrado casa com essa frase — candidato a novo alias).
+
+  > ⚠️ **Número contestado (auditoria 2026-07-28).** `TEST_MATRIX.md` registra
+  > `test_router_golden::test_golden_top3_hit_rate` como known-failure medindo
+  > **47%** contra estes 93,3%, com causa raiz em aberto. Nenhum dos dois valores
+  > foi reproduzido na auditoria: sem Ollama de pé o teste **skipa**, não falha.
+  > Trate os 93,3% como não-verificados até uma medição nova com o índice atual.
 - **Latência — Camada A (fast path, alias/nome bateu, embed pulado):**
   p50 ~437ms · **p95 ~470–535ms** — abaixo da meta de ~600ms. É o caso comum para
   prompts que casam com palavra-chave/alias.

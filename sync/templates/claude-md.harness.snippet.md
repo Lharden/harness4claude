@@ -32,7 +32,13 @@
 
 ### Health check
 - Rodar `bash "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/health-check.sh"` para verificar dependencies, state, hooks e skills
-- Requer `jq` instalado (Windows: `winget install jqlang.jq`; macOS: `brew install jq`; Linux: `apt install jq`)
+- Requer `python` (unica dependencia dura — todo hook parseia JSON com `python -c` inline; nenhum usa `jq`)
+
+### Escopo e TTL do estado
+- `state.json`, `.session-files-count` e traces sao por projeto, em `~/.claude/harness/projects/<slug>/`; `signals.json` fica agregado na raiz
+- `HARNESS_SCOPE=global` volta ao state unico da maquina
+- Pipeline ativo expira apos `HARNESS_PIPELINE_TTL_H` horas (default 24) e e registrado como abandonado
+- `HARNESS_ROUTER=1` liga o skill-router semantico (desligado por padrao; exige Ollama)
 
 ## Obsidian (vault-bridge)
 - Vault root via `env.VAULT_PATH`; sub-vault de espelhamento = `<VAULT_PATH>/AI-Brain` (ou `AI_BRAIN_PATH`)

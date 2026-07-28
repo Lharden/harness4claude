@@ -23,6 +23,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+
+# ---------------------------------------------------------------------------
+# started_at das fixtures
+# ---------------------------------------------------------------------------
+# Desde o TTL (scripts/expire_stale_pipeline.py, auditoria 2026-07-28) a idade
+# do state deixou de ser irrelevante: um pipeline "active" com started_at de
+# 2026-01-01 e, por definicao, abandonado — o hook o expira em vez de continuar.
+# Estas fixtures verificam a semantica de CONTINUACAO, nao a de expiracao (essa
+# tem suite propria em tests/test_pipeline_ttl.py), entao precisam de um
+# timestamp recente. A cobertura de expiracao NAO deve ser movida para ca.
+RECENT_ISO = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -48,16 +60,33 @@ def _harness_dir() -> str:
     return os.environ.get("HARNESS_DIR") or os.path.join(HOME, ".claude", "harness")
 
 
+def _state_dir() -> str:
+    """Bucket do projeto onde os hooks escrevem o estado da tarefa.
+
+    Desde o escopo por projeto (auditoria 2026-07-28) os hooks nao escrevem mais
+    na raiz de HARNESS_DIR: state/contador/trace vao para
+    `<raiz>/projects/<slug>`, derivado do repo do cwd. Os helpers precisam
+    resolver do MESMO jeito, senao os testes leem um arquivo que nunca e escrito.
+    Resolvido a cada chamada porque HARNESS_DIR muda por classe de teste.
+    """
+    sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+    try:
+        from harness_paths import ensure_state_dir  # noqa: PLC0415
+        return str(ensure_state_dir(_harness_dir(), os.getcwd()))
+    except Exception:
+        return _harness_dir()
+
+
 def _state_file() -> str:
-    return os.path.join(_harness_dir(), "state.json")
+    return os.path.join(_state_dir(), "state.json")
 
 
 def _counter_file() -> str:
-    return os.path.join(_harness_dir(), ".session-files-count")
+    return os.path.join(_state_dir(), ".session-files-count")
 
 
 def _trace_file() -> str:
-    return os.path.join(_harness_dir(), "trace-current.md")
+    return os.path.join(_state_dir(), "trace-current.md")
 
 # Detect bash
 _bash_path = shutil.which("bash")
@@ -328,7 +357,7 @@ class TestClassify(HarnessTestBase):
             "pipeline": ["brainstorming", "tdd"],
             "current_step": "brainstorming",
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
 
         # Sem task switch → deve emitir continuation
@@ -354,7 +383,7 @@ class TestClassify(HarnessTestBase):
             "pipeline": ["systematic-debugging", "tdd"],
             "current_step": "systematic-debugging",
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
 
         code, out, _ = run_hook(self.HOOK, {
@@ -423,7 +452,7 @@ class TestClassify(HarnessTestBase):
             "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
             "current_step": "tdd",
             "artifacts_so_far": [],
-            "started_at": "2026-06-12T03:39:00+00:00",
+            "started_at": RECENT_ISO,
         })
         write_counter({"count": 2, "files": ["C:/a.py", "C:/b.py"], "task_id": task_id})
 
@@ -814,7 +843,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-reclass"})
 
@@ -888,7 +917,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z",
+            "started_at": RECENT_ISO,
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-meta"})
 
@@ -920,7 +949,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-null"})
 
@@ -1001,7 +1030,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": [],
             "current_step": None,
             "artifacts_so_far": [],
-            "started_at": "2026-01-01T00:00:00Z",
+            "started_at": RECENT_ISO,
         })
         write_counter({"count": 0, "files": [], "task_id": "t-test-locked"})
         for f in ["C:/p/m.py", "C:/p/n.py", "C:/p/o.py"]:
@@ -1028,7 +1057,7 @@ class TestReclassify(HarnessTestBase):
             "pipeline": ["write-spec-light", "tdd", "verify-against-spec"],
             "current_step": "tdd",
             "artifacts_so_far": ["docs/specs/x-spec-light.md"],
-            "started_at": "2026-06-12T03:39:00+00:00",
+            "started_at": RECENT_ISO,
         }
         write_state(original)
         write_counter({"count": 0, "files": [], "task_id": "t-test-act"})
@@ -1164,7 +1193,7 @@ class TestPrecompact(HarnessTestBase):
             "pipeline": ["prd-to-plan", "tdd"],
             "current_step": "prd-to-plan",
             "artifacts_so_far": ["docs/prd.md"],
-            "started_at": "2026-01-01T00:00:00Z"
+            "started_at": RECENT_ISO
         })
 
         # Limpa trace antes do teste
@@ -1196,9 +1225,14 @@ class TestPrecompact(HarnessTestBase):
             tmp_vault = os.path.join(tmp, "vault")
             os.makedirs(tmp_harness)
             os.makedirs(tmp_vault)
-            with open(os.path.join(tmp_harness, "state.json"), "w", encoding="utf-8") as f:
+            # O fixture vai no bucket do projeto, nao na raiz: desde o escopo por
+            # projeto o precompact rotaciona `<raiz>/projects/<slug>/traces/`.
+            sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+            from harness_paths import ensure_state_dir  # noqa: PLC0415
+            tmp_state = str(ensure_state_dir(tmp_harness, os.getcwd()))
+            with open(os.path.join(tmp_state, "state.json"), "w", encoding="utf-8") as f:
                 json.dump({"task_id": "t-test-28", "status": "done"}, f)
-            trace_file = os.path.join(tmp_harness, "trace-current.md")
+            trace_file = os.path.join(tmp_state, "trace-current.md")
             with open(trace_file, "w", encoding="utf-8") as f:
                 f.write("# Big trace\n" + "x" * 52000)
 
@@ -1212,7 +1246,7 @@ class TestPrecompact(HarnessTestBase):
             self.assertEqual(code, 0)
 
             # dir tmp nasce vazio: qualquer arquivo em traces/ e desta rotacao
-            traces_dir = os.path.join(tmp_harness, "traces")
+            traces_dir = os.path.join(tmp_state, "traces")
             rotated = os.listdir(traces_dir) if os.path.isdir(traces_dir) else []
             self.assertTrue(len(rotated) > 0, f"Deve haver rotacao em traces/. Listing: {rotated}")
 

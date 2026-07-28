@@ -59,9 +59,12 @@ Registrados em `waves/w0-chao-de-fabrica/baseline-suite.json`. Qualquer afirmaç
 
 | Teste | Natureza | Status |
 |---|---|---|
-| `test_router_golden::test_golden_top3_hit_rate` | Determinístico — 47% contra os 93,3% documentados em `docs/router.md` | Causa raiz em aberto; task L1 separada |
-| `test_state_lock::TestConcurrency::test_two_concurrent_acquires_serialize` | Flaky de timing — `assert elapsed <= 3` recebeu `4` sob carga da suíte | Limite apertado demais no próprio teste; candidato a ajuste |
-| `test_harness::TestReclassify::test_15_counter_increments` | Era flaky por estado compartilhado (1 de 3 execuções no baseline) | **Deve ser resolvido por P-1.b** — verificar após o hermetismo |
+| `test_router_golden::test_golden_top3_hit_rate` | Determinístico — 47% contra os 93,3% documentados em `docs/router.md` | **SKIP, não FAIL** (auditoria 2026-07-28): sem Ollama de pé o teste é pulado, então nenhum dos dois números foi reproduzido. Os 93,3% ficaram marcados como não-verificados em `docs/router.md`. Causa raiz segue em aberto |
+| `test_state_lock::TestConcurrency::test_two_concurrent_acquires_serialize` | Flaky de timing — `assert elapsed <= 3` recebeu `4` sob carga da suíte | **Não reproduzido** em 3 execuções completas na auditoria 2026-07-28 |
+| `test_harness::TestReclassify::test_15_counter_increments` | Era flaky por estado compartilhado (1 de 3 execuções no baseline) | **Resolvido** por P-1.b (hermetismo) — verde nas execuções da auditoria 2026-07-28 |
+
+**Estado em 2026-07-28:** `309 passed, 1 skipped, 0 failed` (o skip é o golden do router).
+Baseline anterior: 243 passed / 6 failed. A suíte deixou de ter known-failures.
 
 ## Testes de hermetismo
 

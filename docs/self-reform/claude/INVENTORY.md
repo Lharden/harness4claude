@@ -132,7 +132,9 @@ Arquitetura: **bash como casca, Python como motor** — heredocs `python << 'PYE
 
 Inline em `hooks/harness-classify.sh` L80-419 (heredoc Python). Normalização lowercase + NFKD + strip de combining chars. Tabelas regex PT/EN com `\b` obrigatório: `l0_questions` (18), `l0_cosmetic` (12), `l0_meta` (7), `l1_bug` (22), `l1_refactor` (20), `l1_small_feature` (6), `l2_*` incluindo regex de coocorrência. Precedência: L0 só se nenhum L1/L2 casar; L2 vence L1 no empate; default **L1**. Tipo: `bug` > `refactor` > `architecture` > `feature`.
 
-`classification_meta` (L349-355): `{suggested, final, source:"regex", confidence, agreed}`. Para L1+, `final` fica `None` até a confirmação semântica — que **não é código**: é protocolo em Markdown para o LLM. `wf-classify-semantic`, citado no comentário L348, **não existe**.
+`classification_meta`: `{suggested, final, source:"regex", confidence, agreed}`. Para L1+, `final` fica `None` até a confirmação semântica.
+
+**Resolvido em 2026-07-28.** O diagnóstico acima estava certo e a auditoria mediu a consequência: `agreed = null` em 100% das tasks, `total_classified: 0` e `avg_classify_accuracy: null` desde sempre, porque `recompute_aggregates` só conta tasks com `agreed is not None`. A confirmação agora é código — `scripts/confirm_classification.py`, chamado pela skill `harness-workflow` no passo 2 do protocolo. O `wf-classify-semantic` citado no comentário do hook nunca existiu e a referência foi removida.
 
 Sig-guards (L114-145): `AUTOMATION_SIGNATURES`, `MAX_CLASSIFY_LEN=30000`, `MAX_SWITCH_LEN=1500` com `SWITCH_PATTERNS`.
 

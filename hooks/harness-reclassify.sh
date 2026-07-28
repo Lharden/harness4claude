@@ -14,17 +14,28 @@ else
     HARNESS_DIR_WIN="$HARNESS_DIR"
 fi
 
-# Read file path from stdin JSON via env var (safe from injection)
+# Read file path + cwd from stdin JSON via env var (safe from injection).
+# Saida: linha 1 = cwd, linha 2 = file_path. O cwd resolve o bucket do projeto —
+# sem ele, editar arquivos num repo promovia a classificacao de outro (o
+# contador global chegou a 130 arquivos misturando dois projetos).
 INPUT=$(cat)
 export PYTHONUTF8=1
-FILE_PATH=$(echo "$INPUT" | python -c "
+EXTRACT=$(echo "$INPUT" | python -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
+    print((d.get('cwd') or '').replace('\n', ' '))
     print(d.get('tool_input',{}).get('file_path',''))
 except Exception:
     print('')
+    print('')
 " 2>/dev/null)
+
+# Expansao de parametro em vez de pipe: `head`/`sed` fecham o pipe cedo e, com
+# `set -o pipefail`, o produtor morre com SIGPIPE (exit 141). Ver harness-classify.sh.
+SESSION_CWD="${EXTRACT%%$'\n'*}"
+FILE_PATH="${EXTRACT#*$'\n'}"
+FILE_PATH="${FILE_PATH%%$'\n'*}"
 
 [ -z "$FILE_PATH" ] && exit 0
 
@@ -44,12 +55,27 @@ fi
 # MSYS_NO_PATHCONV prevents Git Bash from mangling paths like /app/src → C:/Program Files/Git/app/src
 export MSYS_NO_PATHCONV=1
 export HARNESS_FILE_PATH="$FILE_PATH"
+export HARNESS_SESSION_CWD="$SESSION_CWD"
+SCRIPTS_DIR="${HOOK_DIR_REL}/../scripts"
+if command -v cygpath &>/dev/null; then
+    export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
+else
+    export HARNESS_SCRIPTS_DIR="$SCRIPTS_DIR"
+fi
 
 # All logic in single Python call to avoid path issues
 python -c "
-import json, os
+import json, os, sys
 
 harness_dir = r'$HARNESS_DIR_WIN'
+# Bucket do projeto; fallback para a raiz preserva o comportamento antigo se a
+# resolucao falhar. Ver scripts/harness_paths.py.
+try:
+    sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR'])
+    from harness_paths import ensure_state_dir
+    harness_dir = str(ensure_state_dir(harness_dir, os.environ.get('HARNESS_SESSION_CWD') or None))
+except Exception:
+    pass
 state_file = os.path.join(harness_dir, 'state.json')
 counter_file = os.path.join(harness_dir, '.session-files-count')
 file_path = os.environ['HARNESS_FILE_PATH']

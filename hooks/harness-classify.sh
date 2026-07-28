@@ -46,15 +46,19 @@ fi
 # ---------------------------------------------------------------------------
 INPUT="$(cat)"
 
-# Single Python call: extract message + normalize unicode
+# Single Python call: extract cwd + message + normalize unicode.
+# Formato de saida: PRIMEIRA linha = cwd da sessao, resto = mensagem normalizada.
+# O cwd vem primeiro porque nunca contem quebra de linha, enquanto a mensagem
+# pode — inverter a ordem tornaria o split ambiguo.
 # Errors logged to debug file instead of silently swallowed
-MSG_LOWER="$(printf '%s' "$INPUT" | python -c "
+EXTRACT="$(printf '%s' "$INPUT" | python -c "
 import sys, json, unicodedata
 try:
     data = json.load(sys.stdin)
     msg = data.get('prompt', data.get('user_prompt', data.get('user_message', data.get('content', ''))))
     if not msg or not msg.strip():
         sys.exit(0)
+    print((data.get('cwd') or '').replace('\n', ' '))
     text = msg.lower().strip()
     nfkd = unicodedata.normalize('NFKD', text)
     clean = ''.join(c for c in nfkd if not unicodedata.combining(c))
@@ -68,6 +72,21 @@ except Exception as e:
     sys.exit(1)
 " || echo "")"
 
+if [ -z "$EXTRACT" ]; then
+    exit 0
+fi
+
+# Split por expansao de parametro, NAO por pipe para head/tail: com `set -o
+# pipefail`, `head -n 1` fecha o pipe e o `printf` de um prompt grande morre com
+# SIGPIPE, derrubando o hook com exit 141 (visto com o prompt de ~160KB do
+# sumarizador). Sem pipe tambem economiza dois processos por prompt.
+case "$EXTRACT" in
+    *$'\n'*) ;;
+    *) exit 0 ;;  # sem quebra de linha => extrator nao emitiu mensagem
+esac
+SESSION_CWD="${EXTRACT%%$'\n'*}"
+MSG_LOWER="${EXTRACT#*$'\n'}"
+
 if [ -z "$MSG_LOWER" ]; then
     exit 0
 fi
@@ -76,18 +95,24 @@ fi
 # 2. Delegate everything to a single Python script via env vars
 # ---------------------------------------------------------------------------
 # Convert MSYS paths to Windows paths for Python
+SCRIPTS_DIR="${HOOK_DIR_REL}/../scripts"
 if command -v cygpath &>/dev/null; then
     export HARNESS_STATE_FILE="$(cygpath -w "$STATE_FILE")"
     export HARNESS_COUNTER_FILE="$(cygpath -w "$COUNTER_FILE")"
+    export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
+    export HARNESS_ROOT_DIR="$(cygpath -w "$HARNESS_DIR")"
 else
     export HARNESS_STATE_FILE="$STATE_FILE"
     export HARNESS_COUNTER_FILE="$COUNTER_FILE"
+    export HARNESS_SCRIPTS_DIR="$SCRIPTS_DIR"
+    export HARNESS_ROOT_DIR="$HARNESS_DIR"
 fi
 export HARNESS_MSG_LOWER="$MSG_LOWER"
+export HARNESS_SESSION_CWD="$SESSION_CWD"
 export PYTHONUTF8=1
 
 python << 'PYEOF'
-import os, re, json
+import os, re, json, sys
 from datetime import datetime, timezone
 
 
@@ -107,8 +132,25 @@ def _atomic_write_json(path, data):
 
 
 msg = os.environ["HARNESS_MSG_LOWER"]
-state_file = os.environ["HARNESS_STATE_FILE"]
-counter_file = os.environ["HARNESS_COUNTER_FILE"]
+
+# ============================================================================
+# Escopo do estado: bucket do projeto (default) ou raiz global
+# ============================================================================
+# Ate 2026-07-28 havia UM state para toda a maquina: o contador global chegou a
+# 130 arquivos sob um unico task_id, misturando dois projetos, e a promocao
+# L0->L1 de um repo era disparada por edicoes em outro. Ver scripts/harness_paths.py.
+# Fallback para a raiz: se a resolucao falhar, o comportamento antigo e melhor
+# que nao classificar.
+sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
+try:
+    from harness_paths import ensure_state_dir
+    _sd = str(ensure_state_dir(os.environ.get("HARNESS_ROOT_DIR") or None,
+                               os.environ.get("HARNESS_SESSION_CWD") or None))
+    state_file = os.path.join(_sd, "state.json")
+    counter_file = os.path.join(_sd, ".session-files-count")
+except Exception:
+    state_file = os.environ["HARNESS_STATE_FILE"]
+    counter_file = os.environ["HARNESS_COUNTER_FILE"]
 
 # ============================================================================
 # Guard de automação por ASSINATURA (incidente 2026-06-12, t-20260612-155238)
@@ -152,6 +194,25 @@ is_task_switch = (
     len(msg) <= MAX_SWITCH_LEN
     and bool(re.search(SWITCH_PATTERNS, msg, re.IGNORECASE))
 )
+
+# ============================================================================
+# TTL: disjuntor do pipeline abandonado
+# ============================================================================
+# Auditoria 2026-07-28: o bloco de continuacao logo abaixo sai ANTES de
+# classificar sempre que status == "active". Como nada devolvia o state para
+# "idle", uma task de 24/07 ficou ativa 4 dias e bloqueou TODA classificacao
+# nova em TODOS os projetos (o state e global).
+#
+# Posicao no arquivo e deliberada: DEPOIS dos guards de automacao e de
+# comprimento. Prompt de automacao (sumarizador, colagem gigante) nunca pode
+# mutar o state — nem para expirar. Rodar isto antes dos guards reintroduziria
+# exatamente o incidente t-20260612-034438 que aqueles guards fecham.
+try:
+    from expire_stale_pipeline import default_ttl_hours, expire
+    expire(os.path.dirname(state_file), default_ttl_hours(),
+           signals_dir=os.environ.get("HARNESS_ROOT_DIR") or None)
+except Exception:
+    pass  # TTL e best-effort: falhar aqui nunca pode bloquear o prompt
 
 # ============================================================================
 # Check active pipeline in state.json
@@ -328,6 +389,18 @@ PIPELINES = {
     "L2-refactor":     ["discuss", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
     "L2-architecture": ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
 }
+# Fonte unica: scripts/pipelines.json, compartilhada com confirm_classification.py
+# (que precisa trocar o pipeline quando a confirmacao semantica corrige o nivel).
+# O literal acima permanece como fallback: num install quebrado, classificar com
+# o pipeline conhecido vale mais do que nao classificar.
+try:
+    with open(os.path.join(os.environ["HARNESS_SCRIPTS_DIR"], "pipelines.json"),
+              encoding="utf-8") as _f:
+        _loaded = json.load(_f).get("pipelines")
+    if _loaded:
+        PIPELINES = _loaded
+except Exception:
+    pass
 # L0 has no pipeline
 pipeline = PIPELINES.get(classification, [])
 # Guard defensivo: um {level}-{type} L1+ sem pipeline mapeado nao deve seguir
@@ -352,9 +425,13 @@ started_at = now.isoformat()
 status = "done" if level == "L0" else "active"
 
 # classification_meta: camada regex (suggested). Para L0 o regex decide sozinho
-# (final=suggested). Para L1+ a confirmacao semantica (wf-classify-semantic)
-# preenche final/source/agreed depois; ate la final=None. agreed=None em ambos
-# pois so a camada semantica avalia concordancia (entra no loop de accuracy).
+# (final=suggested). Para L1+ quem preenche final/source/agreed e a skill
+# harness-workflow, chamando scripts/confirm_classification.py no passo 2 do
+# protocolo; ate la final=None. agreed=None em ambos, pois so a camada semantica
+# avalia concordancia — e e ela que alimenta avg_classify_accuracy.
+# (Ate 2026-07-28 este comentario citava um "wf-classify-semantic" que nunca
+# existiu, e o protocolo mandava editar o JSON a mao — o que nao era cumprido:
+# 100% das tasks tinham agreed=null e a metrica de accuracy nunca saiu de zero.)
 classification_meta = {
     "suggested": classification,
     "final": classification if level == "L0" else None,

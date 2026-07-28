@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # SessionStart: staleness do indice + warm ping do Ollama. Sem output, nunca bloqueia.
 set -uo pipefail
+
+# Opt-in explicito: sem HARNESS_ROUTER=1 nao ha router para aquecer, e rebuildar
+# um indice de 424KB que ninguem consulta e desperdicio. Ver harness-skill-router.sh.
+[ "${HARNESS_ROUTER:-0}" = "1" ] || exit 0
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONUTF8=1
 PY="$(command -v python3 || command -v python || true)"

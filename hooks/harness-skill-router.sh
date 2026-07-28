@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Skill-router v3.3 — shim. Contrato: nunca falha, nunca bloqueia o prompt.
 set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Opt-in explicito (auditoria 2026-07-28)
+# ---------------------------------------------------------------------------
+# A Camada B depende de um Ollama local. Sem ele, o router registrou 88 falhas
+# consecutivas — 100% TimeoutError, zero sucessos — e o indice de 276 skills
+# nunca foi consultado. Custo real (spawn de python + I/O do indice a cada
+# prompt) em troca de nada. Fica dormente ate HARNESS_ROUTER=1.
+[ "${HARNESS_ROUTER:-0}" = "1" ] || exit 0
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONUTF8=1
 PY="$(command -v python3 || command -v python || true)"

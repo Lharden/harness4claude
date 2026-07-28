@@ -5,16 +5,47 @@ set -euo pipefail
 # Convert paths for Python on Windows (MSYS /c/... → C:\...)
 # Parametrizavel via env: testes isolam com HARNESS_DIR temporario (default = producao)
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
+export HARNESS_DIR
+HOOK_DIR_REL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if command -v cygpath &>/dev/null; then
-    HARNESS_DIR_WIN=$(cygpath -w "$HARNESS_DIR")
+    HARNESS_ROOT_WIN=$(cygpath -w "$HARNESS_DIR")
+    SCRIPTS_DIR_WIN=$(cygpath -w "${HOOK_DIR_REL}/../scripts")
 else
-    HARNESS_DIR_WIN="$HARNESS_DIR"
+    HARNESS_ROOT_WIN="$HARNESS_DIR"
+    SCRIPTS_DIR_WIN="${HOOK_DIR_REL}/../scripts"
 fi
 
-STATE_FILE="$HARNESS_DIR/state.json"
-TRACE_FILE="$HARNESS_DIR/trace-current.md"
-COUNTER_FILE="$HARNESS_DIR/.session-files-count"
-TRACES_DIR="$HARNESS_DIR/traces"
+# O snapshot descreve a TAREFA corrente, entao vive no bucket do projeto — um
+# trace unico da maquina intercalava sessoes de repos diferentes. Fallback para
+# a raiz mantem o comportamento antigo se a resolucao falhar.
+# `-t 0` obrigatorio: sem stdin de pipe (execucao manual, teste) um `cat` puro
+# bloquearia o hook para sempre.
+INPUT=""
+if [ ! -t 0 ]; then INPUT="$(cat 2>/dev/null || true)"; fi
+export PYTHONUTF8=1
+export HARNESS_ROOT_WIN SCRIPTS_DIR_WIN
+STATE_DIR="$(printf '%s' "$INPUT" | python -c "
+import sys, json, os
+sys.path.insert(0, os.environ['SCRIPTS_DIR_WIN'])
+root = os.environ['HARNESS_ROOT_WIN']
+try:
+    cwd = json.load(sys.stdin).get('cwd') or ''
+except Exception:
+    cwd = ''
+try:
+    from harness_paths import ensure_state_dir
+    print(ensure_state_dir(root, cwd or None))
+except Exception:
+    print(root)
+" 2>/dev/null || printf '%s' "$HARNESS_DIR")"
+[ -z "$STATE_DIR" ] && STATE_DIR="$HARNESS_DIR"
+
+STATE_FILE="$STATE_DIR/state.json"
+TRACE_FILE="$STATE_DIR/trace-current.md"
+COUNTER_FILE="$STATE_DIR/.session-files-count"
+TRACES_DIR="$STATE_DIR/traces"
+HARNESS_DIR_WIN="$STATE_DIR"
+mkdir -p "$STATE_DIR" 2>/dev/null || true
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # Rotacionar se trace > 50KB
