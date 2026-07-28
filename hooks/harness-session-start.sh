@@ -142,15 +142,49 @@ elif [ ! -f "$BOOTSTRAP_FLAG" ]; then
     touch "$BOOTSTRAP_FLAG"
 fi
 
-STATE_FILE="$HARNESS_DIR/state.json"
-
-[ ! -f "$STATE_FILE" ] && exit 0
-
-# Convert path for Python on Windows
+# ============================================================================
+# Escopo do estado: bucket do projeto (default) ou raiz global
+# ============================================================================
+# Sem isto o hook oferecia retomar a MESMA task em toda sessao de todo projeto
+# da maquina — a checagem era so `status == "active"`, sem nocao de onde a task
+# nasceu. Ver scripts/harness_paths.py. `-t 0` porque sem stdin de pipe
+# (execucao manual) um `cat` puro bloquearia o hook.
+SESSION_INPUT=""
+if [ ! -t 0 ]; then SESSION_INPUT="$(cat 2>/dev/null || true)"; fi
 if command -v cygpath &>/dev/null; then
-    STATE_FILE_PY="$(cygpath -w "$STATE_FILE")"
+    export HARNESS_SCRIPTS_DIR_PY="$(cygpath -w "$PLUGIN_DIR/scripts")"
 else
-    STATE_FILE_PY="$STATE_FILE"
+    export HARNESS_SCRIPTS_DIR_PY="$PLUGIN_DIR/scripts"
+fi
+export HARNESS_ROOT_PY="$HARNESS_DIR_PY"
+STATE_DIR_PY="$(printf '%s' "$SESSION_INPUT" | python -c "
+import sys, json, os
+sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR_PY'])
+root = os.environ['HARNESS_ROOT_PY']
+try:
+    cwd = json.load(sys.stdin).get('cwd') or ''
+except Exception:
+    cwd = ''
+try:
+    from harness_paths import ensure_state_dir
+    print(ensure_state_dir(root, cwd or None))
+except Exception:
+    print(root)
+" 2>/dev/null || printf '%s' "$HARNESS_DIR_PY")"
+[ -z "$STATE_DIR_PY" ] && STATE_DIR_PY="$HARNESS_DIR_PY"
+
+STATE_FILE_PY="$STATE_DIR_PY/state.json"
+if [ ! -f "$STATE_FILE_PY" ]; then
+    python -c "
+import json, os, sys
+d = sys.argv[1]
+os.makedirs(d, exist_ok=True)
+json.dump({'task_id': None, 'schema_version': 3, 'classification': None,
+           'status': 'idle', 'pipeline': [], 'current_step': None,
+           'artifacts_so_far': [], 'started_at': None},
+          open(os.path.join(d, 'state.json'), 'w'), indent=2)
+" "$STATE_DIR_PY" 2>/dev/null || exit 0
+    exit 0
 fi
 
 # ============================================================================
@@ -162,7 +196,8 @@ fi
 EXPIRED_TASK=""
 EXPIRE_PY="$PLUGIN_DIR/scripts/expire_stale_pipeline.py"
 if [ -f "$EXPIRE_PY" ] && command -v python >/dev/null 2>&1; then
-    EXPIRED_TASK="$(python "$EXPIRE_PY" --harness-dir "$HARNESS_DIR_PY" 2>/dev/null || true)"
+    EXPIRED_TASK="$(python "$EXPIRE_PY" --harness-dir "$STATE_DIR_PY" \
+        --signals-dir "$HARNESS_DIR_PY" 2>/dev/null || true)"
 fi
 
 if [ -n "$EXPIRED_TASK" ]; then

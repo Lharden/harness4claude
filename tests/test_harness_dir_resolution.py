@@ -67,13 +67,32 @@ class TestOverrideRedirectsWrites:
         )
 
     def test_classify_writes_state_into_override(self, tmp_path):
+        """A escrita fica DENTRO do override — em que subdiretorio nao importa aqui.
+
+        Desde o escopo por projeto o destino e `<override>/projects/<slug>/`, e
+        nao mais a raiz. O que este AC garante e o redirecionamento: nada escapa
+        para o diretorio real. A posicao exata tem cobertura propria em
+        tests/test_harness_paths.py.
+        """
         target = tmp_path / "h"
         target.mkdir()
         env = _env(HARNESS_DIR=str(target))
         payload = json.dumps({"prompt": "corrija o bug de autenticacao no login"})
         _run([BASH, str(HOOKS / "harness-classify.sh")], env, stdin=payload)
-        assert (target / "state.json").exists(), (
+        assert list(target.rglob("state.json")), (
             "harness-classify.sh ignorou HARNESS_DIR ao escrever state.json"
+        )
+
+    def test_classify_scope_global_writes_at_root(self, tmp_path):
+        """HARNESS_SCOPE=global restaura o layout antigo: state na raiz."""
+        target = tmp_path / "h"
+        target.mkdir()
+        env = _env(HARNESS_DIR=str(target), HARNESS_SCOPE="global")
+        payload = json.dumps({"prompt": "corrija o bug de autenticacao no login"})
+        _run([BASH, str(HOOKS / "harness-classify.sh")], env, stdin=payload)
+        assert (target / "state.json").exists()
+        assert not (target / "projects").exists(), (
+            "escopo global nao pode criar buckets de projeto"
         )
 
     def test_init_state_writes_into_override(self, tmp_path):

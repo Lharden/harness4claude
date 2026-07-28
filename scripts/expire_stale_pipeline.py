@@ -100,13 +100,24 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def expire(harness_dir: Path | str, ttl_hours: float, *, now: datetime | None = None) -> str | None:
+def expire(
+    harness_dir: Path | str,
+    ttl_hours: float,
+    *,
+    now: datetime | None = None,
+    signals_dir: Path | str | None = None,
+) -> str | None:
     """Expira o pipeline se necessario. Retorna o task_id expirado, ou None.
+
+    `harness_dir` e o bucket do PROJETO (onde vivem state.json e o contador);
+    `signals_dir` e a raiz, onde a telemetria e agregada entre projetos. Quando
+    omitido, ambos coincidem — o caso de HARNESS_SCOPE=global e o dos testes.
 
     Aceita `str` porque o python inline do `harness-classify.sh` passa o dirname
     ja convertido por cygpath — nao ha pathlib do lado do hook.
     """
     harness_dir = Path(harness_dir)
+    signals_dir = Path(signals_dir) if signals_dir is not None else harness_dir
     state_path = harness_dir / "state.json"
     try:
         with state_path.open(encoding="utf-8") as fh:
@@ -137,7 +148,7 @@ def expire(harness_dir: Path | str, ttl_hours: float, *, now: datetime | None = 
             reason=f"ttl_expired_{ttl_hours:g}h",
             timestamp=(now or datetime.now(timezone.utc)).isoformat(),
         )
-        record(harness_dir, task)
+        record(signals_dir, task)
     except Exception:  # noqa: BLE001 — telemetria nunca pode impedir o destravamento
         pass
 
@@ -149,7 +160,10 @@ def expire(harness_dir: Path | str, ttl_hours: float, *, now: datetime | None = 
 def main() -> int:
     """Ponto de entrada CLI. Sempre retorna 0 — hook nunca bloqueia."""
     parser = argparse.ArgumentParser(description="Expira pipeline ativo alem do TTL.")
-    parser.add_argument("--harness-dir", type=Path, default=None)
+    parser.add_argument("--harness-dir", type=Path, default=None,
+                        help="bucket do projeto (state.json + contador)")
+    parser.add_argument("--signals-dir", type=Path, default=None,
+                        help="raiz onde signals.json e agregado (default: --harness-dir)")
     parser.add_argument("--ttl-hours", type=float, default=None)
     args = parser.parse_args()
 
@@ -157,7 +171,7 @@ def main() -> int:
     ttl_hours = args.ttl_hours if args.ttl_hours is not None else default_ttl_hours()
 
     try:
-        expired = expire(Path(harness_dir), ttl_hours)
+        expired = expire(Path(harness_dir), ttl_hours, signals_dir=args.signals_dir)
     except Exception:  # noqa: BLE001 — contrato: nunca falhar
         return 0
 

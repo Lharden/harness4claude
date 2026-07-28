@@ -60,16 +60,33 @@ def _harness_dir() -> str:
     return os.environ.get("HARNESS_DIR") or os.path.join(HOME, ".claude", "harness")
 
 
+def _state_dir() -> str:
+    """Bucket do projeto onde os hooks escrevem o estado da tarefa.
+
+    Desde o escopo por projeto (auditoria 2026-07-28) os hooks nao escrevem mais
+    na raiz de HARNESS_DIR: state/contador/trace vao para
+    `<raiz>/projects/<slug>`, derivado do repo do cwd. Os helpers precisam
+    resolver do MESMO jeito, senao os testes leem um arquivo que nunca e escrito.
+    Resolvido a cada chamada porque HARNESS_DIR muda por classe de teste.
+    """
+    sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+    try:
+        from harness_paths import ensure_state_dir  # noqa: PLC0415
+        return str(ensure_state_dir(_harness_dir(), os.getcwd()))
+    except Exception:
+        return _harness_dir()
+
+
 def _state_file() -> str:
-    return os.path.join(_harness_dir(), "state.json")
+    return os.path.join(_state_dir(), "state.json")
 
 
 def _counter_file() -> str:
-    return os.path.join(_harness_dir(), ".session-files-count")
+    return os.path.join(_state_dir(), ".session-files-count")
 
 
 def _trace_file() -> str:
-    return os.path.join(_harness_dir(), "trace-current.md")
+    return os.path.join(_state_dir(), "trace-current.md")
 
 # Detect bash
 _bash_path = shutil.which("bash")
@@ -1208,9 +1225,14 @@ class TestPrecompact(HarnessTestBase):
             tmp_vault = os.path.join(tmp, "vault")
             os.makedirs(tmp_harness)
             os.makedirs(tmp_vault)
-            with open(os.path.join(tmp_harness, "state.json"), "w", encoding="utf-8") as f:
+            # O fixture vai no bucket do projeto, nao na raiz: desde o escopo por
+            # projeto o precompact rotaciona `<raiz>/projects/<slug>/traces/`.
+            sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+            from harness_paths import ensure_state_dir  # noqa: PLC0415
+            tmp_state = str(ensure_state_dir(tmp_harness, os.getcwd()))
+            with open(os.path.join(tmp_state, "state.json"), "w", encoding="utf-8") as f:
                 json.dump({"task_id": "t-test-28", "status": "done"}, f)
-            trace_file = os.path.join(tmp_harness, "trace-current.md")
+            trace_file = os.path.join(tmp_state, "trace-current.md")
             with open(trace_file, "w", encoding="utf-8") as f:
                 f.write("# Big trace\n" + "x" * 52000)
 
@@ -1224,7 +1246,7 @@ class TestPrecompact(HarnessTestBase):
             self.assertEqual(code, 0)
 
             # dir tmp nasce vazio: qualquer arquivo em traces/ e desta rotacao
-            traces_dir = os.path.join(tmp_harness, "traces")
+            traces_dir = os.path.join(tmp_state, "traces")
             rotated = os.listdir(traces_dir) if os.path.isdir(traces_dir) else []
             self.assertTrue(len(rotated) > 0, f"Deve haver rotacao em traces/. Listing: {rotated}")
 

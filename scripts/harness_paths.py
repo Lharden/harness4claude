@@ -1,0 +1,145 @@
+#!/usr/bin/env python
+"""Resolucao de paths do harness: raiz global vs bucket por projeto.
+
+O problema (auditoria 2026-07-28): os 8 hooks resolviam `HARNESS_DIR` para
+`$HOME/.claude/harness` e nenhum lia o diretorio de trabalho. Como o plugin e
+user-scope e dispara em todo projeto da maquina, havia UM state para TODOS:
+
+- `.session-files-count` tinha 130 arquivos sob um unico `task_id` — 41 de
+  `master_project`, 39 de `harness4claude`, o resto de temporarios. Como
+  `harness-reclassify.sh` usa esse contador para promover L0 -> L1, editar
+  arquivos num projeto escalava a classificacao de outro.
+- `harness-session-start.sh` oferecia retomar a mesma task em toda sessao de
+  todo projeto, porque a checagem era so `status == "active"`.
+
+O README documentava isso como decisao ("State is per-machine to allow
+cross-project pipeline continuity"). A continuidade continua disponivel, mas
+agora por opt-in: `HARNESS_SCOPE=global` restaura o comportamento antigo.
+
+O que e por projeto: `state.json`, `.session-files-count`, `trace-current.md`,
+`traces/` — tudo que descreve a TAREFA corrente.
+O que continua na raiz: `signals.json` (telemetria e agregada de proposito, e
+os registros sao chaveados por `task_id`, entao nao ha contaminacao),
+`plugin-root`, `.bootstrap-done`, `skills-index/`, `router/`.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+from pathlib import Path
+
+PROJECTS_SUBDIR = "projects"
+
+
+def default_root() -> Path:
+    """Raiz do harness: HARNESS_DIR se definida, senao ~/.claude/harness."""
+    env = os.environ.get("HARNESS_DIR")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".claude" / "harness"
+
+
+def find_repo_root(start: str | os.PathLike | None) -> str | None:
+    """Sobe a arvore procurando `.git`. None se nao houver repo.
+
+    Deliberadamente sem subprocess: isto roda em UserPromptSubmit, e um
+    `git rev-parse` por prompt custaria mais que a resolucao inteira. Detecta
+    worktree tambem, porque nela `.git` e um arquivo, nao um diretorio.
+    """
+    if not start:
+        return None
+    try:
+        p = os.path.abspath(str(start))
+    except (OSError, ValueError):
+        return None
+    while True:
+        if os.path.exists(os.path.join(p, ".git")):
+            return p
+        parent = os.path.dirname(p)
+        if parent == p:
+            return None
+        p = parent
+
+
+def project_slug(cwd: str | os.PathLike | None) -> str:
+    """Identificador estavel e legivel do projeto: `<basename>-<hash8>`.
+
+    O basename sozinho colidiria entre dois checkouts de mesmo nome; o hash
+    sozinho seria ilegivel ao inspecionar `~/.claude/harness/projects/`.
+    `normcase` porque no Windows o mesmo diretorio aparece com caixas
+    diferentes conforme quem chama.
+    """
+    root = find_repo_root(cwd) or (os.path.abspath(str(cwd)) if cwd else "")
+    if not root:
+        return "unknown"
+    base = os.path.basename(root.rstrip("/\\")) or "root"
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-") or "root"
+    digest = hashlib.sha256(os.path.normcase(root).encode("utf-8")).hexdigest()[:8]
+    return f"{base[:40]}-{digest}"
+
+
+def is_global_scope(scope: str | None = None) -> bool:
+    """HARNESS_SCOPE=global restaura o state unico da maquina."""
+    value = scope if scope is not None else os.environ.get("HARNESS_SCOPE", "")
+    return value.strip().lower() == "global"
+
+
+def state_dir(
+    root: str | os.PathLike | None = None,
+    cwd: str | os.PathLike | None = None,
+    scope: str | None = None,
+) -> Path:
+    """Diretorio do estado da tarefa: raiz (global) ou `raiz/projects/<slug>`."""
+    base = Path(root) if root is not None else default_root()
+    if is_global_scope(scope):
+        return base
+    return base / PROJECTS_SUBDIR / project_slug(cwd or os.getcwd())
+
+
+def signals_dir(root: str | os.PathLike | None = None) -> Path:
+    """signals.json fica sempre na raiz: telemetria e agregada de proposito."""
+    return Path(root) if root is not None else default_root()
+
+
+def ensure_state_dir(
+    root: str | os.PathLike | None = None,
+    cwd: str | os.PathLike | None = None,
+    scope: str | None = None,
+) -> Path:
+    """Resolve e cria o diretorio de estado. Nunca levanta — hook nao pode falhar."""
+    d = state_dir(root, cwd, scope)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def main() -> int:
+    """CLI para os hooks em bash: imprime o diretorio de estado resolvido.
+
+    Uso: python harness_paths.py [--cwd DIR] [--root DIR] [--signals]
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Resolve diretorios do harness.")
+    parser.add_argument("--cwd", default=None, help="diretorio de trabalho da sessao")
+    parser.add_argument("--root", default=None, help="raiz do harness (default: HARNESS_DIR)")
+    parser.add_argument("--signals", action="store_true", help="imprime a raiz de signals.json")
+    parser.add_argument("--slug", action="store_true", help="imprime so o slug do projeto")
+    args = parser.parse_args()
+
+    if args.slug:
+        print(project_slug(args.cwd or os.getcwd()))
+        return 0
+    if args.signals:
+        print(signals_dir(args.root))
+        return 0
+    print(ensure_state_dir(args.root, args.cwd))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

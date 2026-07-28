@@ -25,8 +25,10 @@ Para L0, NÃO ative — execute direto sem pipeline.
 2. **Confirmar classificação (camada semântica)** — ANTES de anunciar, avalie a intenção REAL do prompt do usuário e compare com o `suggested`. Execute **sempre**, concordando ou não:
 
    ```bash
-   python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/confirm_classification.py" \
-     --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>"
+   ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
+   python "$PR/scripts/confirm_classification.py" \
+     --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>" \
+     --harness-dir "$(python "$PR/scripts/harness_paths.py")"
    ```
 
    - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
@@ -38,7 +40,12 @@ Para L0, NÃO ative — execute direto sem pipeline.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
 6. **Flexibilidade** — pular etapas se justificar (ex.: spec já existe, bug óbvio).
 7. **DONE** — marcar `status: done` e registrar a task executando:
-   `python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" --completed --steps "step1,step2,..." --expect-task "<task_id>"`
+   ```bash
+   ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
+   python "$PR/scripts/record_signal.py" --completed --steps "step1,step2,..." \
+     --expect-task "<task_id>" \
+     --harness-dir "$(python "$PR/scripts/harness_paths.py")" --signals-dir "$ROOT"
+   ```
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
    **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma — nesse caso, restaure o state da sua task antes de registrar.
 
@@ -273,15 +280,31 @@ Use o Edit tool para atualizar state.json. Custo: ~20 tokens por transição.
 Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. Use o helper:
 
 ```bash
+# Resolva uma vez: raiz do harness, plugin, e o bucket DESTE projeto.
+# state.json e o contador vivem no bucket; signals.json e agregado na raiz.
+ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"
+PR="$(cat "$ROOT/plugin-root")"
+STATE_DIR="$(python "$PR/scripts/harness_paths.py")"
+
 # Pipeline concluído com sucesso (--expect-task = task_id do INÍCIO do pipeline;
-# aborta com exit 2 se o state global foi trocado por outra sessão no meio)
-python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" --completed \
+# aborta com exit 2 se o state foi trocado por outra sessão no meio)
+python "$PR/scripts/record_signal.py" --completed \
   --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec" \
-  --expect-task "t-20260612-033900"
+  --expect-task "t-20260612-033900" \
+  --harness-dir "$STATE_DIR" --signals-dir "$ROOT"
 
 # Tarefa abandonada (troca de assunto / cancelamento)
-python "$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")/scripts/record_signal.py" --abandoned --reason "user_switch"
+python "$PR/scripts/record_signal.py" --abandoned --reason "user_switch" \
+  --harness-dir "$STATE_DIR" --signals-dir "$ROOT"
 ```
+
+> **Escopo do estado (desde 2026-07-28).** `state.json`, `.session-files-count` e
+> os traces ficam em `$ROOT/projects/<slug>/`, um bucket por repositório. Antes
+> havia um único state para a máquina inteira: o contador chegou a 130 arquivos
+> sob um mesmo `task_id`, misturando dois projetos, e a promoção L0→L1 de um repo
+> era disparada por edições em outro. `HARNESS_SCOPE=global` restaura o
+> comportamento antigo. `signals.json` continua na raiz de propósito — a
+> telemetria é agregada e seus registros são chaveados por `task_id`.
 
 O script (idempotente por `task_id`):
 1. Lê `task_id`, `classification` e `classification_meta` do `state.json`

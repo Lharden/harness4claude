@@ -122,7 +122,11 @@ def main() -> int:
     """Ponto de entrada CLI."""
     parser = argparse.ArgumentParser(description="Registra task em signals.json.")
     default_dir = default_harness_dir()
-    parser.add_argument("--harness-dir", type=Path, default=default_dir)
+    parser.add_argument("--harness-dir", type=Path, default=default_dir,
+                        help="bucket do projeto: onde ficam state.json e o contador")
+    parser.add_argument("--signals-dir", type=Path, default=None,
+                        help="raiz onde signals.json e agregado entre projetos "
+                             "(default: --harness-dir)")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--completed", action="store_true", help="pipeline concluido")
     group.add_argument("--abandoned", action="store_true", help="task abandonada")
@@ -155,7 +159,7 @@ def main() -> int:
     task = build_task(
         state, counter, completed=completed, steps=steps, reason=args.reason, timestamp=timestamp
     )
-    signals = record(args.harness_dir, task)
+    signals = record(args.signals_dir or args.harness_dir, task)
     accuracy = signals["aggregates"].get("classify", {}).get("avg_classify_accuracy")
     logger.info(
         "registrado %s (level=%s, files=%s); avg_classify_accuracy=%s",

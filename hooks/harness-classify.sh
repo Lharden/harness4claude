@@ -46,15 +46,19 @@ fi
 # ---------------------------------------------------------------------------
 INPUT="$(cat)"
 
-# Single Python call: extract message + normalize unicode
+# Single Python call: extract cwd + message + normalize unicode.
+# Formato de saida: PRIMEIRA linha = cwd da sessao, resto = mensagem normalizada.
+# O cwd vem primeiro porque nunca contem quebra de linha, enquanto a mensagem
+# pode — inverter a ordem tornaria o split ambiguo.
 # Errors logged to debug file instead of silently swallowed
-MSG_LOWER="$(printf '%s' "$INPUT" | python -c "
+EXTRACT="$(printf '%s' "$INPUT" | python -c "
 import sys, json, unicodedata
 try:
     data = json.load(sys.stdin)
     msg = data.get('prompt', data.get('user_prompt', data.get('user_message', data.get('content', ''))))
     if not msg or not msg.strip():
         sys.exit(0)
+    print((data.get('cwd') or '').replace('\n', ' '))
     text = msg.lower().strip()
     nfkd = unicodedata.normalize('NFKD', text)
     clean = ''.join(c for c in nfkd if not unicodedata.combining(c))
@@ -67,6 +71,21 @@ except Exception as e:
         f.write(f'{e}\n')
     sys.exit(1)
 " || echo "")"
+
+if [ -z "$EXTRACT" ]; then
+    exit 0
+fi
+
+# Split por expansao de parametro, NAO por pipe para head/tail: com `set -o
+# pipefail`, `head -n 1` fecha o pipe e o `printf` de um prompt grande morre com
+# SIGPIPE, derrubando o hook com exit 141 (visto com o prompt de ~160KB do
+# sumarizador). Sem pipe tambem economiza dois processos por prompt.
+case "$EXTRACT" in
+    *$'\n'*) ;;
+    *) exit 0 ;;  # sem quebra de linha => extrator nao emitiu mensagem
+esac
+SESSION_CWD="${EXTRACT%%$'\n'*}"
+MSG_LOWER="${EXTRACT#*$'\n'}"
 
 if [ -z "$MSG_LOWER" ]; then
     exit 0
@@ -81,12 +100,15 @@ if command -v cygpath &>/dev/null; then
     export HARNESS_STATE_FILE="$(cygpath -w "$STATE_FILE")"
     export HARNESS_COUNTER_FILE="$(cygpath -w "$COUNTER_FILE")"
     export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
+    export HARNESS_ROOT_DIR="$(cygpath -w "$HARNESS_DIR")"
 else
     export HARNESS_STATE_FILE="$STATE_FILE"
     export HARNESS_COUNTER_FILE="$COUNTER_FILE"
     export HARNESS_SCRIPTS_DIR="$SCRIPTS_DIR"
+    export HARNESS_ROOT_DIR="$HARNESS_DIR"
 fi
 export HARNESS_MSG_LOWER="$MSG_LOWER"
+export HARNESS_SESSION_CWD="$SESSION_CWD"
 export PYTHONUTF8=1
 
 python << 'PYEOF'
@@ -110,8 +132,25 @@ def _atomic_write_json(path, data):
 
 
 msg = os.environ["HARNESS_MSG_LOWER"]
-state_file = os.environ["HARNESS_STATE_FILE"]
-counter_file = os.environ["HARNESS_COUNTER_FILE"]
+
+# ============================================================================
+# Escopo do estado: bucket do projeto (default) ou raiz global
+# ============================================================================
+# Ate 2026-07-28 havia UM state para toda a maquina: o contador global chegou a
+# 130 arquivos sob um unico task_id, misturando dois projetos, e a promocao
+# L0->L1 de um repo era disparada por edicoes em outro. Ver scripts/harness_paths.py.
+# Fallback para a raiz: se a resolucao falhar, o comportamento antigo e melhor
+# que nao classificar.
+sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
+try:
+    from harness_paths import ensure_state_dir
+    _sd = str(ensure_state_dir(os.environ.get("HARNESS_ROOT_DIR") or None,
+                               os.environ.get("HARNESS_SESSION_CWD") or None))
+    state_file = os.path.join(_sd, "state.json")
+    counter_file = os.path.join(_sd, ".session-files-count")
+except Exception:
+    state_file = os.environ["HARNESS_STATE_FILE"]
+    counter_file = os.environ["HARNESS_COUNTER_FILE"]
 
 # ============================================================================
 # Guard de automação por ASSINATURA (incidente 2026-06-12, t-20260612-155238)
@@ -169,9 +208,9 @@ is_task_switch = (
 # mutar o state — nem para expirar. Rodar isto antes dos guards reintroduziria
 # exatamente o incidente t-20260612-034438 que aqueles guards fecham.
 try:
-    sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
     from expire_stale_pipeline import default_ttl_hours, expire
-    expire(os.path.dirname(state_file), default_ttl_hours())
+    expire(os.path.dirname(state_file), default_ttl_hours(),
+           signals_dir=os.environ.get("HARNESS_ROOT_DIR") or None)
 except Exception:
     pass  # TTL e best-effort: falhar aqui nunca pode bloquear o prompt
 
