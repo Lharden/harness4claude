@@ -85,6 +85,10 @@ case "$EXTRACT" in
     *) exit 0 ;;  # sem quebra de linha => extrator nao emitiu mensagem
 esac
 SESSION_CWD="${EXTRACT%%$'\n'*}"
+# print() do Python no Windows emite \r\n. Sem tirar o \r, o cwd vira um caminho
+# que nao existe: find_repo_root falha, cai no cwd cru, e a raiz de um repo e um
+# subdiretorio dele geram buckets DIFERENTES — o estado de um projeto fragmenta.
+SESSION_CWD="${SESSION_CWD%$'\r'}"
 MSG_LOWER="${EXTRACT#*$'\n'}"
 
 if [ -z "$MSG_LOWER" ]; then

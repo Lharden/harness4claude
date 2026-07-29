@@ -34,8 +34,10 @@ except Exception:
 # Expansao de parametro em vez de pipe: `head`/`sed` fecham o pipe cedo e, com
 # `set -o pipefail`, o produtor morre com SIGPIPE (exit 141). Ver harness-classify.sh.
 SESSION_CWD="${EXTRACT%%$'\n'*}"
+SESSION_CWD="${SESSION_CWD%$'\r'}"   # print() do Python no Windows emite \r\n
 FILE_PATH="${EXTRACT#*$'\n'}"
 FILE_PATH="${FILE_PATH%%$'\n'*}"
+FILE_PATH="${FILE_PATH%$'\r'}"
 
 [ -z "$FILE_PATH" ] && exit 0
 

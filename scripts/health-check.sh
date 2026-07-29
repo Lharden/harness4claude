@@ -73,13 +73,126 @@ check "state.json is valid JSON"   "python -c 'import json,sys; json.load(open(s
 check "signals.json is valid JSON" "python -c 'import json,sys; json.load(open(sys.argv[1], encoding=\"utf-8\"))' \"$HARNESS_DIR/signals.json\""
 echo ""
 
-echo "--- Hooks ---"
+echo "--- Hooks (presenca) ---"
 check "harness-classify.sh"      "test -f '$HOOKS_DIR/harness-classify.sh'"
 check "harness-git-guard.sh"     "test -f '$HOOKS_DIR/harness-git-guard.sh'"
 check "harness-precompact.sh"    "test -f '$HOOKS_DIR/harness-precompact.sh'"
 check "harness-reclassify.sh"    "test -f '$HOOKS_DIR/harness-reclassify.sh'"
 check "harness-session-start.sh" "test -f '$HOOKS_DIR/harness-session-start.sh'"
 echo ""
+
+# ===========================================================================
+# Smoke-test: EXECUTA cada hook com payload sintetico
+# ===========================================================================
+# Ate 2026-07-29 esta secao so conferia que os arquivos existiam em disco. Um
+# hook presente e inerte — por dependencia quebrada, por mudanca no formato do
+# payload pelo CLI host — passava como [OK]. E exatamente o defeito que originou
+# esta auditoria (codigo presente != codigo rodando), um nivel acima.
+#
+# Roda tudo num HARNESS_DIR temporario: o smoke-test NUNCA toca o estado real.
+echo "--- Hooks (execucao) ---"
+SMOKE_DIR="$(mktemp -d 2>/dev/null || echo "")"
+if [ -z "$SMOKE_DIR" ] || [ ! -d "$SMOKE_DIR" ]; then
+    warn "nao foi possivel criar dir temporario — smoke-test pulado"
+else
+    SMOKE_REPO="$SMOKE_DIR/repo"
+    mkdir -p "$SMOKE_REPO/.git"
+    if command -v cygpath >/dev/null 2>&1; then
+        SMOKE_CWD="$(cygpath -w "$SMOKE_REPO")"
+    else
+        SMOKE_CWD="$SMOKE_REPO"
+    fi
+
+    # Cada caso: nome | hook | payload | exit esperado | trecho exigido no stdout
+    smoke() {
+        _name="$1"; _hook="$2"; _payload="$3"; _want_code="$4"; _want_out="${5:-}"
+        _out="$(printf '%s' "$_payload" | \
+            HARNESS_DIR="$SMOKE_DIR/state" HARNESS_SKIP_DEPCHECK=1 \
+            bash "$HOOKS_DIR/$_hook" 2>/dev/null)" && _code=0 || _code=$?
+        if [ "$_code" != "$_want_code" ]; then
+            echo "[FAIL]   $_name — exit $_code, esperado $_want_code"
+            EXIT_CODE=1
+            return
+        fi
+        if [ -n "$_want_out" ] && ! printf '%s' "$_out" | grep -q "$_want_out"; then
+            echo "[FAIL]   $_name — saida nao contem '$_want_out'"
+            EXIT_CODE=1
+            return
+        fi
+        echo "[OK]     $_name"
+    }
+
+    # cwd escapado para JSON (contrabarras do Windows viram \\)
+    SMOKE_CWD_JSON="$(printf '%s' "$SMOKE_CWD" | sed 's/\\/\\\\/g')"
+
+    smoke "classify emite CLASSIFIED" harness-classify.sh \
+        "{\"prompt\":\"cria um sistema completo de autenticacao\",\"cwd\":\"$SMOKE_CWD_JSON\"}" \
+        0 "HARNESS v3 CLASSIFIED"
+
+    smoke "classify ignora prompt vazio" harness-classify.sh '{}' 0
+
+    smoke "git-guard bloqueia destrutivo" harness-git-guard.sh \
+        '{"tool_input":{"command":"git re'"$(printf 'set --ha')"'rd HEAD~1"}}' 2
+
+    smoke "git-guard passa comando benigno" harness-git-guard.sh \
+        '{"tool_input":{"command":"ls -la"}}' 0
+
+    smoke "git-guard avisa payload estranho" harness-git-guard.sh \
+        '{"toolInput":{"command":"ls"}}' 0 "nao reconheceu"
+
+    # Os tres recebem cwd para exercitar a propagacao ate o resolvedor de
+    # bucket — e para que a contagem de buckets abaixo tenha significado.
+    smoke "reclassify aceita payload valido" harness-reclassify.sh \
+        "{\"cwd\":\"$SMOKE_CWD_JSON\",\"tool_input\":{\"file_path\":\"/tmp/smoke.py\"}}" 0
+
+    smoke "session-start responde" harness-session-start.sh \
+        "{\"cwd\":\"$SMOKE_CWD_JSON\"}" 0
+
+    smoke "precompact responde" harness-precompact.sh \
+        "{\"cwd\":\"$SMOKE_CWD_JSON\"}" 0
+
+    # O bucket por projeto so funciona se o cwd chegar limpo ao resolvedor. Um
+    # \r do print() do Windows fazia raiz e subdiretorio virarem buckets
+    # distintos — sintoma silencioso, achado so por inspecao.
+    if [ -d "$SMOKE_DIR/state/projects" ]; then
+        SMOKE_BUCKETS="$(find "$SMOKE_DIR/state/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d '[:space:]')"
+        if [ "${SMOKE_BUCKETS:-0}" = "1" ]; then
+            echo "[OK]     escopo por projeto resolve para um bucket unico"
+        else
+            echo "[FAIL]   escopo por projeto criou $SMOKE_BUCKETS buckets para um repo so"
+            EXIT_CODE=1
+        fi
+    fi
+
+    rm -rf "$SMOKE_DIR" 2>/dev/null || true
+fi
+echo ""
+
+# ===========================================================================
+# Cobertura de eventos por CLI host
+# ===========================================================================
+# O harness registra 5 eventos. O Codex nao implementa PreCompact, entao o
+# snapshot de handoff (trace, rotacao, sync do Obsidian) simplesmente nao roda
+# la — silenciosamente. Melhor dizer isso do que deixar o usuario descobrir pela
+# ausencia de traces.
+if [ -f "$HOME/.codex/hooks.json" ]; then
+    echo "--- Cobertura de eventos (Codex detectado) ---"
+    python - "$HOME/.codex/hooks.json" "$PLUGIN_DIR/hooks/hooks.json" <<'PYEOF' 2>/dev/null || warn "nao foi possivel comparar eventos"
+import json, sys
+try:
+    codex = set(json.load(open(sys.argv[1], encoding="utf-8")).get("hooks", {}))
+    ours = set(json.load(open(sys.argv[2], encoding="utf-8")).get("hooks", {}))
+except Exception:
+    raise SystemExit(1)
+missing = sorted(ours - codex)
+if missing:
+    print(f"[WARN]   eventos nao suportados pelo Codex: {', '.join(missing)}")
+    print("         os hooks desses eventos nunca disparam em sessoes do Codex")
+else:
+    print(f"[OK]     todos os {len(ours)} eventos registrados existem no Codex")
+PYEOF
+    echo ""
+fi
 
 echo "--- Skills ---"
 check "harness-workflow skill"   "test -f '$SKILLS_DIR/harness-workflow/SKILL.md'"

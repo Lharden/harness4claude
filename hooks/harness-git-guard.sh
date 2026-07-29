@@ -6,10 +6,59 @@
 
 set -euo pipefail
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | python -c "import sys,json; print(json.load(sys.stdin).get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
+: "${HARNESS_DIR:=$HOME/.claude/harness}"
 
-# If no command extracted, pass through
+INPUT=$(cat)
+
+# Extrai STATUS na primeira linha e o comando no resto. O status distingue
+# "nao havia comando" de "o payload nao tem a forma que eu conheco" — colapsar
+# os dois em string vazia era o bug: numa mudanca de schema do host o guard
+# passava a devolver exit 0 para TUDO e parava de bloquear operacoes
+# destrutivas, sem emitir um unico sinal. Guard que some em silencio e pior que
+# guard ausente, porque voce conta com ele.
+EXTRACT=$(printf '%s' "$INPUT" | python -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('SHAPE_UNKNOWN'); print(''); raise SystemExit(0)
+if not isinstance(d, dict):
+    print('SHAPE_UNKNOWN'); print(''); raise SystemExit(0)
+ti = d.get('tool_input')
+if not isinstance(ti, dict):
+    print('SHAPE_UNKNOWN'); print(''); raise SystemExit(0)
+if 'command' not in ti:
+    print('NO_COMMAND_KEY'); print(''); raise SystemExit(0)
+print('OK')
+print(ti.get('command') or '')
+" 2>/dev/null || printf 'SHAPE_UNKNOWN\n\n')
+
+# Split por expansao de parametro: comando pode ter multiplas linhas, e um pipe
+# para head/tail morreria com SIGPIPE sob pipefail em comandos grandes.
+STATUS="${EXTRACT%%$'\n'*}"
+STATUS="${STATUS%$'\r'}"   # print() do Python no Windows emite \r\n
+COMMAND="${EXTRACT#*$'\n'}"
+
+# Payload em formato desconhecido: NUNCA bloquear (bloquear todo Bash da maquina
+# numa mudanca de schema seria pior que o problema), mas nunca em silencio.
+# Rate-limit de 1h: sem ele o aviso sairia em cada chamada de Bash e viraria
+# ruido — e ruido vira alarme ignorado.
+if [[ "$STATUS" != "OK" ]]; then
+  MARKER="$HARNESS_DIR/.git-guard-blind"
+  NOW=$(date +%s 2>/dev/null || echo 0)
+  LAST=$(cat "$MARKER" 2>/dev/null || echo 0)
+  case "$LAST" in ''|*[!0-9]*) LAST=0 ;; esac
+  if [ "$NOW" -eq 0 ] || [ $((NOW - LAST)) -ge 3600 ]; then
+    mkdir -p "$HARNESS_DIR" 2>/dev/null || true
+    printf '%s\n' "$NOW" > "$MARKER" 2>/dev/null || true
+    echo "## Harness Warning: git-guard nao reconheceu o payload do PreToolUse ($STATUS)."
+    echo "   O bloqueio de operacoes git destrutivas esta INATIVO ate isto ser corrigido."
+    echo "   Provavel mudanca no formato do hook pelo CLI host. Rode: bash scripts/health-check.sh"
+  fi
+  exit 0
+fi
+
+# Sem comando (payload valido, campo vazio): nada a inspecionar.
 if [[ -z "$COMMAND" ]]; then
   exit 0
 fi

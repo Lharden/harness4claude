@@ -348,6 +348,38 @@ plugin's CLAUDE.md overrides.
 | Max grill-me rounds | signals.json | `3` | Maximum adversarial review iterations before auto-approve |
 | Verify strictness | verify-against-spec | `strict` | `strict` requires evidence for every AC; `lenient` allows partial coverage |
 
+Environment variables:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `HARNESS_DIR` | `~/.claude/harness` | Root of all harness state |
+| `HARNESS_SCOPE` | `project` | `global` reverts to one machine-wide state instead of per-project buckets |
+| `HARNESS_PIPELINE_TTL_H` | `24` | Hours before an active pipeline is auto-abandoned |
+| `HARNESS_ROUTER` | `0` | `1` enables the semantic skill router (needs a local Ollama) |
+| `HARNESS_SKIP_DEPCHECK` | unset | Skips the SessionStart dependency probe (used by the test suite) |
+
+---
+
+## Running under both Claude Code and Codex
+
+The plugin loads in Codex too — it reads the same `.claude-plugin/` manifest.
+Install there with `codex plugin marketplace upgrade` + `codex plugin add`.
+
+Two things to know:
+
+**`PreCompact` does not exist in Codex.** Codex implements `PermissionRequest`,
+`PostToolUse`, `PreToolUse`, `SessionStart`, `Stop` and `UserPromptSubmit` — five of
+the six the harness could use. `harness-precompact.sh` (handoff snapshot, trace
+rotation, Obsidian sync) simply never fires in a Codex session. `health-check.sh`
+detects this and reports it whenever `~/.codex/hooks.json` is present.
+
+**Both CLIs share `~/.claude/harness/`.** That is deliberate for `signals.json`
+(telemetry aggregates across CLIs) and for the per-project buckets (same repo, same
+task). The one file where sharing bit us is `plugin-root`, which is last-writer-wins:
+`SessionStart` now refuses to write a tree that lacks `scripts/record_signal.py`, and
+repairs a stale value instead of preserving it. Keep both installs on the same version
+and there is nothing else to manage.
+
 ---
 
 ## Multi-Machine Setup

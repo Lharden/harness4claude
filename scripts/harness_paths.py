@@ -41,6 +41,19 @@ def default_root() -> Path:
     return Path.home() / ".claude" / "harness"
 
 
+def _clean(raw: str | os.PathLike | None) -> str:
+    """Remove espacos e controles das pontas de um caminho vindo do shell.
+
+    Necessario porque o `print()` do Python no Windows emite `\\r\\n`, e os hooks
+    fatiam a saida por `\\n` — sobra um `\\r` grudado no fim. Um caminho com `\\r`
+    nao existe, entao `find_repo_root` falhava e caia no cwd cru: a raiz de um
+    repo e um subdiretorio dele geravam buckets DIFERENTES, fragmentando o
+    estado de um mesmo projeto. Os hooks tambem limpam do lado do bash; esta e a
+    segunda barreira, no unico ponto por onde todo caminho passa.
+    """
+    return str(raw).strip().strip("\r\n\t ") if raw else ""
+
+
 def find_repo_root(start: str | os.PathLike | None) -> str | None:
     """Sobe a arvore procurando `.git`. None se nao houver repo.
 
@@ -48,10 +61,11 @@ def find_repo_root(start: str | os.PathLike | None) -> str | None:
     `git rev-parse` por prompt custaria mais que a resolucao inteira. Detecta
     worktree tambem, porque nela `.git` e um arquivo, nao um diretorio.
     """
+    start = _clean(start)
     if not start:
         return None
     try:
-        p = os.path.abspath(str(start))
+        p = os.path.abspath(start)
     except (OSError, ValueError):
         return None
     while True:
@@ -71,7 +85,8 @@ def project_slug(cwd: str | os.PathLike | None) -> str:
     `normcase` porque no Windows o mesmo diretorio aparece com caixas
     diferentes conforme quem chama.
     """
-    root = find_repo_root(cwd) or (os.path.abspath(str(cwd)) if cwd else "")
+    cleaned = _clean(cwd)
+    root = find_repo_root(cleaned) or (os.path.abspath(cleaned) if cleaned else "")
     if not root:
         return "unknown"
     base = os.path.basename(root.rstrip("/\\")) or "root"

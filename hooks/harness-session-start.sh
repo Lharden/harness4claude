@@ -184,6 +184,7 @@ try:
 except Exception:
     print(root)
 " 2>/dev/null || printf '%s' "$HARNESS_DIR_PY")"
+STATE_DIR_PY="${STATE_DIR_PY%$'\r'}"   # $() tira \n final, mas nao o \r do Windows
 [ -z "$STATE_DIR_PY" ] && STATE_DIR_PY="$HARNESS_DIR_PY"
 
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
