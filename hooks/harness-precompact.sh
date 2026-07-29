@@ -6,6 +6,11 @@ set -euo pipefail
 # Parametrizavel via env: testes isolam com HARNESS_DIR temporario (default = producao)
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
 export HARNESS_DIR
+
+# Heartbeat de disparo — ver harness-classify.sh para o porque.
+{ mkdir -p "$HARNESS_DIR/heartbeats" && printf '%s\n' "${EPOCHSECONDS:-0}" \
+    > "$HARNESS_DIR/heartbeats/PreCompact"; } 2>/dev/null || true
+
 HOOK_DIR_REL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if command -v cygpath &>/dev/null; then
     HARNESS_ROOT_WIN=$(cygpath -w "$HARNESS_DIR")

@@ -16,6 +16,21 @@ export HARNESS_DIR   # necessario: o python inline abaixo le via os.environ
 STATE_FILE="$HARNESS_DIR/state.json"
 COUNTER_FILE="$HARNESS_DIR/.session-files-count"
 
+# ---------------------------------------------------------------------------
+# Heartbeat de disparo
+# ---------------------------------------------------------------------------
+# Registra que o CLI HOST chamou este hook. O smoke-test do health-check prova
+# que os hooks FUNCIONAM quando executados; nao prova que ainda sao CHAMADOS. Se
+# o host renomear um evento, os hooks ficam inertes e todo diagnostico continua
+# verde — a falha silenciosa que originou esta auditoria, um nivel acima.
+#
+# Fica ANTES de qualquer guard: o que se mede aqui e a chamada, nao o trabalho.
+# Sem processo — EPOCHSECONDS e builtin do bash 5, entao isto nao adiciona
+# latencia a um hook que roda a cada prompt.
+# Leitura e veredito: scripts/check_hook_liveness.py.
+{ mkdir -p "$HARNESS_DIR/heartbeats" && printf '%s\n' "${EPOCHSECONDS:-0}" \
+    > "$HARNESS_DIR/heartbeats/UserPromptSubmit"; } 2>/dev/null || true
+
 # Ensure harness dir exists
 mkdir -p "$HARNESS_DIR"
 

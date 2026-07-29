@@ -8,6 +8,10 @@ set -euo pipefail
 
 : "${HARNESS_DIR:=$HOME/.claude/harness}"
 
+# Heartbeat de disparo — ver harness-classify.sh para o porque.
+{ mkdir -p "$HARNESS_DIR/heartbeats" && printf '%s\n' "${EPOCHSECONDS:-0}" \
+    > "$HARNESS_DIR/heartbeats/PreToolUse"; } 2>/dev/null || true
+
 INPUT=$(cat)
 
 # Extrai STATUS na primeira linha e o comando no resto. O status distingue

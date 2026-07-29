@@ -7,6 +7,10 @@ set -euo pipefail
 : "${HARNESS_DIR:=$HOME/.claude/harness}"
 export HARNESS_DIR
 
+# Heartbeat de disparo — ver harness-classify.sh para o porque.
+{ mkdir -p "$HARNESS_DIR/heartbeats" && printf '%s\n' "${EPOCHSECONDS:-0}" \
+    > "$HARNESS_DIR/heartbeats/PostToolUse"; } 2>/dev/null || true
+
 # Convert paths for Python on Windows
 if command -v cygpath &>/dev/null; then
     HARNESS_DIR_WIN=$(cygpath -w "$HARNESS_DIR")

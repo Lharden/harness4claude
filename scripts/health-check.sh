@@ -169,6 +169,26 @@ fi
 echo ""
 
 # ===========================================================================
+# Liveness: o host ainda CHAMA os hooks?
+# ===========================================================================
+# O smoke-test acima prova que os hooks funcionam quando executados. Nao prova
+# que continuam sendo chamados — se o host renomear um evento, tudo fica inerte
+# e verde. Cada hook grava um heartbeat ao ser invocado; aqui esse sinal e
+# confrontado com a atividade de sessao registrada pelo proprio host.
+echo "--- Hooks (liveness) ---"
+LIVENESS_PY="$PLUGIN_DIR/scripts/check_hook_liveness.py"
+if [ -f "$LIVENESS_PY" ] && command -v python >/dev/null 2>&1; then
+    if python "$LIVENESS_PY" --hooks-json "$PLUGIN_DIR/hooks/hooks.json"; then
+        :
+    else
+        EXIT_CODE=1
+    fi
+else
+    warn "check_hook_liveness.py ausente — liveness nao verificada"
+fi
+echo ""
+
+# ===========================================================================
 # Cobertura de eventos por CLI host
 # ===========================================================================
 # O harness registra 5 eventos. O Codex nao implementa PreCompact, entao o

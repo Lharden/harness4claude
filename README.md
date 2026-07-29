@@ -216,6 +216,26 @@ Tests cover:
 - State machine transitions
 - Signal propagation between skills
 - Hook integration
+- Resilience to host-contract changes (renamed payload fields, CRLF, fail-open guards)
+
+### Three layers of "is it actually running?"
+
+The audit of 2026-07-28 started from a plugin that was present, tested, and not
+running. `health-check.sh` now answers the question at three depths:
+
+| Layer | Question | How |
+|-------|----------|-----|
+| Presence | Are the hook files on disk? | `test -f` |
+| Execution | Do they still work when run? | Runs all five with synthetic payloads in a temp `HARNESS_DIR`, asserts exit code and output |
+| Liveness | Is the host still **calling** them? | Each hook writes `heartbeats/<Event>` when invoked; compared against the host's own session transcripts |
+
+Liveness only returns a verdict where the expectation is reliable:
+`UserPromptSubmit` and `SessionStart` fire on every prompt and every session, so
+silence there is a real signal. `PreToolUse`, `PostToolUse` and `PreCompact` are
+conditional — a session can legitimately run no Bash, edit no file and never
+compact — so those are reported, never failed. A fresh install reports
+`heartbeat ainda nao inicializado` rather than failing: an alarm that fires on
+day one gets ignored by day two.
 
 To run a specific test module:
 

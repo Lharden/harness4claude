@@ -11,6 +11,10 @@ set -euo pipefail
 export HARNESS_DIR
 mkdir -p "$HARNESS_DIR"
 
+# Heartbeat de disparo — ver harness-classify.sh para o porque.
+{ mkdir -p "$HARNESS_DIR/heartbeats" && printf '%s\n' "${EPOCHSECONDS:-0}" \
+    > "$HARNESS_DIR/heartbeats/SessionStart"; } 2>/dev/null || true
+
 # ---------------------------------------------------------------------------
 # Plugin root portavel
 # ---------------------------------------------------------------------------
