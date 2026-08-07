@@ -89,8 +89,19 @@ def _trace_file() -> str:
     return os.path.join(_state_dir(), "trace-current.md")
 
 # Detect bash
+#
+# Este arquivo tem dois modos de uso, e a ausencia de bash significa coisas
+# diferentes em cada um. Rodado como script (`python test_harness.py`), sair e
+# o certo: o operador pediu esta suite e ela nao pode rodar. Coletado pelo
+# pytest, sair no nivel de modulo derruba a coleta inteira — nao so este
+# arquivo — e os outros trezentos e poucos testes, que nao precisam de bash,
+# deixam de rodar por causa deste.
 _bash_path = shutil.which("bash")
 if not _bash_path:
+    if "pytest" in sys.modules:
+        import pytest
+
+        pytest.skip("bash nao encontrado no PATH", allow_module_level=True)
     sys.exit("ERRO: bash não encontrado no PATH")
 BASH: str = _bash_path
 
