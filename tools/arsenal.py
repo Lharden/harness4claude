@@ -70,10 +70,28 @@ REGISTRY_REL = Path("arsenal") / "tools.toml"
 DISPENSADOS_REL = Path("arsenal") / "dispensados.toml"
 
 # `dispensado` está ausente de propósito — vive em dispensados.toml. Ver o docstring.
-DECISOES = ("candidato", "prova", "adotado")
-KINDS = ("plugin", "skill", "mcp", "cli")
+#
+# `absorvido` é o caminho que importa e o que quase todo catálogo esquece.
+# Apresentar uma ferramenta nova não é o mesmo que instalá-la: às vezes já
+# existe coisa melhor aqui; às vezes existe algo parecido, mas a nova tem uma
+# nuance melhor — e é a nuance, não a ferramenta, que vale.
+#
+# `absorvido` diz: a peça entrou, o pacote não. Solve et coagula.
+#
+# Não é desenho novo — é o que este vault já fazia sem nome de campo. O registro
+# `wiki/decisions/assimilacoes-2026.md` lista quatro casos sob "adapted":
+# caveman -> compress-memory, TLA+ -> twin-execution, pm4py -> alignments SQL,
+# HNSW -> retrieval exato. Em nenhum deles a ferramenta foi instalada, e em
+# todos algo mudou aqui dentro.
+DECISOES = ("candidato", "prova", "adotado", "absorvido")
+KINDS = ("plugin", "skill", "mcp", "cli", "tecnica")
 
 CAMPOS_OBRIGATORIOS = ("id", "kind", "decisao", "decidido_em", "por_que", "rollback")
+
+# Absorver exige dizer O QUE veio e ONDE encaixou. Sem os dois, "absorvido" vira
+# um jeito educado de dizer "não usei" — e a nuance que justificou a decisão
+# some, que é justamente a parte que não se recupera depois.
+CAMPOS_DE_ABSORCAO = ("o_que_veio", "absorvido_em")
 
 # Fato que o disco já sabe. Guardar aqui cria a segunda verdade que deriva.
 # A mensagem de erro diz onde ler cada um, para a recusa ser acionável.
@@ -164,7 +182,38 @@ def load_dispensados(root: Path) -> dict[str, dict]:
     return {str(d.get("id")): d for d in dados.get("dispensados", []) if d.get("id")}
 
 
-def validate_registry(registry: dict, dispensados: dict[str, dict]) -> list[str]:
+def _raizes_de_referencia(root: Path | None = None) -> list[Path]:
+    """Onde procurar o alvo de `absorvido_em`.
+
+    Absorção não cai num lugar só, e é isso que a torna difícil de rastrear: o
+    `i-have-adhd` virou output style em ~/.claude, o `caveman` virou script
+    dentro do plugin, e o padrão LLM Wiki virou a arquitetura do vault. As três
+    raízes cobrem os três destinos reais.
+    """
+    raizes = [_REPO, _REPO.parent, Path.home() / ".claude"]
+    if root is not None:
+        raizes.append(Path(root))
+    return raizes
+
+
+def _referencia_existe(alvo: str, root: Path | None = None) -> bool:
+    """Resolve 'caminho/arquivo.py:simbolo' contra as raízes conhecidas.
+
+    Mesmo desenho do `verify_code_refs` do compendium.py, e pelo mesmo motivo:
+    afirmação que ninguém consegue conferir apodrece sem avisar. A parte após ':'
+    é o símbolo/seção e não é validada — o que precisa existir é o arquivo.
+    """
+    caminho = alvo.split(":", 1)[0].strip().replace("\\", "/")
+    if not caminho:
+        return False
+    for raiz in _raizes_de_referencia(root):
+        if (raiz / caminho).exists():
+            return True
+    return Path(caminho).expanduser().exists()
+
+
+def validate_registry(registry: dict, dispensados: dict[str, dict],
+                      root: Path | None = None) -> list[str]:
     """Contrato do registry. Lista de erros legíveis — vazia quando válido."""
     erros: list[str] = []
 
@@ -223,6 +272,20 @@ def validate_registry(registry: dict, dispensados: dict[str, dict]) -> list[str]
 
         if item.get("decisao") == "prova" and not item.get("prova_ate"):
             erros.append(f"{rotulo}: decisao='prova' exige 'prova_ate' — prova sem prazo nunca termina")
+
+        if item.get("decisao") == "absorvido":
+            for campo in CAMPOS_DE_ABSORCAO:
+                if not str(item.get(campo, "")).strip():
+                    erros.append(
+                        f"{rotulo}: decisao='absorvido' exige '{campo}' — sem dizer o que veio e "
+                        "onde encaixou, 'absorvido' é só um jeito educado de dizer 'não usei'"
+                    )
+            alvo = str(item.get("absorvido_em", "")).strip()
+            if alvo and not _referencia_existe(alvo, root):
+                erros.append(
+                    f"{rotulo}: absorvido_em aponta para '{alvo}', que não existe — "
+                    "afirmação de absorção tem que ser verificável"
+                )
         if item.get("fonte") and not item.get("capturado_em"):
             erros.append(f"{rotulo}: tem 'fonte' sem 'capturado_em' — fonte sem data não é verificável")
 
@@ -397,7 +460,7 @@ def command_check(root: Path) -> dict:
         }
     registry = load_registry(caminho)
     dispensados = load_dispensados(root)
-    erros = validate_registry(registry, dispensados)
+    erros = validate_registry(registry, dispensados, root)
     return {
         "comando": "check",
         "ready": not erros,
@@ -456,10 +519,19 @@ def command_reconcile(root: Path) -> dict:
 
     for ident, item in sorted(entradas.items()):
         info = disco.get(ident)
+        # `absorvido` fica fora: por definição a ferramenta NÃO está instalada.
+        # Cobrar presença dela seria acusar de órfã exatamente o caso de sucesso.
         if item.get("decisao") in ("adotado", "prova") and (info is None or not info["enabled"]):
             achado(
                 "orfa", ident, "error",
                 f"registry diz '{item.get('decisao')}', mas não está habilitado no disco",
+            )
+        if item.get("decisao") == "absorvido" and info and info["enabled"]:
+            achado(
+                "absorvido_mas_instalado", ident, "warning",
+                f"a peça já foi absorvida em {item.get('absorvido_em')}, mas o pacote inteiro "
+                f"continua habilitado (~{tokens(info['chars'])} tok/sessão) — pagando duas vezes",
+                chars=info["chars"],
             )
         if info and info["enabled"] and item.get("decisao") == "prova":
             prazo = str(item.get("prova_ate") or "")
@@ -507,6 +579,120 @@ def command_reconcile(root: Path) -> dict:
             "orfas": sum(1 for a in achados if a["tipo"] == "orfa"),
             "recaidas": sum(1 for a in achados if a["tipo"] == "recaida"),
         },
+    }
+
+
+PAGINA_REL = Path("wiki") / "arsenal" / "00 Arsenal.md"
+
+
+def render_pagina(registry: dict) -> str:
+    """Página navegável do arsenal, gerada do registry.
+
+    Derivado, nunca fonte — igual às páginas do compêndio. O cabeçalho diz isso
+    em voz alta porque a alternativa já aconteceu neste vault: nota escrita à mão
+    apodrece, e entre 2026-05 e 2026-08 o índice ficou com 54 de 63 páginas fora.
+
+    NÃO renderiza dispensados. Recusa vira página = recusa vira tema.
+    """
+    ferramentas = registry.get("tools") or []
+    por_decisao: dict[str, list[dict]] = {}
+    for t in ferramentas:
+        por_decisao.setdefault(str(t.get("decisao")), []).append(t)
+
+    hoje = date.today().isoformat()
+    linhas = [
+        "---", "type: index", f"created: {hoje}", f"updated: {hoje}",
+        "status: active", "tags: [arsenal, ferramentas, meta]", "---", "",
+        "# Arsenal — as ferramentas ativas e por que estão aqui", "",
+        "> Gerado por `python tools/arsenal.py build --write` a partir de",
+        "> `AI-Brain/arsenal/tools.toml`. **Editar aqui não adianta** — a próxima",
+        "> geração sobrescreve; edite o registry.", "",
+        "O registry guarda **julgamento**: por que entrou, com que limite, como sair.",
+        "Todo **fato** — versão, custo, uso, se está habilitado — é lido do disco na",
+        "hora por `arsenal reconcile`. Nada mensurável fica salvo aqui, porque fato",
+        "salvo é fato que deriva.", "",
+        f"Teto do orçamento: **{registry.get('teto_tokens', TETO_TOKENS_PADRAO)} tokens**.",
+        "Confira o custo real com `python tools/arsenal.py budget --report`.", "",
+    ]
+
+    titulos = {
+        "adotado": ("Adotadas", "Instaladas e em uso. O motivo de cada uma está escrito."),
+        "absorvido": (
+            "Absorvidas — a peça entrou, o pacote não",
+            "*Solve et coagula.* Apresentar uma ferramenta não é instalá-la: às vezes já "
+            "existe coisa melhor aqui, às vezes existe algo parecido mas a nova tem uma "
+            "nuance melhor — e é a nuance que vale. Nenhuma destas está instalada, e "
+            "todas mudaram algo aqui dentro.",
+        ),
+        "prova": ("Em prova", "Decisão com prazo. Vencido o prazo, o `reconcile` cobra."),
+        "candidato": ("Candidatas", "Vistas, ainda não decididas."),
+    }
+    for chave in ("adotado", "absorvido", "prova", "candidato"):
+        itens = sorted(por_decisao.get(chave) or [], key=lambda t: str(t.get("id")))
+        if not itens:
+            continue
+        titulo, sub = titulos[chave]
+        linhas += [f"## {titulo}", "", sub, ""]
+        for t in itens:
+            linhas.append(f"### {t['id']}  ·  `{t.get('kind')}`")
+            linhas.append("")
+            if chave == "absorvido":
+                linhas.append(f"**O que veio.** {_prosa(t.get('o_que_veio'))}")
+                if t.get("o_que_ficou_de_fora"):
+                    linhas.append("")
+                    linhas.append(f"**O que ficou de fora.** {_prosa(t['o_que_ficou_de_fora'])}")
+                linhas.append("")
+                linhas.append(f"**Onde encaixou.** `{t.get('absorvido_em')}`")
+            linhas.append("")
+            linhas.append(_prosa(t.get("por_que")))
+            if t.get("quando_nao_usar"):
+                linhas.append("")
+                linhas.append(f"**Quando não usar.** {_prosa(t['quando_nao_usar'])}")
+            if t.get("prova_ate"):
+                linhas.append("")
+                linhas.append(f"**Prazo da prova:** {t['prova_ate']}")
+            linhas += ["", f"*Decidido em {t.get('decidido_em')} · saída: `{t.get('rollback')}`*", ""]
+
+    linhas += [
+        "## O que não está aqui", "",
+        "Ferramenta dispensada não vira página. Ela vive em",
+        "`AI-Brain/arsenal/dispensados.toml` e serve a um único propósito: quando algo",
+        "reaparecer no funil, o `prior-art` saber que já foi olhado, para não relitigar",
+        "a mesma decisão. Recusa que vira página vira tema, e tema mantém no centro",
+        "justamente o que se decidiu não usar.", "",
+    ]
+    return "\n".join(linhas)
+
+
+def _prosa(valor: object) -> str:
+    """TOML multilinha vira parágrafo único."""
+    return " ".join(str(valor or "").split())
+
+
+def command_build(root: Path, escrever: bool) -> dict:
+    caminho = registry_path(root)
+    if not caminho.is_file():
+        return {"comando": "build", "ready": False,
+                "errors": [f"registry ausente: {caminho}"], "warnings": [], "resumo": {}}
+    registry = load_registry(caminho)
+    erros = validate_registry(registry, load_dispensados(root), root)
+    if erros:
+        # Não gera página a partir de registry inválido: a página herdaria o defeito
+        # e passaria a parecer verdade só porque está renderizada.
+        return {"comando": "build", "ready": False,
+                "errors": ["registry inválido — rode `arsenal check`"] + erros,
+                "warnings": [], "resumo": {}}
+    texto = render_pagina(registry)
+    destino = Path(root) / PAGINA_REL
+    if escrever:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(texto + "\n", encoding="utf-8")
+    else:
+        print(texto)
+    return {
+        "comando": "build", "ready": True, "errors": [], "warnings": [],
+        "resumo": {"pagina": str(destino), "escrita": escrever,
+                   "ferramentas": len(registry.get("tools") or []), "linhas": texto.count("\n") + 1},
     }
 
 
@@ -736,6 +922,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="comando", required=True)
     sub.add_parser("check", parents=[comum], help="Valida o contrato do registry.")
     sub.add_parser("reconcile", parents=[comum], help="Registry x disco x uso.")
+    construir = sub.add_parser("build", parents=[comum], help="Gera a página do arsenal.")
+    construir.add_argument("--write", action="store_true", help="grava; sem isso imprime")
     orc = sub.add_parser("budget", parents=[comum], help="Custo do roster contra o teto.")
     orc.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
     col = sub.add_parser("collisions", parents=[comum], help="Descrições que disputam o mesmo gatilho.")
@@ -749,6 +937,8 @@ def main() -> int:
         res = command_check(root)
     elif args.comando == "reconcile":
         res = command_reconcile(root)
+    elif args.comando == "build":
+        res = command_build(root, args.write)
     elif args.comando == "budget":
         res = command_budget(args.teto)
     else:

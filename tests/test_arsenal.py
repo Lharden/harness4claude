@@ -96,6 +96,24 @@ class TestContratoDoRegistry:
         erros = ars.validate_registry(_registry(decisao="dispensado"), {})
         assert any("dispensados.toml" in e for e in erros)
 
+    def test_absorvido_sem_dizer_o_que_veio_reprova(self, ars):
+        """Absorver sem nomear a peça e o destino e um jeito educado de dizer
+        "nao usei" — e a nuance que justificou a decisao e o que nao se recupera."""
+        erros = ars.validate_registry(_registry(decisao="absorvido"), {})
+        assert any("o_que_veio" in e for e in erros)
+        assert any("absorvido_em" in e for e in erros)
+
+    def test_absorvido_com_destino_inexistente_reprova(self, ars):
+        erros = ars.validate_registry(_registry(
+            decisao="absorvido", o_que_veio="a ideia X",
+            absorvido_em="caminho/que/nao/existe.py:F"), {})
+        assert any("verificavel" in e.replace("á", "a").replace("í", "i") for e in erros)
+
+    def test_absorvido_com_destino_real_passa(self, ars):
+        assert ars.validate_registry(_registry(
+            decisao="absorvido", o_que_veio="comprimir removendo filler",
+            absorvido_em="skills/compress-memory/compress.py:main"), {}) == []
+
     def test_id_nos_dois_arquivos_reprova(self, ars):
         dispensados = {"superpowers": {"motivo": "x", "decidido_em": "2026-08-12"}}
         erros = ars.validate_registry(_registry(), dispensados)
@@ -205,6 +223,28 @@ class TestAgregado:
         assert [s["id"] for s in skills] == ["astronomer-data:airflow"]
         assert skills[0]["usage_count"] == 7
 
+    def test_uso_de_skill_pessoal_casa_pelo_diretorio(self, ars, tmp_path, monkeypatch):
+        """~/.claude/skills/graphify/ declarava `name: graphify-windows`, e o
+        skillUsage tinha 5 usos sob "graphify". Sem casar pelo diretorio o uso lia
+        0 — e a skill parecia peso morto candidata a poda."""
+        bsi = sys.modules["build_skills_index"]
+        pess = tmp_path / "skills" / "graphify"
+        pess.mkdir(parents=True)
+        (pess / "SKILL.md").write_text(
+            "---\nname: graphify-windows\ndescription: grafo\n---\n", encoding="utf-8")
+        vazio = tmp_path / "vazio.json"
+        vazio.write_text("{}", encoding="utf-8")
+        uso = tmp_path / "claude.json"
+        uso.write_text(json.dumps({"skillUsage": {"graphify": {"usageCount": 5}}}), encoding="utf-8")
+        monkeypatch.setattr(bsi, "INSTALLED_JSON", str(vazio))
+        monkeypatch.setattr(bsi, "SETTINGS_JSON", str(vazio))
+        monkeypatch.setattr(bsi, "CLAUDE_JSON", str(uso))
+        monkeypatch.setattr(bsi, "PERSONAL_SKILLS_DIR", str(tmp_path / "skills"))
+        monkeypatch.setattr(bsi, "ALIASES_JSON", str(vazio))
+        skills = ars.roster()
+        assert [s["id"] for s in skills] == ["graphify-windows"]
+        assert skills[0]["usage_count"] == 5
+
     def test_uso_de_plugin_soma_chaves_do_mesmo_plugin(self, ars, fake_claude):
         """O mesmo plugin aparece sob '@inline' (instalacao velha) e '@mkt'."""
         fake_claude({"hookify": {"skills": {"h": "d"}}},
@@ -258,6 +298,25 @@ class TestReconcile:
         res = ars.command_reconcile(tmp_path)
         assert [a["tipo"] for a in res["achados"]] == ["prova_falhou"]
         assert res["ready"] is True
+
+    def test_absorvido_nao_e_acusado_de_orfa(self, ars, fake_claude, tmp_path):
+        """Ferramenta absorvida NAO esta instalada, por definicao. Cobrar presenca
+        dela acusaria de orfa exatamente o caso de sucesso."""
+        fake_claude({"outro": {"skills": {"a": "d"}}})
+        _escreve_registry(tmp_path, _registry(
+            id="caveman", decisao="absorvido", o_que_veio="comprimir sem perder o tecnico",
+            absorvido_em="skills/compress-memory/compress.py"))
+        achados = ars.command_reconcile(tmp_path)["achados"]
+        assert not [a for a in achados if a["id"] == "caveman"]
+
+    def test_absorvido_mas_ainda_instalado_avisa(self, ars, fake_claude, tmp_path):
+        """Pegou a peca E continua pagando pelo pacote."""
+        fake_claude({"caveman": {"skills": {"a": "d" * 80}}})
+        _escreve_registry(tmp_path, _registry(
+            id="caveman", decisao="absorvido", o_que_veio="a ideia",
+            absorvido_em="skills/compress-memory/compress.py"))
+        achados = ars.command_reconcile(tmp_path)["achados"]
+        assert [a["tipo"] for a in achados] == ["absorvido_mas_instalado"]
 
     def test_dispensado_nao_e_acusado_de_fantasma(self, ars, fake_claude, tmp_path):
         """Dispensado e desabilitado e o estado final correto: silencio."""

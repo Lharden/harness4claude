@@ -112,7 +112,13 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
         desc = (fm.get("description") or "").strip()
         short = prefix or plugin_label.split("@")[0]
         sid = name if source == "personal" else f"{short}:{name}"
-        u = usage.get(sid) or usage.get(name) or {}
+        # O DIRETORIO tambem entra na busca de uso. Skill pessoal cujo `name:` do
+        # frontmatter diverge do nome da pasta registra uso pela pasta: em
+        # 2026-08-12, ~/.claude/skills/graphify/ declarava `name: graphify-windows`
+        # e o skillUsage tinha 5 usos sob a chave "graphify". Sem esta linha o uso
+        # lia 0 — a mesma falha silenciosa do prefixo vindo da chave de instalacao.
+        dirname = os.path.basename(skill_dir.rstrip("/\\"))
+        u = usage.get(sid) or usage.get(name) or usage.get(dirname) or {}
         skills.append({
             "id": sid, "name": name, "plugin": plugin_label, "source": source,
             "enabled": enabled, "path": md, "description": desc,
