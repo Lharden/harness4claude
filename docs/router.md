@@ -57,9 +57,22 @@ não encontra nada.** Ou seja, há **duas categorias de latência**, não um ún
 Máquina: RTX 5000 Ada, Windows, Ollama `nomic-embed-text-v2-moe`. Índice: 276 skills, dim 768.
 Todos os números abaixo foram medidos e confirmados de forma independente.
 
-- **Acurácia:** golden set top-3 hit rate **93.3% (14/15)** — gate era ≥80% → **PASS**.
-  Único MISS conhecido: `"help me debug this failing test..."` (retorna zero hits; nenhum
-  alias/skill cadastrado casa com essa frase — candidato a novo alias).
+- **Acurácia:** golden set top-3 hit rate **100% (15/15)** — gate ≥80% → **PASS**.
+  Medido em 2026-08-12, 3 rodadas idênticas, índice reconstruído (246 skills, dim 768).
+
+  Histórico da medição, toda ela determinística (3 rodadas por cenário):
+
+  | Índice | Aliases | hit@3 | MISS |
+  |---|---|---|---|
+  | 2026-07-24, 276 skills | 8 entradas | 93,3% (14/15) | `"help me debug this failing test…"` |
+  | 2026-08-12, 246 skills | 8 entradas | 93,3% (14/15) | o mesmo |
+  | 2026-08-12, 246 skills | +`systematic-debugging` | **100% (15/15)** | — |
+
+  O índice encolheu de 276 para 246 skills entre julho e agosto (plugins desabilitados ou
+  removidos) **sem mexer no hit rate** — a acurácia não era artefato do corpus antigo.
+  O MISS único, que o doc marcava como "candidato a novo alias", foi fechado exatamente
+  assim: 3 aliases em `skill-aliases.json` o levaram de zero hits para Camada A, ou seja,
+  caminho rápido (~437ms) em vez de depender do embed.
 
   > ✅ **Causa raiz do 47% fechada (2026-08-12, issue #13).** O `TEST_MATRIX.md`
   > registrava este teste como known-failure medindo **47%** contra os 93,3%, com
@@ -81,9 +94,10 @@ Todos os números abaixo foram medidos e confirmados de forma independente.
   >               for e in c["expect_any"]) for c in data["positives"]) / 15)  # 0.4666
   > ```
   >
-  > **Implicação de projeto:** 47% é o *piso* do modo degradado, e é elevável — cada
-  > MISS resolvido em `skill-aliases.json` sobe o piso e vira caminho rápido
-  > permanente. Os 93,3% seguem pendentes de nova medição com o índice atual.
+  > **Implicação de projeto, agora demonstrada:** 47% era o *piso* do modo degradado, e
+  > o piso é elevável. Adicionar os aliases de `systematic-debugging` subiu o piso de
+  > **46,7% para 53,3%** — mesma medição, `EMBED_TIMEOUT=0.05`. Cada MISS resolvido em
+  > `skill-aliases.json` sobe o piso e vira caminho rápido permanente.
 - **Latência — Camada A (fast path, alias/nome bateu, embed pulado):**
   p50 ~437ms · **p95 ~470–535ms** — abaixo da meta de ~600ms. É o caso comum para
   prompts que casam com palavra-chave/alias.

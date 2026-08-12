@@ -6,5 +6,6 @@
   "slb-presentations": ["deck", "pptx", "powerpoint", "apresentacao"],
   "graphify-windows": ["knowledge graph", "grafo de conhecimento", "god nodes"],
   "superpowers:brainstorming": ["brainstorm", "brainstorming"],
-  "superpowers:test-driven-development": ["tdd"]
+  "superpowers:test-driven-development": ["tdd"],
+  "superpowers:systematic-debugging": ["failing test", "assertion error", "teste falhando"]
 }
