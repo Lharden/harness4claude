@@ -9,9 +9,11 @@ import json
 import math
 import os
 import re
+import socket
 import struct
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 HOME = os.path.expanduser("~")
@@ -29,8 +31,22 @@ MIN_MARGIN = 0.05
 DISABLED_MIN = 0.60
 DISABLED_LEAD = 0.08
 MAX_OFFERS_PER_SKILL = 2
-EMBED_TIMEOUT = 1.2
 MIN_LEN, MAX_LEN = 20, 30000
+
+# Dois relogios, nao um (issue #13)
+# --------------------------------
+# Um unico timeout servia a dois casos opostos. "Porta morta": quero desistir
+# imediatamente — no Windows a porta nao recusa na hora, entao o processo bloqueava
+# ate o timeout inteiro. "Modelo ocupado": quero esperar e acertar — cortar cedo
+# devolve lista vazia, e a Camada A sozinha vale 47% no golden set (medido forcando
+# EMBED_TIMEOUT=0.05: hit@3 cai de 93% para exatamente 46,7%).
+#
+# O embed real desta maquina mede p50 964ms / p95 1049ms / max 1127ms; o teto antigo
+# de 1.2s deixava 73ms de margem, e qualquer contencao de GPU o estourava.
+#
+# Separados: porta morta custa ~150ms (era ~1700ms) e modelo ocupado tem folga real.
+CONNECT_TIMEOUT = 0.15
+EMBED_TIMEOUT = 3.0
 
 # Disjuntor da Camada B (auditoria 2026-07-28)
 # --------------------------------------------
@@ -135,7 +151,7 @@ def layer_a(prompt_low, skills):
     for s in skills:
         terms = list(s.get("aliases", []))
         if _is_specific_name(s["name"]):
-            terms = [s["name"]] + terms
+            terms = [s["name"], *terms]
         for term in terms:
             t = term.strip().lower()
             if len(t) < 3:
@@ -152,7 +168,8 @@ def layer_b(qvec, skills, vecs):
         row = s.get("vec_row", -1)
         if row < 0 or row >= len(vecs):
             continue
-        cos = sum(a * b for a, b in zip(qvec, vecs[row]))
+        # strict=False explicito: o truncamento ja era o comportamento anterior.
+        cos = sum(a * b for a, b in zip(qvec, vecs[row], strict=False))
         boost = min(0.1, 0.03 * math.log1p(s.get("usage_count", 0)))
         scored.append({"id": s["id"], "cos": cos, "score": cos + boost,
                        "layer": "B", "skill": s})
@@ -190,6 +207,24 @@ def pick(a_hits, b_scored):
     return chosen[:TOP_K]
 
 
+def ollama_reachable(url=None, timeout=CONNECT_TIMEOUT):
+    """True se a porta do Ollama aceita conexao. Nunca levanta.
+
+    Separa "servico fora do ar" de "servico ocupado", que e o que permite o
+    EMBED_TIMEOUT generoso: sem este pre-check, subir o teto encareceria justamente o
+    caso em que nao ha nada do outro lado.
+    """
+    alvo = urllib.parse.urlparse(url or OLLAMA_URL)
+    host, porta = alvo.hostname, alvo.port or 11434
+    if not host:
+        return False
+    try:
+        with socket.create_connection((host, porta), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def route(prompt, skills, vecs):
     """Orquestra Camada A + gating + Camada B + pick. Retorna chosen (pre-dedupe).
     Camada B (embed) so dispara quando a Camada A nao acha nada."""
@@ -199,12 +234,18 @@ def route(prompt, skills, vecs):
         now = time.time()
         st = read_breaker()
         if not breaker_open(st, now):
-            try:
-                b_scored = layer_b(embed_query(prompt), skills, vecs)
-                breaker_record(st, True, now)
-            except Exception as e:  # timeout/conexao: degrada p/ Camada A
+            if not ollama_reachable():
+                # Conta para o disjuntor: ~150ms por prompt ainda e desperdicio quando
+                # o Ollama esta desligado de vez. Tres seguidas e o pre-check para.
                 breaker_record(st, False, now)
-                _dbg(f"layer B degraded: {type(e).__name__}: {e}", st, now)
+                _dbg("layer B skipped: Ollama inalcancavel", st, now)
+            else:
+                try:
+                    b_scored = layer_b(embed_query(prompt), skills, vecs)
+                    breaker_record(st, True, now)
+                except Exception as e:  # timeout de leitura: degrada p/ Camada A
+                    breaker_record(st, False, now)
+                    _dbg(f"layer B degraded: {type(e).__name__}: {e}", st, now)
             write_breaker(st)
     return pick(a_hits, b_scored)
 
