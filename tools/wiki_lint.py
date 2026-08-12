@@ -45,6 +45,11 @@ DEFAULT_STALE_DAYS = 90
 # A partir de quantas paginas uma subarvore precisa de uma porta `00 ...` de entrada.
 MIN_PAGES_FOR_MOC = 5
 
+# Campos que o Dataview consulta e que o schema do AI-Brain/CLAUDE.md exige. `type`
+# classifica; `updated` ordena. Sem eles a pagina existe mas nao aparece em consulta
+# nenhuma — presente no disco, ausente na navegacao.
+REQUIRED_FIELDS = ("type", "updated")
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -84,6 +89,21 @@ def has_frontmatter(path: Path) -> bool:
             return handle.readline().strip() == "---"
     except OSError:
         return False
+
+
+def missing_fields(path: Path) -> list[str]:
+    """Campos do schema ausentes no frontmatter.
+
+    O lint checava presenca de frontmatter, nao seu conteudo — entao tres paginas
+    escritas a mao em junho passaram anos com `tipo:`/`data:` em portugues em vez de
+    `type:`/`updated:`. Elas eram validas para o lint e **invisiveis para o Dataview**,
+    que consulta por nome de campo. Presenca sem contrato nao e validacao.
+    """
+    match = _FRONTMATTER_BLOCK_RE.match(_read(path))
+    if not match:
+        return list(REQUIRED_FIELDS)
+    bloco = match.group(1)
+    return [c for c in REQUIRED_FIELDS if not re.search(rf"^{c}:\s*\S", bloco, re.M)]
 
 
 def is_index_page(path: Path) -> bool:
@@ -232,6 +252,21 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
     for rel in missing_frontmatter:
         _R.add("error", "missing_frontmatter", f"Sem frontmatter: {rel}", rel)
 
+    campos_faltando: dict[str, list[str]] = {}
+    for page in pages:
+        if not has_frontmatter(page):
+            continue  # ja reportado acima; nao duplicar o mesmo defeito
+        ausentes = missing_fields(page)
+        if ausentes:
+            rel = _rel(page, root)
+            campos_faltando[rel] = ausentes
+            _R.add(
+                "error",
+                "missing_frontmatter_field",
+                f"Frontmatter sem {', '.join(ausentes)} — invisivel para o Dataview: {rel}",
+                rel,
+            )
+
     # --- wikilinks e os DOIS grafos de in-link ----------------------------
     # `alcancavel` conta link de qualquer pagina, indice inclusive: responde "da para
     # chegar la?". `integrado` so conta link vindo de pagina de conteudo: responde "isto
@@ -349,6 +384,7 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
             "pages": len(pages),
             "graph_notes": len(graph_notes),
             "missing_frontmatter": missing_frontmatter,
+            "missing_frontmatter_fields": campos_faltando,
             "broken_wikilinks": sorted(broken),
             "pages_missing_from_index": missing_from_index,
             "index_phantom_entries": phantom_entries,

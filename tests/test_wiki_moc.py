@@ -49,7 +49,7 @@ def test_moc_agrupa_por_pergunta_e_nao_por_pasta(tmp_path: Path) -> None:
     moc = build_moc(tmp_path, today="2026-08-12")
 
     assert "## O que decidimos" in moc
-    assert "## Onde esta o trabalho" in moc
+    assert "## Onde está o trabalho" in moc
     assert "[[decisions/assimilacoes]]" in moc
     assert "type: index" in moc  # senao o MOC contaria como citacao de conteudo
 
@@ -60,21 +60,21 @@ def test_porta_vazia_diz_que_esta_vazia(tmp_path: Path) -> None:
 
     moc = build_moc(tmp_path)
 
-    assert "Sera preenchido pelos resumos de workflow." in moc
+    assert "Será preenchido pelos resumos de workflow." in moc
     # A porta de aprender NAO esta vazia aqui: concepts/ ja a preenche.
-    assert "Sera preenchido pelo compendio." not in moc
+    assert "Será preenchido pelo compêndio." not in moc
 
 
 def test_porta_se_preenche_sozinha_quando_a_area_nasce(tmp_path: Path) -> None:
     """O MOC e gerado do disco: S3 cria compendio/ e a porta para de dizer que esta vazia."""
     escrever(tmp_path, "projects/frente.md", "# F\n\nx", "project")
-    assert "Sera preenchido pelo compendio." in build_moc(tmp_path)
+    assert "Será preenchido pelo compêndio." in build_moc(tmp_path)
 
     escrever(tmp_path, "compendio/chunking.md", "# Chunking\n\nUm vetor por secao.", "term")
 
     moc = build_moc(tmp_path)
 
-    assert "Sera preenchido pelo compendio." not in moc
+    assert "Será preenchido pelo compêndio." not in moc
     assert "[[compendio/chunking]]" in moc
 
 
@@ -117,7 +117,7 @@ def test_painel_de_saude_traz_os_numeros_do_lint(tmp_path: Path) -> None:
 
     moc = build_moc(tmp_path)
 
-    assert "## Saude do vault" in moc
+    assert "## Saúde do vault" in moc
     assert "| Links quebrados |" in moc
     assert "wiki_lint.py" in moc  # o comando para reproduzir fica na propria pagina
 

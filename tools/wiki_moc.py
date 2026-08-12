@@ -35,25 +35,25 @@ MOC_NAME = "00 MOC AI-Brain.md"
 PORTAS: tuple[dict, ...] = (
     {
         "titulo": "Como o sistema funciona",
-        "pergunta": "Os fluxos de trabalho e a operacao — o que ler para entender ou explicar.",
+        "pergunta": "Os fluxos de trabalho e a operação — o que ler para entender ou explicar.",
         "areas": ("workflows", "ops"),
-        "vazio": "Sera preenchido pelos resumos de workflow.",
+        "vazio": "Será preenchido pelos resumos de workflow.",
     },
     {
         "titulo": "O que decidimos",
-        "pergunta": "Tecnica que entrou, tecnica que foi recusada, e o motivo de cada uma.",
+        "pergunta": "Técnica que entrou, técnica que foi recusada, e o motivo de cada uma.",
         "areas": ("decisions",),
         "extra": [(f"specs/{SPECS_INDEX_NAME[:-3]}", "todas as specs, agrupadas por frente")],
-        "vazio": "Nenhuma decisao registrada ainda.",
+        "vazio": "Nenhuma decisão registrada ainda.",
     },
     {
         "titulo": "O que eu quero aprender",
-        "pergunta": "Conceitos, tecnicas e metodos — o compendio e os padroes que adotamos.",
+        "pergunta": "Conceitos, técnicas e métodos — o compêndio e os padrões que adotamos.",
         "areas": ("compendio", "concepts"),
-        "vazio": "Sera preenchido pelo compendio.",
+        "vazio": "Será preenchido pelo compêndio.",
     },
     {
-        "titulo": "Onde esta o trabalho",
+        "titulo": "Onde está o trabalho",
         "pergunta": "Os projetos ativos, sua cronologia e as pessoas envolvidas.",
         "areas": ("projects", "synthesis", "entities"),
         "vazio": "Nenhum projeto registrado.",
@@ -115,18 +115,18 @@ def health_panel(root: Path) -> list[str]:
     s = resultado["summary"]
     veredito = "sem erros" if resultado["ready"] else f"**{s['error_count']} erros**"
     return [
-        "## Saude do vault",
+        "## Saúde do vault",
         "",
         (
-            f"Ultima verificacao: {date.today().isoformat()} — {veredito}, "
-            f"{s['warning_count']} avisos, {s['pages']} paginas."
+            f"Última verificação: {date.today().isoformat()} — {veredito}, "
+            f"{s['warning_count']} avisos, {s['pages']} páginas."
         ),
         "",
         "| Checagem | Valor |",
         "|---|---|",
         f"| Links quebrados | {len(s['broken_wikilinks'])} |",
-        f"| Paginas inalcancaveis | {len(s['unreachable_pages'])} |",
-        f"| So catalogadas, sem citacao de conteudo | {len(s['orphan_pages'])} |",
+        f"| Páginas inalcançáveis | {len(s['unreachable_pages'])} |",
+        f"| Só catalogadas, sem citação de conteúdo | {len(s['orphan_pages'])} |",
         f"| Sem frontmatter | {len(s['missing_frontmatter'])} |",
         f"| Notas represadas em `raw/inbox` | {s['inbox_files']} |",
         "",
@@ -151,11 +151,11 @@ def build_moc(root: Path, *, today: str | None = None) -> str:
         "",
         "# AI-Brain",
         "",
-        "Memoria de decisao e de aprendizado do sistema. Gerado por `tools/wiki_moc.py` —",
-        "nao editar a mao.",
+        "Memória de decisão e de aprendizado do sistema. Gerado por `tools/wiki_moc.py` —",
+        "não editar à mão.",
         "",
-        "Quatro portas, por pergunta e nao por pasta. O catalogo completo e plano esta em",
-        "[[index]]; aqui e por onde comecar.",
+        "Quatro portas, por pergunta e não por pasta. O catálogo completo e plano está em",
+        "[[index]]; aqui é por onde começar.",
         "",
     ]
 

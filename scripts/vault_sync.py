@@ -155,7 +155,7 @@ tags:
 
 # Operations Log
 
-Append-only. Cada ingest/inbox/lint/sync fica registrado aqui. Nunca reescreva — so
+Append-only. Cada ingest/inbox/lint/sync fica registrado aqui. Nunca reescreva — só
 prune trimestral com flag `[lint]`.
 
 Formato: `YYYY-MM-DD HH:MM — operation: short description`

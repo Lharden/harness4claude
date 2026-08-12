@@ -24,16 +24,16 @@ GENERATED_SUBTREE = "graphs"
 
 # Ordem de leitura do indice: da fonte crua para a sintese, depois operacao.
 SECTIONS: tuple[tuple[str, str, str], ...] = (
-    ("sources", "Sources", "1 pagina por fonte processada."),
-    ("entities", "Entities", "pessoas, produtos, ferramentas, organizacoes."),
-    ("concepts", "Concepts", "ideias, metodos, padroes, frameworks."),
-    ("decisions", "Decisions", "registros de assimilacao: o que veio de fora e o que ficou."),
-    ("synthesis", "Synthesis", "escritos de ordem superior puxando varias paginas."),
+    ("sources", "Sources", "1 página por fonte processada."),
+    ("entities", "Entities", "pessoas, produtos, ferramentas, organizações."),
+    ("concepts", "Concepts", "ideias, métodos, padrões, frameworks."),
+    ("decisions", "Decisions", "registros de assimilação: o que veio de fora e o que ficou."),
+    ("synthesis", "Synthesis", "escritos de ordem superior puxando várias páginas."),
     ("projects", "Projects", "projetos ativos."),
-    ("ops", "Ops", "arquitetura de sync, runbooks, decisoes operacionais."),
+    ("ops", "Ops", "arquitetura de sync, runbooks, decisões operacionais."),
     ("specs", "Specs", "espelhadas de docs/specs pelo vault_sync."),
     ("sessions", "Sessions", "espelhadas de harness/traces pelo vault_sync."),
-    ("schema", "Schema", "configuracao do vault."),
+    ("schema", "Schema", "configuração do vault."),
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n.*?\n---\s*\n", re.S)
@@ -86,9 +86,9 @@ def build_index(root: Path, *, today: str | None = None) -> str:
         "",
         "# AI-Brain Index",
         "",
-        "Indice mestre, **gerado do disco** por `tools/wiki_index.py` — toda pagina de",
-        "`wiki/` aparece aqui e toda entrada aqui aponta para pagina existente.",
-        "Regenerar apos criar ou mover paginas; `tools/wiki_lint.py` acusa divergencia",
+        "Índice mestre, **gerado do disco** por `tools/wiki_index.py` — toda página de",
+        "`wiki/` aparece aqui e toda entrada aqui aponta para página existente.",
+        "Regenerar após criar ou mover páginas; `tools/wiki_lint.py` acusa divergência",
         "nos dois sentidos.",
         "",
     ]
@@ -123,12 +123,12 @@ def build_index(root: Path, *, today: str | None = None) -> str:
     lines += [
         f"## Graphs (`wiki/{GENERATED_SUBTREE}/`)",
         "",
-        ("*Knowledge graphs por repo, exportados pelo graphify. Geradas por maquina — "
-         "fora das checagens de orfa/estagnada do lint.*"),
+        ("*Knowledge graphs por repo, exportados pelo graphify. Geradas por máquina — "
+         "fora das checagens de órfã/estagnada do lint.*"),
         "",
     ]
     if (generated / "index.md").is_file():
-        lines.append(f"- [[{GENERATED_SUBTREE}/index]] — convencao de export e catalogo")
+        lines.append(f"- [[{GENERATED_SUBTREE}/index]] — convenção de export e catálogo")
     for repo in sorted({p.parent.name for p in notes if p.parent != generated}):
         count = sum(1 for p in notes if p.parent.name == repo)
         lines.append(f"- `{GENERATED_SUBTREE}/{repo}/` — {count} notas")
@@ -143,16 +143,16 @@ def build_index(root: Path, *, today: str | None = None) -> str:
         "- `~/.claude/harness/state.json` — estado runtime do harness",
         "- `~/.claude/plugins/local/harness4claude/` — executores do vault:",
         "  `scripts/vault_sync.py` (sync), `tools/wiki_lint.py` (lint), `tools/wiki_index.py` (indice)",
-        "- `.remember/` — buffer de sessao; espelhado para `raw/inbox/` pelo vault_sync",
+        "- `.remember/` — buffer de sessão; espelhado para `raw/inbox/` pelo vault_sync",
         "",
         "## Como buscar",
         "",
         "- **Por categoria**: navegue para `wiki/{tipo}/`",
         "- **Por tag**: busca do Obsidian, `tag:#nome`",
         '- **Full-text**: busca do Obsidian ou `grep -r "termo" wiki/`',
-        "- **Semantica**: operacao `query` — ver `AI-Brain/CLAUDE.md`",
+        "- **Semântica**: operação `query` — ver `AI-Brain/CLAUDE.md`",
         "",
-        "## Saude",
+        "## Saúde",
         "",
         "```",
         'python tools/wiki_lint.py  --root "$VAULT_PATH/AI-Brain" --report',
@@ -208,7 +208,7 @@ def build_specs_index(root: Path, *, today: str | None = None) -> str:
         "# Índice de Specs",
         "",
         "Gerado por `tools/wiki_index.py --specs`, agrupado pelo carimbo `project:` que o",
-        "`vault_sync` aplica ao espelhar. Nao editar a mao — a proxima geracao sobrescreve.",
+        "`vault_sync` aplica ao espelhar. Não editar à mão — a próxima geração sobrescreve.",
         "",
         f"{len(specs)} specs em {len(por_frente)} frentes.",
         "",
@@ -224,7 +224,7 @@ def build_specs_index(root: Path, *, today: str | None = None) -> str:
         if frente == SEM_FRENTE:
             lines += [
                 "*Espelhadas antes de o carimbo `project:` existir. Preencher o campo no",
-                "frontmatter move a spec para a frente certa na proxima geracao.*",
+                "frontmatter move a spec para a frente certa na próxima geração.*",
                 "",
             ]
         for page in por_frente[frente]:
