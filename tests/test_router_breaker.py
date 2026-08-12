@@ -11,7 +11,6 @@ Funcoes puras: rodam sem Ollama e sem indice.
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import sys
 from pathlib import Path

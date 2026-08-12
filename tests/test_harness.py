@@ -71,7 +71,7 @@ def _state_dir() -> str:
     """
     sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
     try:
-        from harness_paths import ensure_state_dir  # noqa: PLC0415
+        from harness_paths import ensure_state_dir
         return str(ensure_state_dir(_harness_dir(), os.getcwd()))
     except Exception:
         return _harness_dir()
@@ -612,7 +612,7 @@ class TestSDDInfrastructure(HarnessTestBase):
         """Schema de spec deve ser JSON Schema Draft 2020-12 válido."""
         schema_path = os.path.join(SCHEMAS_DIR, "spec.schema.json")
         self.assertTrue(os.path.exists(schema_path), f"Schema não existe: {schema_path}")
-        with open(schema_path, "r", encoding="utf-8") as f:
+        with open(schema_path, encoding="utf-8") as f:
             schema = json.load(f)
         self.assertTrue(
             schema.get("$schema", "").endswith("2020-12/schema"),
@@ -630,7 +630,7 @@ class TestSDDInfrastructure(HarnessTestBase):
             "write-spec", "templates", "spec-template.md"
         )
         self.assertTrue(os.path.exists(path), f"Template não existe: {path}")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
         required = [
             "# Spec:", "**Status**:", "## Executive Summary", "## User Stories",
@@ -649,7 +649,7 @@ class TestSDDInfrastructure(HarnessTestBase):
             "write-spec-light", "templates", "spec-light-template.md"
         )
         self.assertTrue(os.path.exists(path), f"Template não existe: {path}")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
         required = [
             "# Spec (Light):", "## Objetivo", "## Requisitos",
@@ -671,7 +671,7 @@ class TestSDDInfrastructure(HarnessTestBase):
             "design-doc", "templates", "design-template.md"
         )
         self.assertTrue(os.path.exists(path), f"Template não existe: {path}")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
         required = [
             "# Design:", "**Spec Link**", "## Technical Context",
@@ -694,7 +694,7 @@ class TestSDDInfrastructure(HarnessTestBase):
             skill_name, "SKILL.md"
         )
         self.assertTrue(os.path.exists(path), f"SKILL.md não existe: {path}")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
 
         # 1. Frontmatter YAML válido
@@ -782,7 +782,7 @@ class TestSDDInfrastructure(HarnessTestBase):
             SKILLS_DIR,
             "harness-workflow", "SKILL.md"
         )
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
 
         # Skills v3 devem aparecer
@@ -1239,7 +1239,7 @@ class TestPrecompact(HarnessTestBase):
             # O fixture vai no bucket do projeto, nao na raiz: desde o escopo por
             # projeto o precompact rotaciona `<raiz>/projects/<slug>/traces/`.
             sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
-            from harness_paths import ensure_state_dir  # noqa: PLC0415
+            from harness_paths import ensure_state_dir
             tmp_state = str(ensure_state_dir(tmp_harness, os.getcwd()))
             with open(os.path.join(tmp_state, "state.json"), "w", encoding="utf-8") as f:
                 json.dump({"task_id": "t-test-28", "status": "done"}, f)

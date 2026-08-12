@@ -15,8 +15,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 HOOKS = ROOT / "hooks"
 

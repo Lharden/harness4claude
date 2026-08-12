@@ -16,8 +16,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 HOOK = ROOT / "hooks" / "harness-session-start.sh"
 

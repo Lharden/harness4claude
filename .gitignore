@@ -23,6 +23,9 @@ __pycache__/
 dist/
 build/
 
+# Cache HTTP do pip criado dentro do repo pelo bootstrap do SessionStart
+pip/
+
 # OS
 .DS_Store
 Thumbs.db

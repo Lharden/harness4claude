@@ -1,0 +1,339 @@
+"""Health check read-only da wiki AI-Brain (padrao LLM Wiki).
+
+Reporta, nunca corrige — conforme AI-Brain/CLAUDE.md ("NUNCA corrige
+automaticamente. So reporta."). Mesmo contrato de saida do vault_sync_doctor:
+JSON estruturado no stdout, `ready` booleano, exit 1 quando ha erros.
+
+Uso:
+    python tools/wiki_lint.py [--root DIR] [--stale-days N] [--report]
+Env: AI_BRAIN_PATH / VAULT_PATH resolvem o sub-vault quando --root e omitido,
+na mesma precedencia do scripts/vault_sync.py.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+# Paginas meta: existem para serem o indice/registro, nao para receber in-links.
+META_PAGES = {"index.md", "log.md"}
+
+# Subarvore gerada por maquina (graphify). Vale como alvo de link, mas nao entra
+# nas checagens de frontmatter/orfa/estagnada — 900+ notas inundariam o relatorio.
+GENERATED_SUBTREE = "graphs"
+
+# Alvos que aparecem em exemplos de schema, nao sao links reais.
+PLACEHOLDER_BASENAMES = {"page-name", "link", "none", "slug", "..."}
+
+_WIKILINK_RE = re.compile(r"\[\[([^\]\n]+?)\]\]")
+
+DEFAULT_STALE_DAYS = 90
+
+
+@dataclass(frozen=True)
+class Finding:
+    """Um achado do lint."""
+
+    level: str
+    check: str
+    message: str
+    page: str | None = None
+
+
+@dataclass
+class _Report:
+    """Acumulador interno de findings."""
+
+    findings: list[Finding] = field(default_factory=list)
+
+    def add(self, level: str, check: str, message: str, page: str | None = None) -> None:
+        self.findings.append(Finding(level, check, message, page))
+
+
+def _default_root() -> Path:
+    """Resolve o sub-vault AI-Brain na mesma precedencia do vault_sync.py."""
+    ai_brain = os.environ.get("AI_BRAIN_PATH")
+    if ai_brain:
+        return Path(ai_brain)
+    vault_root = os.environ.get("VAULT_PATH")
+    if vault_root:
+        return Path(vault_root) / "AI-Brain"
+    return Path.home() / "Documents" / "Obsidian Vault" / "AI-Brain"
+
+
+def has_frontmatter(path: Path) -> bool:
+    """True se o arquivo abre com o delimitador `---` de frontmatter YAML."""
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return handle.readline().strip() == "---"
+    except OSError:
+        return False
+
+
+def parse_wikilinks(text: str) -> list[str]:
+    """Extrai alvos de `[[...]]`, sem alias (`|`), sem ancora (`#`), sem placeholders."""
+    targets: list[str] = []
+    for raw in _WIKILINK_RE.findall(text):
+        target = raw.split("|")[0].split("#")[0].strip()
+        if not target or ".." in target.replace("../", ""):
+            continue
+        if target.rsplit("/", 1)[-1].lower() in PLACEHOLDER_BASENAMES:
+            continue
+        targets.append(target)
+    return targets
+
+
+def _read(path: Path) -> str:
+    """Le um arquivo de texto tolerando encoding sujo."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _wiki_pages(root: Path) -> list[Path]:
+    """Paginas de wiki/ sujeitas ao lint (exclui a subarvore gerada)."""
+    wiki = root / "wiki"
+    if not wiki.is_dir():
+        return []
+    return sorted(
+        path
+        for path in wiki.rglob("*.md")
+        if GENERATED_SUBTREE not in path.relative_to(wiki).parts[:1]
+    )
+
+
+def _graph_notes(root: Path) -> list[Path]:
+    """Notas geradas pelo graphify (contadas a parte)."""
+    generated = root / "wiki" / GENERATED_SUBTREE
+    return sorted(generated.rglob("*.md")) if generated.is_dir() else []
+
+
+def _rel(path: Path, root: Path) -> str:
+    """Caminho relativo a wiki/, em posix."""
+    return path.relative_to(root / "wiki").as_posix()
+
+
+def _link_resolver(root: Path):
+    """Constroi um resolvedor de wikilink no comportamento do Obsidian.
+
+    Tenta, nesta ordem: caminho relativo a wiki/, caminho relativo a pagina de
+    origem (cobre `../` e saidas para output/), e por fim match de basename em
+    todo o sub-vault.
+    """
+    by_basename = {path.stem for path in root.rglob("*.md")}
+
+    def resolves(target: str, source: Path) -> bool:
+        stem = target[:-3] if target.endswith(".md") else target
+        candidates = (
+            root / "wiki" / f"{stem}.md",
+            source.parent / f"{stem}.md",
+        )
+        if any(candidate.is_file() for candidate in candidates):
+            return True
+        return stem.rsplit("/", 1)[-1] in by_basename
+
+    return resolves
+
+
+def inbox_redundant_pairs(root: Path) -> list[str]:
+    """Notas de raw/inbox que ja tem gemea `.done.md` — captura duplicada."""
+    inbox = root / "raw" / "inbox"
+    if not inbox.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in inbox.glob("*.md")
+        if not path.name.endswith(".done.md")
+        and (inbox / f"{path.name[:-3]}.done.md").is_file()
+    )
+
+
+def stray_wiki_tree(root: Path) -> bool:
+    """True se ha uma arvore `wiki/` irma do AI-Brain — regressao do bug VAULT_PATH.
+
+    So acusa quando a assinatura bate (log.md ou specs/ dentro), para nao
+    confundir com uma pasta `wiki` legitima do usuario no vault.
+    """
+    sibling = root.parent / "wiki"
+    if not sibling.is_dir():
+        return False
+    return (sibling / "log.md").is_file() or (sibling / "specs").is_dir()
+
+
+def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[str, Any]:
+    """Analisa a wiki e devolve o resultado estruturado. Nao escreve nada."""
+    root = root.resolve()
+    report = _R = _Report()
+    pages = _wiki_pages(root)
+    graph_notes = _graph_notes(root)
+
+    if not (root / "wiki").is_dir():
+        _R.add("error", "no_wiki", f"Sem diretorio wiki/ em {root}.")
+
+    resolves = _link_resolver(root)
+    lintable = [page for page in pages if page.name not in META_PAGES]
+
+    # --- frontmatter ------------------------------------------------------
+    missing_frontmatter = [_rel(page, root) for page in pages if not has_frontmatter(page)]
+    for rel in missing_frontmatter:
+        _R.add("error", "missing_frontmatter", f"Sem frontmatter: {rel}", rel)
+
+    # --- wikilinks + grafo de in-links ------------------------------------
+    inbound: dict[str, int] = {_rel(page, root): 0 for page in pages}
+    # Chaveado pelo ultimo segmento: `../projects/x` e `projects/x` sao o mesmo alvo.
+    broken: dict[str, set[str]] = {}
+    index_path = root / "wiki" / "index.md"
+    index_targets: list[str] = []
+
+    for page in pages:
+        targets = parse_wikilinks(_read(page))
+        if page == index_path:
+            index_targets = targets
+        for target in targets:
+            if not resolves(target, page):
+                broken.setdefault(target.rsplit("/", 1)[-1], set()).add(_rel(page, root))
+                continue
+            if page.name in META_PAGES:
+                continue  # link do indice nao conta como conexao de conteudo
+            for rel, count in list(inbound.items()):
+                if rel == f"{target}.md" or Path(rel).stem == target.rsplit("/", 1)[-1]:
+                    inbound[rel] = count + 1
+
+    for target, sources in sorted(broken.items()):
+        _R.add(
+            "error",
+            "broken_wikilink",
+            f"Wikilink sem destino: [[{target}]] (em {', '.join(sorted(sources))})",
+        )
+
+    # --- cobertura do index.md -------------------------------------------
+    indexed = {target.rsplit("/", 1)[-1] for target in index_targets}
+    missing_from_index = [
+        _rel(page, root) for page in lintable if page.stem not in indexed
+    ]
+    phantom_entries = [
+        target for target in index_targets if not resolves(target, index_path)
+    ]
+    for rel in missing_from_index:
+        _R.add("error", "not_in_index", f"Pagina fora do index.md: {rel}", rel)
+    for target in phantom_entries:
+        _R.add("error", "index_phantom", f"index.md aponta para pagina inexistente: {target}")
+
+    # --- orfas e estagnadas -----------------------------------------------
+    cutoff = time.time() - stale_days * 86400
+    orphans, stale = [], []
+    for page in lintable:
+        rel = _rel(page, root)
+        if inbound.get(rel, 0) > 0:
+            continue
+        orphans.append(rel)
+        if page.stat().st_mtime < cutoff:
+            stale.append(rel)
+    for rel in orphans:
+        _R.add("warning", "orphan_page", f"Pagina sem in-link: {rel}", rel)
+    for rel in stale:
+        _R.add(
+            "warning",
+            "stale_page",
+            f"Sem in-link e sem toque ha mais de {stale_days} dias: {rel}",
+            rel,
+        )
+
+    # --- inbox e arvore orfa ----------------------------------------------
+    redundant = inbox_redundant_pairs(root)
+    for name in redundant:
+        _R.add("warning", "inbox_redundant", f"raw/inbox tem par redundante .md/.done.md: {name}")
+
+    stray = stray_wiki_tree(root)
+    if stray:
+        _R.add(
+            "error",
+            "stray_wiki_tree",
+            f"Arvore wiki/ orfa na raiz do vault: {(root.parent / 'wiki').as_posix()} "
+            "(regressao do bug VAULT_PATH de 2026-06-12).",
+        )
+
+    inbox_dir = root / "raw" / "inbox"
+    inbox_total = len(list(inbox_dir.glob("*.md"))) if inbox_dir.is_dir() else 0
+
+    errors = [f for f in report.findings if f.level == "error"]
+    warnings = [f for f in report.findings if f.level == "warning"]
+    return {
+        "root": root.as_posix(),
+        "ready": not errors,
+        "summary": {
+            "pages": len(pages),
+            "graph_notes": len(graph_notes),
+            "missing_frontmatter": missing_frontmatter,
+            "broken_wikilinks": sorted(broken),
+            "pages_missing_from_index": missing_from_index,
+            "index_phantom_entries": phantom_entries,
+            "orphan_pages": orphans,
+            "stale_pages": stale,
+            "inbox_files": inbox_total,
+            "inbox_redundant_pairs": redundant,
+            "stray_wiki_tree": stray,
+            "error_count": len(errors),
+            "warning_count": len(warnings),
+        },
+        "findings": [finding.__dict__ for finding in report.findings],
+    }
+
+
+def render_report(result: dict[str, Any]) -> str:
+    """Renderiza o relatorio priorizado em Markdown."""
+    summary = result["summary"]
+    lines = [
+        f"# Wiki Lint — {date.today().isoformat()}",
+        "",
+        f"Vault: `{result['root']}`",
+        (
+            f"Veredito: **{'OK' if result['ready'] else 'ERROS'}** "
+            f"({summary['error_count']} erros, {summary['warning_count']} avisos) "
+            f"sobre {summary['pages']} paginas (+{summary['graph_notes']} notas geradas)."
+        ),
+    ]
+    for level, header in (("error", "Erros"), ("warning", "Avisos")):
+        rows = [f for f in result["findings"] if f["level"] == level]
+        lines += ["", f"## {header}", ""]
+        lines += [f"- `{f['check']}` — {f['message']}" for f in rows] or ["- (nenhum)"]
+    return "\n".join(lines) + "\n"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=None, help="Raiz do sub-vault AI-Brain.")
+    parser.add_argument("--stale-days", type=int, default=DEFAULT_STALE_DAYS)
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Alem do JSON, escreve output/lint-{data}.md no vault (unica escrita do tool).",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    root = args.root or _default_root()
+    result = analyze_wiki(root, stale_days=args.stale_days)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.report:
+        out_dir = Path(result["root"]) / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"lint-{date.today().isoformat()}.md").write_text(
+            render_report(result), encoding="utf-8"
+        )
+    if not result["ready"]:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

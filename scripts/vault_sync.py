@@ -3,8 +3,13 @@
 
 Mirrors (idempotente, baseado em mtime):
   ~/.claude/harness/traces/*.md   -> <vault>/wiki/sessions/
-  <cwd>/docs/specs/*.md           -> <vault>/wiki/specs/
+  <cwd>/docs/specs/*.md           -> <vault>/wiki/specs/          (carimba frontmatter)
+  <cwd>/docs/CONTEXT.md           -> <vault>/wiki/decisions/      (carimba frontmatter)
   <cwd>/.remember/today-*.md      -> <vault>/raw/inbox/   (e C:/.remember tambem)
+
+O CONTEXT.md gerado pela skill `discuss` ja e um registro de assimilacao em tres tiers
+(Locked/Deferred/Discretion). Espelha-lo para wiki/decisions/ faz a camada de decisao do
+vault se popular do trabalho que o pipeline ja produz, sem passo manual novo.
 
 Degradacao graceful: se o vault nao existir, sai 0 sem erro. Usado pelo
 harness-precompact.sh (auto-sync no handoff) e pela skill vault-bridge.
@@ -22,7 +27,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shutil
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -57,17 +64,58 @@ def newer(src: Path, dst: Path) -> bool:
     return not dst.exists() or src.stat().st_mtime > dst.stat().st_mtime
 
 
-def mirror(sources: list[Path], dst_dir: Path) -> int:
-    """Copia cada source para dst_dir se mais novo. Retorna nº de cópias feitas."""
+def stamp_frontmatter(text: str, page_type: str, *, source: str, today: str) -> str:
+    """Prefixa frontmatter Obsidian quando o texto nao tem — corpo intacto.
+
+    Artefatos crus do harness (specs, CONTEXT) nascem sem frontmatter; sem carimbo
+    eles chegam ao vault como paginas invalidas pelo schema do AI-Brain/CLAUDE.md.
+    Carimbar na copia (e nao na origem) mantem o repo de trabalho limpo.
+    """
+    if text.lstrip("﻿ \t\r\n").startswith("---"):
+        return text
+    return (
+        "---\n"
+        f"type: {page_type}\n"
+        f"created: {today}\n"
+        f"updated: {today}\n"
+        "status: active\n"
+        f"tags: [{page_type}, harness]\n"
+        f"source: {source}\n"
+        "---\n\n"
+    ) + text
+
+
+def mirror(
+    sources: list[Path],
+    dst_dir: Path,
+    *,
+    page_type: str | None = None,
+    rename: Callable[[Path], str] | None = None,
+) -> int:
+    """Copia cada source para dst_dir se mais novo. Retorna nº de cópias feitas.
+
+    page_type carimba frontmatter na copia quando a origem nao tem; rename define
+    o nome de destino (CONTEXT.md vira {projeto}-context.md, senao colidiria).
+    """
     if not sources:
         return 0
     dst_dir.mkdir(parents=True, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
     copied = 0
     for src in sources:
-        dst = dst_dir / src.name
-        if newer(src, dst):
+        dst = dst_dir / (rename(src) if rename else src.name)
+        if not newer(src, dst):
+            continue
+        if page_type:
+            text = src.read_text(encoding="utf-8", errors="replace")
+            dst.write_text(
+                stamp_frontmatter(text, page_type, source=src.name, today=today),
+                encoding="utf-8",
+            )
+            shutil.copystat(src, dst)  # preserva mtime: mantem o sync idempotente
+        else:
             shutil.copy2(src, dst)
-            copied += 1
+        copied += 1
     return copied
 
 
@@ -84,26 +132,80 @@ def remember_today(cwd: Path) -> list[Path]:
     return found
 
 
+LOG_HEADER = """---
+type: log
+created: {hoje}
+updated: {hoje}
+status: active
+tags:
+  - meta
+---
+
+# Operations Log
+
+Append-only. Cada ingest/inbox/lint/sync fica registrado aqui. Nunca reescreva — so
+prune trimestral com flag `[lint]`.
+
+Formato: `YYYY-MM-DD HH:MM — operation: short description`
+
+---
+"""
+
+
 def append_log(vault: Path, message: str) -> None:
-    """Append append-only em wiki/log.md (não falha se indisponível)."""
+    """Append append-only em wiki/log.md (não falha se indisponível).
+
+    Cria o arquivo com frontmatter quando ele ainda nao existe: sem isso, o primeiro
+    sync de um vault novo ja nascia com um erro de lint (`missing_frontmatter`), porque
+    o schema do AI-Brain exige frontmatter em toda pagina de wiki/.
+    """
     log_file = vault / "wiki" / "log.md"
-    stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+    agora = datetime.now(timezone.utc).astimezone()
     try:
+        if not log_file.exists():
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            log_file.write_text(
+                LOG_HEADER.format(hoje=agora.strftime("%Y-%m-%d")), encoding="utf-8"
+            )
         with log_file.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n{stamp} — {message}\n")
+            fh.write(f"\n{agora.strftime('%Y-%m-%d %H:%M')} — {message}\n")
     except OSError as exc:
         logger.warning("nao foi possivel escrever log.md: %s", exc)
 
 
+def project_slug(cwd: Path) -> str:
+    """Slug kebab-case do projeto, usado para nomear a decisao no vault."""
+    return re.sub(r"[^a-z0-9]+", "-", cwd.name.lower()).strip("-") or "projeto"
+
+
+def context_docs(cwd: Path) -> list[Path]:
+    """docs/CONTEXT.md do projeto atual, se existir."""
+    context = cwd / "docs" / "CONTEXT.md"
+    return [context] if context.is_file() else []
+
+
 def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
     """Executa o espelhamento. Retorna contagens por destino."""
+    slug = project_slug(cwd)
     counts = {
         "sessions": mirror(glob_md(harness_dir / "traces"), vault / "wiki" / "sessions"),
-        "specs": mirror(glob_md(cwd / "docs" / "specs"), vault / "wiki" / "specs"),
+        "specs": mirror(
+            glob_md(cwd / "docs" / "specs"), vault / "wiki" / "specs", page_type="spec"
+        ),
+        "decisions": mirror(
+            context_docs(cwd),
+            vault / "wiki" / "decisions",
+            page_type="decision",
+            rename=lambda _src: f"{slug}-context.md",
+        ),
         "inbox": mirror(remember_today(cwd), vault / "raw" / "inbox"),
     }
     if any(counts.values()):
-        append_log(vault, f"autosync: sessions:{counts['sessions']} specs:{counts['specs']} inbox:{counts['inbox']}")
+        append_log(
+            vault,
+            f"autosync: sessions:{counts['sessions']} specs:{counts['specs']} "
+            f"decisions:{counts['decisions']} inbox:{counts['inbox']}",
+        )
     return counts
 
 
@@ -129,8 +231,8 @@ def main() -> int:
         return 0
 
     counts = sync(args.vault, args.harness_dir, Path.cwd())
-    logger.info("vault-sync: sessions:%s specs:%s inbox:%s",
-                counts["sessions"], counts["specs"], counts["inbox"])
+    logger.info("vault-sync: sessions:%s specs:%s decisions:%s inbox:%s",
+                counts["sessions"], counts["specs"], counts["decisions"], counts["inbox"])
     return 0
 
 

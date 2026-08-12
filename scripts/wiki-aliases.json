@@ -1,0 +1,40 @@
+{
+  "_comment": "Aliases curados por pagina da wiki, consumidos pela Camada A do wiki_query (match exato, sem embed). Mesmo papel do skill-aliases.json no skill-router: e o remedio n1 para MISS no golden set, porque transforma cada acerto num caminho rapido permanente em vez de depender do cosseno toda vez. Rebuild do indice apos editar.",
+
+  "decisions/assimilacoes-2026": [
+    "recusas",
+    "recusas registradas",
+    "o que ja assimilamos",
+    "assimilacoes",
+    "prior art",
+    "ja tentamos",
+    "tecnica da comunidade"
+  ],
+  "concepts/sdd": [
+    "spec-driven development",
+    "desenvolvimento guiado por especificacao",
+    "sdd"
+  ],
+  "concepts/llm-wiki-pattern": [
+    "llm wiki",
+    "padrao karpathy",
+    "wiki mantida por llm"
+  ],
+  "entities/leonardo": [
+    "dono do vault",
+    "perfil do usuario",
+    "quem e o usuario"
+  ],
+  "ops/Guia de Sincronização do Vault": [
+    "sincronizacao do vault",
+    "sync entre maquinas"
+  ],
+  "projects/Harnesses - MOC Comparativo": [
+    "comparativo de harnesses",
+    "comparacao entre harnesses"
+  ],
+  "synthesis/linha-do-tempo-2026-05-a-08": [
+    "linha do tempo",
+    "historico do trabalho"
+  ]
+}

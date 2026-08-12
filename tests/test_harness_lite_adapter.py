@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hooks"))
 
 from harness_lite_adapter import (
     EvidenceBundle,
-    bundle_is_acceptable,
     build_supervisor_request,
+    bundle_is_acceptable,
     checkpoint_points,
     is_replay,
     project_fingerprint_for,

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 REQUIRED_COMMUNITY_PLUGINS = {
     "dataview",
     "obsidian-local-rest-api",

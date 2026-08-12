@@ -8,9 +8,8 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
 
 MOJIBAKE_REPLACEMENTS = {
     "â€“": "–",

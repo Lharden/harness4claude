@@ -30,7 +30,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from migrate_state import load_json, recompute_aggregates  # type: ignore[import-not-found]  # noqa: E402
+from migrate_state import (  # type: ignore[import-not-found]
+    load_json,
+    recompute_aggregates,
+)
 
 logger = logging.getLogger("harness.record")
 

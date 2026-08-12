@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -181,7 +182,7 @@ class TestRunEndToEnd:
 class TestHooksGravamHeartbeat:
     """Integracao: cada hook registrado precisa deixar seu rastro ao ser chamado."""
 
-    CASOS = [
+    CASOS: ClassVar[list[tuple[str, str, dict]]] = [
         ("harness-classify.sh", "UserPromptSubmit", {"prompt": "cria um sistema completo"}),
         ("harness-git-guard.sh", "PreToolUse", {"tool_input": {"command": "ls -la"}}),
         ("harness-reclassify.sh", "PostToolUse", {"tool_input": {"file_path": "/tmp/x.py"}}),

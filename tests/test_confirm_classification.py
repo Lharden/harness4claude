@@ -124,7 +124,7 @@ class TestAgregadoDeixaDeSerNulo:
 
     def test_accuracy_calculada_apos_confirmacao(self, cc, harness_dir):
         sys.path.insert(0, str(ROOT / "scripts"))
-        from migrate_state import recompute_aggregates  # noqa: PLC0415
+        from migrate_state import recompute_aggregates
 
         confirmado = cc.apply_confirmation(_state("L2-feature"), "L2-feature", "semantic")
         divergente = cc.apply_confirmation(_state("L2-feature"), "L1-bug", "semantic")
@@ -143,7 +143,7 @@ class TestAgregadoDeixaDeSerNulo:
     def test_meta_do_hook_nao_conta(self, cc, harness_dir):
         """Regressao: agreed=None e exatamente o estado que zerava a metrica."""
         sys.path.insert(0, str(ROOT / "scripts"))
-        from migrate_state import recompute_aggregates  # noqa: PLC0415
+        from migrate_state import recompute_aggregates
 
         agg = recompute_aggregates([
             {"task_id": "t-1", "classification": "L2-feature", "files_modified": 5,
@@ -156,7 +156,7 @@ class TestAgregadoDeixaDeSerNulo:
 
     def test_human_override_contabilizado(self, cc, harness_dir):
         sys.path.insert(0, str(ROOT / "scripts"))
-        from migrate_state import recompute_aggregates  # noqa: PLC0415
+        from migrate_state import recompute_aggregates
 
         st = cc.apply_confirmation(_state("L2-feature"), "L1-bug", "human_override")
         agg = recompute_aggregates([

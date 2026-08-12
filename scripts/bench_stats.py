@@ -22,7 +22,6 @@ import argparse
 import math
 import random
 import statistics
-import sys
 from pathlib import Path
 
 # Amostras menores que isto tornam a aproximacao normal do U pouco confiavel.
