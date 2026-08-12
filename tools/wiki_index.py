@@ -27,6 +27,7 @@ SECTIONS: tuple[tuple[str, str, str], ...] = (
     ("sources", "Sources", "1 página por fonte processada."),
     ("entities", "Entities", "pessoas, produtos, ferramentas, organizações."),
     ("concepts", "Concepts", "ideias, métodos, padrões, frameworks."),
+    ("compendio", "Compêndio", "verbetes de IA, ML, estatística e engenharia — gerados do registry."),
     ("decisions", "Decisions", "registros de assimilação: o que veio de fora e o que ficou."),
     ("synthesis", "Synthesis", "escritos de ordem superior puxando várias páginas."),
     ("projects", "Projects", "projetos ativos."),

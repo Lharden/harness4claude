@@ -102,14 +102,26 @@ def embed_query(question: str, *, timeout: float = EMBED_TIMEOUT) -> list[float]
     return [x / norm for x in vector]
 
 
+# Numa pagina comum, tres secoes sao tres partes do mesmo argumento e a citacao util e a
+# pagina. Numa colecao de referencia, tres secoes sao tres VERBETES diferentes — deduplicar
+# por pagina ali jogaria fora duas respostas legitimas para caber uma.
+UNIDADE_E_A_SECAO = ("compendium",)
+
+
+def _chave_de_dedupe(chunk: dict, fallback: str) -> str:
+    if chunk.get("type") in UNIDADE_E_A_SECAO and chunk.get("heading"):
+        return f"{chunk.get('page_id', fallback)}#{chunk['heading']}"
+    return chunk.get("page_id", fallback)
+
+
 def dedupe_by_page(hits: list[dict], top_k: int) -> list[dict]:
-    """Mantem o melhor chunk de cada pagina — a citacao e a pagina, nao a secao."""
+    """Mantem o melhor chunk por unidade de sentido — pagina, ou secao no compendio."""
     best: dict[str, dict] = {}
     for hit in hits:
-        page_id = hit["skill"].get("page_id", hit["id"])
-        current = best.get(page_id)
+        chave = _chave_de_dedupe(hit["skill"], hit["id"])
+        current = best.get(chave)
         if current is None or hit.get("score", 0) > current.get("score", 0):
-            best[page_id] = hit
+            best[chave] = hit
     ordered = sorted(best.values(), key=lambda h: h.get("score", 0), reverse=True)
     return ordered[:top_k]
 
@@ -165,7 +177,11 @@ def query(question: str, *, index_dir: Path = DEFAULT_INDEX,
             "score": score,
             # Camada A e match exato de titulo/slug: confianca nao depende de cosseno.
             "confident": hit["layer"] == "A" or score >= CONFIDENT_COS,
-            "wikilink": f"[[{page_id}]]",
+            "wikilink": (
+                f"[[{page_id}#{page.get('heading')}]]"
+                if page.get("type") in UNIDADE_E_A_SECAO and page.get("heading")
+                else f"[[{page_id}]]"
+            ),
             "path": page.get("path", ""),
             "snippet": snippet(page),
         })

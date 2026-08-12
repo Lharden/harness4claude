@@ -200,3 +200,29 @@ def test_corpus_grande_mantem_a_regra_de_margem(monkeypatch) -> None:
     hits = wq.route("consulta", chunks_fake(n), vecs, top_k=3)
 
     assert hits == []
+
+
+def test_secoes_do_compendio_nao_colapsam_entre_si() -> None:
+    """Tres secoes de uma colecao sao tres VERBETES — deduplicar por pagina perderia dois."""
+    hits = [
+        {"id": "c#A", "score": 0.9, "cos": 0.9, "layer": "B",
+         "skill": {"page_id": "compendio/02 x", "heading": "A", "type": "compendium"}},
+        {"id": "c#B", "score": 0.8, "cos": 0.8, "layer": "B",
+         "skill": {"page_id": "compendio/02 x", "heading": "B", "type": "compendium"}},
+    ]
+
+    resultado = wq.dedupe_by_page(hits, top_k=5)
+
+    assert [h["skill"]["heading"] for h in resultado] == ["A", "B"]
+
+
+def test_secoes_de_pagina_comum_ainda_colapsam() -> None:
+    """Numa pagina normal, tres secoes sao partes do mesmo argumento."""
+    hits = [
+        {"id": "p#A", "score": 0.9, "cos": 0.9, "layer": "B",
+         "skill": {"page_id": "projects/x", "heading": "A", "type": "project"}},
+        {"id": "p#B", "score": 0.8, "cos": 0.8, "layer": "B",
+         "skill": {"page_id": "projects/x", "heading": "B", "type": "project"}},
+    ]
+
+    assert len(wq.dedupe_by_page(hits, top_k=5)) == 1
