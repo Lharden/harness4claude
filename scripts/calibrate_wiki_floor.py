@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Varre o piso de cosseno da wiki contra o golden set: hit rate x falso-positivo.
 
-O piso do skill-router (MIN_COS=0.45) foi calibrado para descricoes curtas de skill.
-Secoes de wiki sao prosa longa e o cosseno cai sistematicamente — por isso a wiki
-precisa do proprio piso. Este script mede qual, em vez de chutar, exercitando o mesmo
-caminho da producao (wiki_query.route, com dedupe por pagina).
+O piso do skill-router (MIN_COS=0.45) foi calibrado para descrições curtas de skill.
+Seções de wiki são prosa longa e o cosseno cai sistematicamente — por isso a wiki
+precisa do próprio piso. Este script mede qual, em vez de chutar, exercitando o mesmo
+caminho da produção (wiki_query.route, com dedupe por página).
 
 Uso: python scripts/calibrate_wiki_floor.py [--top-k 3]
 """
@@ -24,7 +24,7 @@ CANDIDATES = [0.20, 0.24, 0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38, 0.40, 0.45]
 
 
 def memoize_embed():
-    """Embeda cada pergunta uma vez so — a varredura muda o piso, nao o vetor."""
+    """Embeda cada pergunta uma vez so — a varredura muda o piso, não o vetor."""
     original, cache = wq.embed_query, {}
 
     def cached(question, **kwargs):
@@ -35,13 +35,20 @@ def memoize_embed():
     wq.embed_query = cached
 
 
+def _citavel(hit):
+    """Chaves pelas quais o resultado pode ser citado — página e, no compêndio, verbete."""
+    pagina = hit["skill"].get("page_id", hit["id"])
+    return wq.chaves_de_citacao({"id": pagina, "section": hit["skill"].get("heading", "")})
+
+
 def tops(cases, pages, vecs, floor, top_k):
-    """Lista de page_ids do top-k para cada caso, com o piso trocado."""
+    """Chaves citáveis do top-k para cada caso, com o piso trocado."""
     saved, wq.MIN_COS = wq.MIN_COS, floor
     try:
         return [
-            [h["skill"].get("page_id", h["id"])
-             for h in wq.route(c["prompt"], pages, vecs, top_k=top_k)]
+            [chave
+             for h in wq.route(c["prompt"], pages, vecs, top_k=top_k)
+             for chave in sorted(_citavel(h))]
             for c in cases
         ]
     finally:
@@ -62,7 +69,7 @@ def main():
         print("wiki-index ausente — rode scripts/build_wiki_index.py primeiro.")
         return 1
 
-    known = {p["page_id"] for p in pages}
+    known = {p["page_id"] for p in pages} | {p["id"] for p in pages}
     for case in golden["positives"]:
         if not any(e in known for e in case["expect_any"]):
             print(f"AVISO: nenhum alvo existe no indice: {case['expect_any']}")

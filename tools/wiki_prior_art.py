@@ -1,27 +1,27 @@
 """Prior-art da wiki para a fase `discuss` de pipelines L2.
 
-Responde uma pergunta que o pipeline nao fazia: **isto ja foi decidido antes?** — para
-nao reassimilar o que ja entrou nem relitigar o que ja foi recusado.
+Responde uma pergunta que o pipeline não fazia: **isto já foi decidido antes?** — para
+não reassimilar o que já entrou nem relitigar o que já foi recusado.
 
-Prior-art e uma tarefa de busca diferente da consulta livre. A descricao de uma tarefa
-chega como *proposta* ("quero adotar TLA+ para verificar as invariantes"), nao como
-pergunta, e o embedding responde com vizinhos tematicos — paginas sobre invariantes —
-em vez do registro da decisao. Medido: a pagina que recusa TLA+ cai para rank 24/512.
+Prior-art e uma tarefa de busca diferente da consulta livre. A descrição de uma tarefa
+chega como *proposta* ("quero adotar TLA+ para verificar as invariantes"), não como
+pergunta, e o embedding responde com vizinhos tematicos — páginas sobre invariantes —
+em vez do registro da decisão. Medido: a página que recusa TLA+ cai para rank 24/512.
 Por isso aqui ha duas camadas:
 
-  - **literal**: nome proprio de tecnica (TLA+, pm4py, HNSW, Ollama) e o sinal mais
-    forte que existe para "ja falamos disso". Termos sao filtrados por discriminancia —
-    so vale o que aparece em poucas paginas, senao "harness" casaria com tudo.
-  - **semantica**: os hits do wiki_query, **so os confiantes**. Injecao automatica que
+  - **literal**: nome próprio de técnica (TLA+, pm4py, HNSW, Ollama) e o sinal mais
+    forte que existe para "já falamos disso". Termos são filtrados por discriminância —
+    so vale o que aparece em poucas páginas, senao "harness" casaria com tudo.
+  - **semântica**: os hits do wiki_query, **so os confiantes**. Injeção automática que
     mostra "possivelmente relacionado" vira ruido em toda tarefa nova.
 
 Contrato, herdado do skill-router:
-  - **nunca levanta e sempre sai 0** — e um passo de contexto, nao um gate;
-  - **silencioso quando nao ha o que dizer** (saida vazia);
-  - **nunca reconstroi o indice** (14.9s no corpus atual); se estiver stale, avisa.
+  - **nunca levanta e sempre sai 0** — e um passo de contexto, não um gate;
+  - **silencioso quando não ha o que dizer** (saida vazia);
+  - **nunca reconstroi o índice** (14.9s no corpus atual); se estiver stale, avisa.
 
 Uso:
-    python tools/wiki_prior_art.py "<descricao da tarefa>" [--top-k N] [--json]
+    python tools/wiki_prior_art.py "<descrição da tarefa>" [--top-k N] [--json]
 """
 
 from __future__ import annotations
@@ -38,20 +38,20 @@ import wiki_query as wq
 DEFAULT_TOP_K = 4
 SNIPPET_CHARS = 180
 
-# Um termo so serve como prior-art se distinguir: aparecer em ate esta fracao das
-# paginas. "TLA+" (1 pagina) discrimina; "harness" (dezenas) nao.
+# Um termo so serve como prior-art se distinguir: aparecer em até esta fração das
+# páginas. "TLA+" (1 página) discrimina; "harness" (dezenas) não.
 MAX_PAGE_FRACTION = 0.15
 MAX_LITERAL_HITS = 4
 
-# Prior-art e **decisao** sobre X, nao mencao de X. Sem este filtro, uma tarefa sobre
-# "parser de CSV" puxava tres specs que so citam um arquivo .csv de passagem. So conta
-# o achado literal que esta numa pagina de decisao ou sob um cabecalho de decisao.
+# Prior-art e **decisão** sobre X, não menção de X. Sem este filtro, uma tarefa sobre
+# "parser de CSV" puxava três specs que so citam um arquivo .csv de passagem. So conta
+# o achado literal que esta numa página de decisão ou sob um cabeçalho de decisão.
 _DECISION_HEADING_RE = re.compile(
     r"recus|decis|adot|assimil|troca|rejeit|substitu|escolh|descart", re.I
 )
 DECISION_PAGE_TYPE = "decision"
 
-# Nome proprio de tecnica: tem maiuscula fora do inicio, digito, ou simbolo tecnico.
+# Nome próprio de técnica: tem maiuscula fora do início, digito, ou simbolo técnico.
 _TOKEN_RE = re.compile(r"[A-Za-z][\w.+#-]{2,}")
 _STOPWORDS = {
     "para", "como", "quero", "sobre", "usar", "fazer", "esse", "esta", "este", "isso",
@@ -60,7 +60,7 @@ _STOPWORDS = {
 
 
 def is_distinctive(token: str) -> bool:
-    """Token que parece nome proprio de tecnica, nao palavra comum."""
+    """Token que parece nome próprio de técnica, não palavra comum."""
     if token.lower() in _STOPWORDS or len(token) < 3:
         return False
     corpo = token[1:]
@@ -70,7 +70,7 @@ def is_distinctive(token: str) -> bool:
 
 
 def salient_terms(task: str) -> list[str]:
-    """Termos candidatos a match literal, em ordem de aparicao e sem repetir."""
+    """Termos candidatos a match literal, em ordem de aparição e sem repetir."""
     vistos, saida = set(), []
     for token in _TOKEN_RE.findall(task):
         limpo = token.strip(".-_")
@@ -83,7 +83,7 @@ def salient_terms(task: str) -> list[str]:
 
 
 def carries_decision(chunk: dict) -> bool:
-    """True se o chunk registra uma decisao, e nao apenas menciona o termo."""
+    """True se o chunk registra uma decisão, e não apenas menciona o termo."""
     return (
         chunk.get("type") == DECISION_PAGE_TYPE
         or bool(_DECISION_HEADING_RE.search(chunk.get("heading", "")))
@@ -91,7 +91,7 @@ def carries_decision(chunk: dict) -> bool:
 
 
 def literal_hits(task: str, chunks: list[dict]) -> list[dict]:
-    """Paginas que decidem sobre um termo discriminante da tarefa."""
+    """Páginas que decidem sobre um termo discriminante da tarefa."""
     termos = salient_terms(task)
     if not termos or not chunks:
         return []
@@ -104,7 +104,7 @@ def literal_hits(task: str, chunks: list[dict]) -> list[dict]:
         casaram = [c for c in chunks if padrao.search(c.get("description", ""))]
         paginas = {c["page_id"] for c in casaram}
         if not paginas or len(paginas) > limite:
-            continue  # termo ausente ou generico demais para discriminar
+            continue  # termo ausente ou genérico demais para discriminar
         for chunk in (c for c in casaram if carries_decision(c)):
             atual = achados.get(chunk["page_id"])
             if atual is None:
@@ -137,7 +137,7 @@ def _stale() -> bool:
 
 
 def collect(task: str, *, top_k: int = DEFAULT_TOP_K, index_dir: Path | None = None) -> dict:
-    """Junta camada literal e camada semantica confiante. Nunca levanta."""
+    """Junta camada literal e camada semântica confiante. Nunca levanta."""
     alvo = index_dir or wq.DEFAULT_INDEX
     try:
         index, _ = wq.load_index(alvo)
@@ -150,8 +150,8 @@ def collect(task: str, *, top_k: int = DEFAULT_TOP_K, index_dir: Path | None = N
     try:
         resultado = wq.query(task, top_k=top_k, index_dir=alvo)
         disponivel = resultado.get("available", False)
-        # Mesmo filtro da camada literal: hit semantico confiante costuma ser vizinho
-        # tematico ("invariantes", "verificacao"), nao registro de decisao.
+        # Mesmo filtro da camada literal: hit semântico confiante costuma ser vizinho
+        # tematico ("invariantes", "verificação"), não registro de decisão.
         semanticos = [
             h for h in resultado.get("hits", [])
             if h["confident"]
@@ -181,7 +181,7 @@ def _linha(hit: dict) -> str:
 
 
 def render(dados: dict) -> str:
-    """Bloco de prior-art. String vazia quando nao ha o que dizer."""
+    """Bloco de prior-art. String vazia quando não ha o que dizer."""
     achados = dados.get("literal", []) + dados.get("semantic", [])
     if not dados.get("available") or not achados:
         return ""

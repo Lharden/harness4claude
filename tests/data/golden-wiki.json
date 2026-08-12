@@ -1,66 +1,132 @@
 {
-  "description": "Golden set da operacao query da wiki AI-Brain. Mesma estrutura do golden-prompts.json do skill-router: positives exigem a pagina alvo no top-3; negatives exigem zero hits (pergunta fora do dominio do vault nao pode devolver pagina).",
+  "description": "Golden set da operacao query da wiki AI-Brain. Mesma estrutura do golden-prompts.json do skill-router: positives exigem a pagina alvo no top-3; negatives exigem zero hits (pergunta fora do dominio do vault nao pode devolver pagina). Alvo pode ser pagina (`area/pagina`) ou verbete (`area/pagina#Termo`) — no compendio a unidade de sentido e a secao, e casar so a pagina passaria o gate sem provar que o verbete certo veio.",
   "gate": "top-3 hit rate >= 0.80",
   "positives": [
     {
       "prompt": "por que trocamos TLA+ na autorreforma do harness?",
-      "expect_any": ["decisions/assimilacoes-2026", "projects/harness4claude/09 Autorreforma - Estrategia e Execucao"]
+      "expect_any": [
+        "decisions/assimilacoes-2026",
+        "projects/harness4claude/09 Autorreforma - Estrategia e Execucao"
+      ]
     },
     {
       "prompt": "que modelo de embedding local o skill router usa",
-      "expect_any": ["specs/skill-router-design", "decisions/assimilacoes-2026"]
+      "expect_any": [
+        "specs/skill-router-design",
+        "decisions/assimilacoes-2026"
+      ]
     },
     {
       "prompt": "como o vault e sincronizado entre varias maquinas",
-      "expect_any": ["ops/Guia de Sincronização do Vault", "ops/Decisao - Arquitetura de Sincronizacao (3 camadas)"]
+      "expect_any": [
+        "ops/Guia de Sincronização do Vault",
+        "ops/Decisao - Arquitetura de Sincronizacao (3 camadas)"
+      ]
     },
     {
       "prompt": "o que e desenvolvimento guiado por especificacao no harness",
-      "expect_any": ["concepts/sdd"]
+      "expect_any": [
+        "concepts/sdd"
+      ]
     },
     {
       "prompt": "qual o padrao de wiki mantida por um modelo de linguagem",
-      "expect_any": ["concepts/llm-wiki-pattern"]
+      "expect_any": [
+        "concepts/llm-wiki-pattern"
+      ]
     },
     {
       "prompt": "quem e o dono deste vault e qual o perfil dele",
-      "expect_any": ["entities/leonardo"]
+      "expect_any": [
+        "entities/leonardo"
+      ]
     },
     {
       "prompt": "o que foi assimilado do graphify e como ficou",
-      "expect_any": ["decisions/assimilacoes-2026", "specs/graphify-integration-spec", "specs/graphify-integration-design"]
+      "expect_any": [
+        "decisions/assimilacoes-2026",
+        "specs/graphify-integration-spec",
+        "specs/graphify-integration-design"
+      ]
     },
     {
       "prompt": "em que pe esta o artigo de series temporais para a EAAI",
-      "expect_any": ["projects/artigo-timeseries"]
+      "expect_any": [
+        "projects/artigo-timeseries"
+      ]
     },
     {
       "prompt": "como funciona o mecanismo de execucao do harness4claude",
-      "expect_any": ["projects/harness4claude/02 Mecanismo e Fluxo de Execução"]
+      "expect_any": [
+        "projects/harness4claude/02 Mecanismo e Fluxo de Execução"
+      ]
     },
     {
       "prompt": "comparacao entre os tres harnesses e principios comuns",
-      "expect_any": ["projects/Harnesses - MOC Comparativo"]
+      "expect_any": [
+        "projects/Harnesses - MOC Comparativo"
+      ]
     },
     {
       "prompt": "o que aconteceu no trabalho entre maio e agosto de 2026",
-      "expect_any": ["synthesis/linha-do-tempo-2026-05-a-08"]
+      "expect_any": [
+        "synthesis/linha-do-tempo-2026-05-a-08"
+      ]
     },
     {
       "prompt": "quais decisoes foram travadas na incorporacao do obsidian ao harness",
-      "expect_any": ["decisions/harness4claude-context", "decisions/assimilacoes-2026"]
+      "expect_any": [
+        "decisions/harness4claude-context",
+        "decisions/assimilacoes-2026"
+      ]
     },
     {
       "prompt": "otimizacao de VRAM e escolha de modelos no harness lite",
-      "expect_any": ["projects/harness-lite/04 Otimização de Modelos e VRAM"]
+      "expect_any": [
+        "projects/harness-lite/04 Otimização de Modelos e VRAM"
+      ]
     },
     {
       "prompt": "qual a estrategia de evidencias e testes do harness4codex",
-      "expect_any": ["projects/harness4codex/08 Evidências, Testes e Proveniência"]
+      "expect_any": [
+        "projects/harness4codex/08 Evidências, Testes e Proveniência"
+      ]
     },
     {
       "prompt": "quais recusas de tecnica ja foram registradas e por que",
-      "expect_any": ["decisions/assimilacoes-2026"]
+      "expect_any": [
+        "decisions/assimilacoes-2026"
+      ]
+    },
+    {
+      "prompt": "por que dividir a pagina em secoes antes de gerar os vetores",
+      "expect_any": [
+        "compendio/02 recuperacao-busca#Chunking semântico"
+      ]
+    },
+    {
+      "prompt": "o que fazer quando o servico de embedding cai no meio do pipeline",
+      "expect_any": [
+        "compendio/03 confiabilidade#Degradação graciosa"
+      ]
+    },
+    {
+      "prompt": "como medir se a busca acha a resposta certa nas primeiras posicoes",
+      "expect_any": [
+        "compendio/04 estatistica-medicao#Hit rate top-k"
+      ]
+    },
+    {
+      "prompt": "por que dividir o vetor pelo seu tamanho antes de comparar",
+      "expect_any": [
+        "compendio/05 matematica-aplicada#Norma L2"
+      ]
+    },
+    {
+      "prompt": "texto que chegou com a acentuacao corrompida na leitura do arquivo",
+      "expect_any": [
+        "compendio/08 dados-proveniencia#Mojibake"
+      ]
     }
   ],
   "negatives": [

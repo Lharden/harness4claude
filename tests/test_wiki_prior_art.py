@@ -1,7 +1,7 @@
-"""Testes do wiki_prior_art — camada literal, filtro de decisao e silencio.
+"""Testes do wiki_prior_art — camada literal, filtro de decisão e silencio.
 
-O requisito que mais importa: **silencio quando nao ha decisao registrada**. Injecao
-automatica que fala em toda tarefa vira ruido e o passo acaba desligado.
+O requisito que mais importa: **silencio quando não ha decisão registrada**. Injeção
+automática que fala em toda tarefa vira ruido e o passo acaba desligado.
 """
 
 import sys
@@ -17,7 +17,7 @@ ENCHIMENTO = "texto de apoio suficiente para o bloco virar um chunk indexavel aq
 
 
 def montar_vault(tmp_path: Path) -> Path:
-    """Vault com uma decisao (recusa de TLA+) e uma spec que so menciona CSV."""
+    """Vault com uma decisão (recusa de TLA+) e uma spec que so menciona CSV."""
     def escrever(rel: str, tipo: str, corpo: str) -> None:
         caminho = tmp_path / "wiki" / rel
         caminho.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +65,7 @@ def test_salient_terms_nao_repete_e_preserva_ordem() -> None:
     assert termos == ["TLA+", "HNSW"]
 
 
-# --- filtro de decisao ----------------------------------------------------
+# --- filtro de decisão ----------------------------------------------------
 
 
 def test_carries_decision_aceita_pagina_de_decisao() -> None:
@@ -113,7 +113,7 @@ def test_tarefa_sem_termo_distintivo_e_silenciosa(tmp_path: Path) -> None:
 
 
 def test_termo_generico_demais_nao_dispara(tmp_path: Path) -> None:
-    """Termo presente em fracao grande do vault nao discrimina — nao vira prior-art."""
+    """Termo presente em fração grande do vault não discrimina — não vira prior-art."""
     out = montar_vault(tmp_path)
 
     dados = pa.collect("ajustar o Harness inteiro", index_dir=out)
@@ -130,7 +130,7 @@ def test_indice_ausente_nao_levanta_e_fica_silencioso(tmp_path: Path) -> None:
 
 
 def test_main_sempre_sai_zero(tmp_path: Path, monkeypatch, capsys) -> None:
-    """Passo de contexto nunca reprova a fase, nem com o indice quebrado."""
+    """Passo de contexto nunca reprova a fase, nem com o índice quebrado."""
     monkeypatch.setattr(sys, "argv", ["wiki_prior_art.py", "adotar TLA+",
                                       "--index", str(tmp_path / "vazio")])
 

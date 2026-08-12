@@ -179,6 +179,35 @@ Produz **dois outputs**:
    - `PARTIAL` — P1 completo mas P2/P3 com warnings. Aceitável para avançar com closure-plan documentando gaps.
    - `FAIL` — qualquer REQ órfão, AC P1 sem teste, boundary violada, success criterion não atingido, ou clarifications pendentes. Bloqueia o encerramento.
 
+## Passo final — propor verbetes ao compêndio
+
+Depois de emitir `VERIFY_STATUS`, e **apenas quando o vault AI-Brain existir**, olhe a
+tarefa que acabou de terminar e liste os conceitos, técnicas ou métodos que ela usou.
+Confira o que já está catalogado:
+
+```bash
+python "$CLAUDE_PLUGIN_ROOT/tools/compendium.py" --root "$VAULT_PATH/AI-Brain" check
+```
+
+O que propor, e o que não propor:
+
+- **Proponha** o que tem nome próprio e limite conhecido — técnica que você escolheu,
+  métrica que mediu, padrão que aplicou. Especialmente **conceito multi-palavra**
+  ("chunking semântico", "degradação graciosa", "banda de confiança"): a varredura de
+  token do `compendium.py candidates` não os pega, ela acha sigla. É exatamente por isso
+  que existem duas redes, e esta é a que cobre o buraco da outra.
+- **Não proponha** nome de arquivo, identificador, produto ou sigla de infraestrutura.
+  São vocabulário de ferramenta, e a fila de triagem já vive cheia deles.
+
+Apresente cada proposta com os três campos que ninguém consegue reconstruir depois:
+**intuição**, **onde apareceu no código desta tarefa** (`arquivo:símbolo` real, que o
+`check` verifica) e **quando não usar**. Se você não consegue escrever o terceiro, o
+conceito ainda não está entendido o bastante para virar verbete — diga isso em vez de
+preencher.
+
+**Nada entra sozinho.** A proposta vai ao usuário; quem edita `compendio/terms.toml` é
+ele. Este passo nunca altera o `VERIFY_STATUS`.
+
 ## Integração com pipeline
 
 Fluxo típico em pipelines L1 e L2 do Harness v3:

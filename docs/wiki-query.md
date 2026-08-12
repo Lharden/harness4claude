@@ -78,12 +78,21 @@ ler a página. Nenhum negativo produz hit **confiante**.
 
 ## Golden set
 
-`tests/data/golden-wiki.json` — 15 positives (pergunta + `expect_any`) e 3 negatives
+`tests/data/golden-wiki.json` — 20 positives (pergunta + `expect_any`) e 3 negatives
 (pergunta + `reason`). Gates em `tests/test_wiki_golden.py`:
 
-- positives: alvo no top-3 em ≥ 80% — **medido 100% (15/15)**
+- positives: alvo no top-3 em ≥ 80% — **medido 95% (19/20)**
 - negatives: zero hits confiantes — **medido 0**
 - alvos do golden existem no índice (falha aqui, não no hit rate, quando página é renomeada)
+
+O alvo pode ser uma página (`area/pagina`) ou um verbete (`area/pagina#Termo`). No compêndio
+a unidade de sentido é a seção: casar só a página daria o caso por certo sem provar que o
+verbete certo veio.
+
+MISS conhecido, mantido de propósito: *"o que fazer quando o serviço de embedding cai no
+meio do pipeline"* não alcança `compendio/03 confiabilidade#Degradação graciosa`. O verbete
+responde pelo nome (cos 0.5252), mas a paráfrase do problema perde para 640 chunks de prosa
+de projeto. Reescrever o caso para ele passar apagaria a informação.
 
 Pula automaticamente se o índice real ou o Ollama estiverem ausentes, como o
 `test_router_golden.py`.

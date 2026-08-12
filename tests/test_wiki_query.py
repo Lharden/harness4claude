@@ -1,7 +1,7 @@
-"""Testes do wiki_query — dedupe por pagina, bandas de confianca e degradacao.
+"""Testes do wiki_query — dedupe por página, bandas de confiança e degradação.
 
 O contrato mais importante aqui e o herdado do skill-router: **nunca levanta**. Quem
-consome e um passo de pipeline que nao pode quebrar porque o Ollama caiu.
+consome e um passo de pipeline que não pode quebrar porque o Ollama caiu.
 """
 
 import json
@@ -18,7 +18,7 @@ FRONTMATTER = "---\ntype: decision\ncreated: 2026-01-01\nupdated: 2026-01-01\nst
 
 
 def montar_indice(tmp_path: Path) -> Path:
-    """Vault minimo + indice sem embeddings (Camada A apenas)."""
+    """Vault mínimo + índice sem embeddings (Camada A apenas)."""
     page = tmp_path / "wiki" / "decisions" / "assimilacoes-2026.md"
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(
@@ -61,7 +61,7 @@ def test_dedupe_respeita_o_top_k() -> None:
     assert len(wq.dedupe_by_page(hits, top_k=2)) == 2
 
 
-# --- indice ausente / corrompido -----------------------------------------
+# --- índice ausente / corrompido -----------------------------------------
 
 
 def test_load_index_ausente_devolve_vazio_sem_levantar(tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ def test_query_sem_indice_reporta_indisponivel(tmp_path: Path) -> None:
 def test_load_index_com_blob_truncado_degrada_para_camada_a(tmp_path: Path) -> None:
     out = montar_indice(tmp_path)
     dados = json.loads((out / "wiki-index.json").read_text(encoding="utf-8"))
-    dados["dim"] = 768  # declara vetores que o blob vazio nao tem
+    dados["dim"] = 768  # declara vetores que o blob vazio não tem
     (out / "wiki-index.json").write_text(json.dumps(dados), encoding="utf-8")
 
     index, vecs = wq.load_index(out)
@@ -88,7 +88,7 @@ def test_load_index_com_blob_truncado_degrada_para_camada_a(tmp_path: Path) -> N
     assert vecs == []
 
 
-# --- camadas e confianca --------------------------------------------------
+# --- camadas e confiança --------------------------------------------------
 
 
 def test_camada_a_acha_por_alias_curado_e_e_confiavel(tmp_path: Path) -> None:
@@ -118,7 +118,7 @@ def test_score_abaixo_da_barra_marca_nao_confiavel(tmp_path: Path) -> None:
     marcado = wq.dedupe_by_page([baixo], top_k=3)[0]
 
     assert marcado["cos"] < wq.CONFIDENT_COS
-    assert index["pages"]  # indice montado, mas o hit nao alcanca a barra
+    assert index["pages"]  # índice montado, mas o hit não alcança a barra
 
 
 def test_render_avisa_quando_nada_atinge_a_barra() -> None:
@@ -200,3 +200,29 @@ def test_corpus_grande_mantem_a_regra_de_margem(monkeypatch) -> None:
     hits = wq.route("consulta", chunks_fake(n), vecs, top_k=3)
 
     assert hits == []
+
+
+def test_secoes_do_compendio_nao_colapsam_entre_si() -> None:
+    """Três seções de uma coleção são três VERBETES — deduplicar por página perderia dois."""
+    hits = [
+        {"id": "c#A", "score": 0.9, "cos": 0.9, "layer": "B",
+         "skill": {"page_id": "compendio/02 x", "heading": "A", "type": "compendium"}},
+        {"id": "c#B", "score": 0.8, "cos": 0.8, "layer": "B",
+         "skill": {"page_id": "compendio/02 x", "heading": "B", "type": "compendium"}},
+    ]
+
+    resultado = wq.dedupe_by_page(hits, top_k=5)
+
+    assert [h["skill"]["heading"] for h in resultado] == ["A", "B"]
+
+
+def test_secoes_de_pagina_comum_ainda_colapsam() -> None:
+    """Numa página normal, três seções são partes do mesmo argumento."""
+    hits = [
+        {"id": "p#A", "score": 0.9, "cos": 0.9, "layer": "B",
+         "skill": {"page_id": "projects/x", "heading": "A", "type": "project"}},
+        {"id": "p#B", "score": 0.8, "cos": 0.8, "layer": "B",
+         "skill": {"page_id": "projects/x", "heading": "B", "type": "project"}},
+    ]
+
+    assert len(wq.dedupe_by_page(hits, top_k=5)) == 1
