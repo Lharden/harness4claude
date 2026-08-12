@@ -202,8 +202,14 @@ def test_specs_index_nao_lista_a_si_mesmo(tmp_path: Path) -> None:
     assert "Índice de Specs]]" not in indice
 
 
-def test_specs_index_zera_as_orfas_de_spec(tmp_path: Path) -> None:
-    """O motivo de o gerador existir: 16 specs espelhadas nasceram sem in-link."""
+def test_specs_index_torna_alcancavel_mas_nao_integra(tmp_path: Path) -> None:
+    """O gerador resolve alcance, nao integracao — e a distincao importa.
+
+    16 specs espelhadas nasceram sem in-link nenhum. O indice conserta o alcance: da para
+    chegar la. Nao conserta o tecido: nenhuma pagina de conteudo as cita ainda, e e por
+    isso que continuam aparecendo como aviso. Fingir que o catalogo resolve as duas coisas
+    apagaria justamente o sinal de que falta escrever sobre elas.
+    """
     write_page(tmp_path, "concepts/x.md", "corpo")
     for i in range(3):
         write_spec(tmp_path, f"s{i}.md", frente="harness4claude")
@@ -212,9 +218,25 @@ def test_specs_index_zera_as_orfas_de_spec(tmp_path: Path) -> None:
     )
     (tmp_path / "wiki" / "index.md").write_text(build_index(tmp_path), encoding="utf-8")
 
-    resultado = analyze_wiki(tmp_path)
+    s = analyze_wiki(tmp_path)["summary"]
 
-    assert [o for o in resultado["summary"]["orphan_pages"] if o.startswith("specs/")] == []
+    assert s["unreachable_pages"] == []
+    assert [o for o in s["orphan_pages"] if o.startswith("specs/")] == [
+        "specs/s0.md", "specs/s1.md", "specs/s2.md",
+    ]
+
+
+def test_spec_citada_por_conteudo_sai_do_aviso(tmp_path: Path) -> None:
+    write_page(tmp_path, "concepts/x.md", "Ver [[../specs/s0]].")
+    write_spec(tmp_path, "s0.md", frente="harness4claude")
+    (tmp_path / "wiki" / "specs" / "00 Índice de Specs.md").write_text(
+        build_specs_index(tmp_path), encoding="utf-8"
+    )
+    (tmp_path / "wiki" / "index.md").write_text(build_index(tmp_path), encoding="utf-8")
+
+    s = analyze_wiki(tmp_path)["summary"]
+
+    assert "specs/s0.md" not in s["orphan_pages"]
 
 
 # --- pagina-indice nao e orfa ---------------------------------------------

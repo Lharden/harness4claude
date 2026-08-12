@@ -93,6 +93,19 @@ def build_index(root: Path, *, today: str | None = None) -> str:
         "",
     ]
 
+    # Paginas na raiz de wiki/ (o MOC, por exemplo) nao pertencem a nenhuma secao. Sem
+    # esta entrada elas ficavam fora do index e o lint as acusava — corretamente.
+    entrada = sorted(
+        (p for p in wiki.glob("*.md") if p.name not in META_PAGES),
+        key=lambda p: p.name.lower(),
+    )
+    if entrada:
+        lines += ["## Entrada", "", "*Porta de acesso — comece por aqui.*", ""]
+        for page in entrada:
+            summary = summarize(page)
+            lines.append(f"- [[{page.stem}]]" + (f" — {summary}" if summary else ""))
+        lines.append("")
+
     for folder, title, note in SECTIONS:
         lines += [f"## {title} (`wiki/{folder}/`)", "", f"*{note}*", ""]
         pages = section_pages(wiki, folder)

@@ -42,6 +42,9 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]\n]+?)\]\]")
 
 DEFAULT_STALE_DAYS = 90
 
+# A partir de quantas paginas uma subarvore precisa de uma porta `00 ...` de entrada.
+MIN_PAGES_FOR_MOC = 5
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -168,6 +171,35 @@ def inbox_redundant_pairs(root: Path) -> list[str]:
     )
 
 
+def subtrees_without_moc(root: Path, *, minimo: int = MIN_PAGES_FOR_MOC) -> list[str]:
+    """Subarvores de `wiki/` grandes o bastante para precisar de porta de entrada.
+
+    Uma pasta com uma ou duas paginas se le direto; a partir de um punhado, quem chega
+    sem contexto precisa de um `00 ...` dizendo por onde comecar. Aviso, nao erro: e um
+    julgamento editorial, e o lint nao decide isso por voce.
+
+    So vale da profundidade 2 para baixo. As areas de primeiro nivel (`projects/`,
+    `specs/`…) ja tem porta: o MOC raiz cobre todas por construcao. Cobrar um `00 ...`
+    delas seria pedir duplicata do que o MOC ja diz.
+    """
+    wiki = root / "wiki"
+    if not wiki.is_dir():
+        return []
+    faltando = []
+    for directory in sorted(wiki.rglob("*")):
+        if not directory.is_dir():
+            continue
+        partes = directory.relative_to(wiki).parts
+        if GENERATED_SUBTREE in partes or len(partes) < 2:
+            continue
+        paginas = [p for p in directory.glob("*.md") if p.name not in META_PAGES]
+        if len(paginas) < minimo:
+            continue
+        if not any(p.name.startswith("00 ") or is_index_page(p) for p in paginas):
+            faltando.append(directory.relative_to(wiki).as_posix())
+    return faltando
+
+
 def stray_wiki_tree(root: Path) -> bool:
     """True se ha uma arvore `wiki/` irma do AI-Brain — regressao do bug VAULT_PATH.
 
@@ -200,8 +232,16 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
     for rel in missing_frontmatter:
         _R.add("error", "missing_frontmatter", f"Sem frontmatter: {rel}", rel)
 
-    # --- wikilinks + grafo de in-links ------------------------------------
-    inbound: dict[str, int] = {_rel(page, root): 0 for page in pages}
+    # --- wikilinks e os DOIS grafos de in-link ----------------------------
+    # `alcancavel` conta link de qualquer pagina, indice inclusive: responde "da para
+    # chegar la?". `integrado` so conta link vindo de pagina de conteudo: responde "isto
+    # esta tecido no conhecimento, ou so catalogado?".
+    #
+    # Separar os dois e o que permite existir um MOC que linka tudo. Com um grafo so, o
+    # primeiro indice generico zeraria a checagem de orfa para sempre — todo mundo
+    # linkado, ninguem integrado, e o instrumento cego.
+    alcancavel: dict[str, int] = {_rel(page, root): 0 for page in pages}
+    integrado: dict[str, int] = {_rel(page, root): 0 for page in pages}
     # Chaveado pelo ultimo segmento: `../projects/x` e `projects/x` sao o mesmo alvo.
     broken: dict[str, set[str]] = {}
     index_path = root / "wiki" / "index.md"
@@ -211,15 +251,16 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
         targets = parse_wikilinks(_read(page))
         if page == index_path:
             index_targets = targets
+        e_navegacao = page.name in META_PAGES or page in navegacao
         for target in targets:
             if not resolves(target, page):
                 broken.setdefault(target.rsplit("/", 1)[-1], set()).add(_rel(page, root))
                 continue
-            if page.name in META_PAGES:
-                continue  # link do indice nao conta como conexao de conteudo
-            for rel, count in list(inbound.items()):
+            for rel in alcancavel:
                 if rel == f"{target}.md" or Path(rel).stem == target.rsplit("/", 1)[-1]:
-                    inbound[rel] = count + 1
+                    alcancavel[rel] += 1
+                    if not e_navegacao:
+                        integrado[rel] += 1
 
     for target, sources in sorted(broken.items()):
         _R.add(
@@ -241,25 +282,34 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
     for target in phantom_entries:
         _R.add("error", "index_phantom", f"index.md aponta para pagina inexistente: {target}")
 
-    # --- orfas e estagnadas -----------------------------------------------
+    # --- inalcancaveis, nao-integradas e estagnadas -----------------------
     cutoff = time.time() - stale_days * 86400
-    orphans, stale = [], []
+    unreachable, orphans, stale = [], [], []
     for page in lintable:
         if page in navegacao:
             continue
         rel = _rel(page, root)
-        if inbound.get(rel, 0) > 0:
+        if alcancavel[rel] == 0:
+            unreachable.append(rel)
+        if integrado[rel] > 0:
             continue
         orphans.append(rel)
         if page.stat().st_mtime < cutoff:
             stale.append(rel)
+    for rel in unreachable:
+        _R.add("error", "unreachable_page", f"Nenhum link chega ate: {rel}", rel)
     for rel in orphans:
-        _R.add("warning", "orphan_page", f"Pagina sem in-link: {rel}", rel)
+        _R.add(
+            "warning",
+            "orphan_page",
+            f"Alcancavel so por indice, sem citacao de conteudo: {rel}",
+            rel,
+        )
     for rel in stale:
         _R.add(
             "warning",
             "stale_page",
-            f"Sem in-link e sem toque ha mais de {stale_days} dias: {rel}",
+            f"Sem citacao de conteudo e sem toque ha mais de {stale_days} dias: {rel}",
             rel,
         )
 
@@ -277,6 +327,16 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
             "(regressao do bug VAULT_PATH de 2026-06-12).",
         )
 
+    # --- subarvore grande sem porta de entrada ----------------------------
+    sem_moc = subtrees_without_moc(root)
+    for rel in sem_moc:
+        _R.add(
+            "warning",
+            "subtree_without_moc",
+            f"Subarvore com {MIN_PAGES_FOR_MOC}+ paginas e sem `00 ...` de entrada: {rel}",
+            rel,
+        )
+
     inbox_dir = root / "raw" / "inbox"
     inbox_total = len(list(inbox_dir.glob("*.md"))) if inbox_dir.is_dir() else 0
 
@@ -292,8 +352,10 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
             "broken_wikilinks": sorted(broken),
             "pages_missing_from_index": missing_from_index,
             "index_phantom_entries": phantom_entries,
+            "unreachable_pages": unreachable,
             "orphan_pages": orphans,
             "stale_pages": stale,
+            "subtrees_without_moc": sem_moc,
             "inbox_files": inbox_total,
             "inbox_redundant_pairs": redundant,
             "stray_wiki_tree": stray,
