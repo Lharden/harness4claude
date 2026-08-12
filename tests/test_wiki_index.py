@@ -7,6 +7,7 @@ nenhum erro de cobertura no wiki_lint, nos dois sentidos.
 from pathlib import Path
 
 from tools.wiki_index import (
+    SECTIONS,
     SEM_FRENTE,
     build_digest,
     build_index,
@@ -15,6 +16,7 @@ from tools.wiki_index import (
     summarize,
 )
 from tools.wiki_lint import analyze_wiki, is_index_page
+from tools.wiki_moc import PORTAS
 
 FRONTMATTER = """---
 type: concept
@@ -67,6 +69,18 @@ def test_index_lista_toda_pagina_e_marca_secao_vazia(tmp_path: Path) -> None:
     assert "## Sources (`wiki/sources/`)" in index
     assert "- *(vazio)*" in index
     assert "updated: 2026-08-11" in index
+
+
+def test_toda_porta_do_moc_tem_secao_no_indice() -> None:
+    """Area citada pelo MOC e ausente do SECTIONS some do catalogo sem ninguem notar.
+
+    Foi o que aconteceu com `workflows/`: o MOC ja abria a porta "Como o sistema funciona"
+    apontando para ela enquanto o indice a ignorava.
+    """
+    pastas = {pasta for pasta, _, _ in SECTIONS}
+    do_moc = {area for porta in PORTAS for area in porta["areas"]}
+
+    assert do_moc <= pastas, f"porta do MOC sem secao no indice: {sorted(do_moc - pastas)}"
 
 
 def test_index_conta_notas_de_grafo_sem_listar_uma_a_uma(tmp_path: Path) -> None:
