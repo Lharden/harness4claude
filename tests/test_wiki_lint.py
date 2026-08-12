@@ -173,7 +173,7 @@ def test_orphan_page_is_a_warning(tmp_path: Path) -> None:
 
     result = analyze_wiki(tmp_path)
 
-    # in-link vindo do index nao conta como conexao real de conteudo
+    # in-link vindo do index não conta como conexao real de conteúdo
     assert result["summary"]["orphan_pages"] == ["concepts/solta.md"]
     assert result["summary"]["error_count"] == 0
 

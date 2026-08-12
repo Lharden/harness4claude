@@ -1,6 +1,6 @@
 """Testes do wiki_index — gerador do index.md a partir do disco.
 
-Invariante central: o par index/lint fecha. Um indice recem-gerado nao pode deixar
+Invariante central: o par index/lint fecha. Um índice recem-gerado não pode deixar
 nenhum erro de cobertura no wiki_lint, nos dois sentidos.
 """
 
@@ -72,10 +72,10 @@ def test_index_lista_toda_pagina_e_marca_secao_vazia(tmp_path: Path) -> None:
 
 
 def test_toda_porta_do_moc_tem_secao_no_indice() -> None:
-    """Area citada pelo MOC e ausente do SECTIONS some do catalogo sem ninguem notar.
+    """Área citada pelo MOC e ausente do SECTIONS some do catalogo sem ninguém notar.
 
-    Foi o que aconteceu com `workflows/`: o MOC ja abria a porta "Como o sistema funciona"
-    apontando para ela enquanto o indice a ignorava.
+    Foi o que aconteceu com `workflows/`: o MOC já abria a porta "Como o sistema funciona"
+    apontando para ela enquanto o índice a ignorava.
     """
     pastas = {pasta for pasta, _, _ in SECTIONS}
     do_moc = {area for porta in PORTAS for area in porta["areas"]}
@@ -109,7 +109,7 @@ def test_index_gerado_zera_os_erros_de_cobertura_do_lint(tmp_path: Path) -> None
 
 
 def test_digest_e_curto_e_lista_as_decisoes(tmp_path: Path) -> None:
-    """O index.md passa de 10 KB — caro demais para entrar em toda sessao."""
+    """O index.md passa de 10 KB — caro demais para entrar em toda sessão."""
     write_page(tmp_path, "concepts/sdd.md", "Spec-driven.")
     write_page(tmp_path, "decisions/assimilacoes.md", "O que veio de fora.")
     write_page(tmp_path, "decisions/contexto.md", "Decisoes travadas.")
@@ -169,7 +169,7 @@ def write_spec(root: Path, nome: str, *, frente: str | None, titulo: str = "Uma 
     return path
 
 
-# --- indice de specs ------------------------------------------------------
+# --- índice de specs ------------------------------------------------------
 
 
 def test_page_project_le_o_carimbo(tmp_path: Path) -> None:
@@ -195,7 +195,7 @@ def test_specs_index_agrupa_por_frente(tmp_path: Path) -> None:
 
 
 def test_specs_sem_frente_vao_para_o_fim(tmp_path: Path) -> None:
-    """A fila de triagem nao pode se passar por uma frente de verdade."""
+    """A fila de triagem não pode se passar por uma frente de verdade."""
     write_spec(tmp_path, "a.md", frente=None)
     write_spec(tmp_path, "b.md", frente="zzz-ultima-alfabeticamente")
 
@@ -217,10 +217,10 @@ def test_specs_index_nao_lista_a_si_mesmo(tmp_path: Path) -> None:
 
 
 def test_specs_index_torna_alcancavel_mas_nao_integra(tmp_path: Path) -> None:
-    """O gerador resolve alcance, nao integracao — e a distincao importa.
+    """O gerador resolve alcance, não integração — e a distinção importa.
 
-    16 specs espelhadas nasceram sem in-link nenhum. O indice conserta o alcance: da para
-    chegar la. Nao conserta o tecido: nenhuma pagina de conteudo as cita ainda, e e por
+    16 specs espelhadas nasceram sem in-link nenhum. O índice conserta o alcance: da para
+    chegar la. Não conserta o tecido: nenhuma página de conteúdo as cita ainda, e e por
     isso que continuam aparecendo como aviso. Fingir que o catalogo resolve as duas coisas
     apagaria justamente o sinal de que falta escrever sobre elas.
     """
@@ -253,7 +253,7 @@ def test_spec_citada_por_conteudo_sai_do_aviso(tmp_path: Path) -> None:
     assert "specs/s0.md" not in s["orphan_pages"]
 
 
-# --- pagina-indice nao e orfa ---------------------------------------------
+# --- pagina-indice não e órfã ---------------------------------------------
 
 
 def test_is_index_page_reconhece_o_tipo(tmp_path: Path) -> None:
@@ -266,7 +266,7 @@ def test_is_index_page_reconhece_o_tipo(tmp_path: Path) -> None:
 
 
 def test_indice_gerado_nao_conta_como_orfao(tmp_path: Path) -> None:
-    """Um indice existe para ser linkado DE, nao PARA — linka-lo de algum lugar
+    """Um índice existe para ser linkado DE, não PARA — linka-lo de algum lugar
     artificial so para calar o lint seria pior que a regra."""
     write_page(tmp_path, "concepts/x.md", "corpo")
     write_spec(tmp_path, "s.md", frente="f")

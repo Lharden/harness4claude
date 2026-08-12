@@ -1,24 +1,24 @@
-"""Restaura acentuacao em paginas do vault, sem chutar.
+"""Restaura acentuação em páginas do vault, sem chutar.
 
-O vault e escrito em portugues e varias paginas nasceram sem acento — hoje 19 delas.
-A causa nao foi decisao editorial: e o habito de escrever ASCII para nao arriscar
-mojibake no console do Windows. Os arquivos sao UTF-8; o problema so existia na tela.
+O vault e escrito em portugues e várias páginas nasceram sem acento — hoje 19 delas.
+A causa não foi decisão editorial: e o habito de escrever ASCII para não arriscar
+mojibake no console do Windows. Os arquivos são UTF-8; o problema so existia na tela.
 
-**Nao adivinha.** Duas listas:
+**Não adivinha.** Duas listas:
 
-  - `SEGURAS` — a forma sem acento nao e palavra valida em portugues, entao a
-    substituicao e determinada: `decisao` so pode ser `decisão`.
-  - `AMBIGUAS` — a forma sem acento TAMBEM e palavra ("analise" o substantivo vs. o
-    verbo, "pratica" adj. vs. verbo, "esta"/"está"). Estas sao apenas **relatadas**;
+  - `SEGURAS` — a forma sem acento não e palavra valida em portugues, então a
+    substituição e determinada: `decisao` so pode ser `decisão`.
+  - `AMBIGUAS` — a forma sem acento TAMBÉM e palavra ("analise" o substantivo vs. o
+    verbo, "pratica" adj. vs. verbo, "esta"/"está"). Estas são apenas **relatadas**;
     trocar automaticamente corromperia texto correto.
 
-Nunca toca em: bloco de codigo, codigo inline, wikilink, frontmatter, URL. Frontmatter
-fica de fora porque `tags: [decisao]` e um identificador, nao prosa — acentuar mudaria
+Nunca toca em: bloco de código, código inline, wikilink, frontmatter, URL. Frontmatter
+fica de fora porque `tags: [decisao]` e um identificador, não prosa — acentuar mudaria
 a tag.
 
 Fronteira de escopo: `wiki/specs/` e **espelhado** de `docs/specs/` dos repos pelo
-vault_sync. Corrigir a copia a faria divergir da origem e o proximo sync poderia
-sobrescrever. Ficam de fora por padrao; `--incluir-espelhadas` forca.
+vault_sync. Corrigir a copia a faria divergir da origem e o próximo sync poderia
+sobrescrever. Ficam de fora por padrão; `--incluir-espelhadas` forca.
 
 Uso:
     python tools/wiki_accents.py --root DIR [--fix] [--incluir-espelhadas]
@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wiki_index import default_root
 
-# Areas espelhadas de fora: a fonte da verdade nao esta no vault.
+# Áreas espelhadas de fora: a fonte da verdade não esta no vault.
 MIRRORED_AREAS = ("specs", "sessions")
 
 SEGURAS: dict[str, str] = {
@@ -70,8 +70,8 @@ SEGURAS: dict[str, str] = {
     # diversos
     "area": "área", "duvida": "dúvida", "saude": "saúde", "orfa": "órfã",
     "orfao": "órfão", "orfas": "órfãs", "orfaos": "órfãos",
-    # cauda encontrada por varredura apos a primeira aplicacao — nenhuma tem
-    # homografo verbal, ao contrario de valida/critica/publica, que ficaram fora.
+    # cauda encontrada por varredura após a primeira aplicação — nenhuma tem
+    # homografo verbal, ao contrário de valida/critica/publica, que ficaram fora.
     "tres": "três", "ninguem": "ninguém", "alguem": "alguém",
     "tecnica": "técnica", "tecnicas": "técnicas",
     "tecnico": "técnico", "tecnicos": "técnicos",
@@ -97,14 +97,102 @@ SEGURAS: dict[str, str] = {
     "veiculo": "veículo", "multiplos": "múltiplos",
     "classico": "clássico", "academico": "acadêmico", "canonica": "canônica",
     "canonico": "canônico", "canonicos": "canônicos",
+    # Ampliado revisando a prosa dos módulos do vault: eram as palavras que a
+    # varredura deixava passar, e uma prosa meio acentuada lê pior que nenhuma.
+    "alcanca": "alcança",
+    "alcancam": "alcançam",
+    "citaveis": "citáveis",
+    "citavel": "citável",
+    "confianca": "confiança",
+    "contem": "contém",
+    "diferenca": "diferença",
+    "diferencas": "diferenças",
+    "distancia": "distância",
+    "distancias": "distâncias",
+    "especifico": "específico",
+    "especificos": "específicos",
+    "estatistico": "estatístico",
+    "estaveis": "estáveis",
+    "estavel": "estável",
+    "historia": "história",
+    "historias": "histórias",
+    "importancia": "importância",
+    "instancia": "instância",
+    "instancias": "instâncias",
+    "legitima": "legítima",
+    "legitimas": "legítimas",
+    "legitimo": "legítimo",
+    "mantem": "mantém",
+    "matematico": "matemático",
+    "padrao": "padrão",
+    "padroes": "padrões",
+    "presenca": "presença",
+    "provem": "provém",
+    "rapida": "rápida",
+    "rapidas": "rápidas",
+    "rapido": "rápido",
+    "rapidos": "rápidos",
+    "recem": "recém",
+    "secao": "seção",
+    "secoes": "seções",
+    "sequencia": "sequência",
+    "sequencias": "sequências",
+    "tipica": "típica",
+    "tipico": "típico",
+    "varias": "várias",
+    "varios": "vários",
+    # Plurais e flexões que a primeira ampliação deixou passar — a varredura
+    # casa a forma exata, então "página" coberta não cobre "páginas".
+    "areas": "áreas",
+    "automatica": "automática",
+    "automaticos": "automáticos",
+    "cabecalho": "cabeçalho",
+    "cabecalhos": "cabeçalhos",
+    "cenarios": "cenários",
+    "conteudo": "conteúdo",
+    "conteudos": "conteúdos",
+    "criterios": "critérios",
+    "diretorios": "diretórios",
+    "disponiveis": "disponíveis",
+    "duvidas": "dúvidas",
+    "estrategias": "estratégias",
+    "evidencias": "evidências",
+    "generica": "genérica",
+    "genericos": "genéricos",
+    "hipoteses": "hipóteses",
+    "indices": "índices",
+    "licao": "lição",
+    "licoes": "lições",
+    "metricas": "métricas",
+    "necessaria": "necessária",
+    "necessarios": "necessários",
+    "niveis": "níveis",
+    "obrigatorios": "obrigatórios",
+    "paginas": "páginas",
+    "possiveis": "possíveis",
+    "propria": "própria",
+    "proprias": "próprias",
+    "proprios": "próprios",
+    "referencias": "referências",
+    "relatorios": "relatórios",
+    "responsaveis": "responsáveis",
+    "rotulo": "rótulo",
+    "rotulos": "rótulos",
+    "semanticas": "semânticas",
+    "semanticos": "semânticos",
+    "servico": "serviço",
+    "servicos": "serviços",
+    "sinteses": "sínteses",
+    "titulos": "títulos",
+    "unicos": "únicos",
+    "usuarios": "usuários",
 }
-
-# Forma sem acento TAMBEM e palavra valida: so relata, nunca troca.
+# Forma sem acento TAMBÉM e palavra valida: so relata, nunca troca.
 #
-# Criterio de entrada: as DUAS leituras precisam ser plausiveis no texto deste vault.
-# "e"/"da"/"as" saem — sao corretas em praticamente toda ocorrencia, e relata-las
-# produzia dezenas de falsos positivos por pagina, tornando o relatorio ilegivel. Uma
-# lista de revisao que ninguem le nao revisa nada.
+# Critério de entrada: as DUAS leituras precisam ser plausíveis no texto deste vault.
+# "e"/"da"/"as" saem — são corretas em praticamente toda ocorrência, e relata-las
+# produzia dezenas de falsos positivos por página, tornando o relatório ilegível. Uma
+# lista de revisão que ninguém le não revisa nada.
 AMBIGUAS: tuple[str, ...] = (
     "analise", "pratica", "pratico", "esta", "so",
     # Adjetivo acentuado vs. verbo na 3a pessoa: "a regra e válida" x "o lint valida".
@@ -113,13 +201,13 @@ AMBIGUAS: tuple[str, ...] = (
     "series",
 )
 
-# Regras morfologicas. Listar palavra por palavra nao se sustenta: a primeira versao
+# Regras morfologicas. Listar palavra por palavra não se sustenta: a primeira versão
 # tinha 80 entradas e ainda deixava 61 escapando (plurais, variantes, palavras novas).
-# Estes sufixos sao deterministas em portugues — nao existe palavra terminada em "-cao"
-# que nao seja "-ção". A regra cobre o que ainda nao foi escrito.
+# Estes sufixos são deterministas em portugues — não existe palavra terminada em "-cao"
+# que não seja "-ção". A regra cobre o que ainda não foi escrito.
 #
-# Deliberadamente FORA: "-logia" (metodologia, cronologia nao levam acento) e "-aria"
-# (maquinaria sem acento vs. necessaria com). Sufixo com excecao nao e regra.
+# Deliberadamente FORA: "-logia" (metodologia, cronologia não levam acento) e "-aria"
+# (maquinaria sem acento vs. necessária com). Sufixo com exceção não e regra.
 SUFIXOS: tuple[tuple[str, str], ...] = (
     ("coes", "ções"), ("cao", "ção"),
     ("encias", "ências"), ("encia", "ência"),
@@ -129,14 +217,24 @@ SUFIXOS: tuple[tuple[str, str], ...] = (
     ("iveis", "íveis"), ("ivel", "ível"),
     ("aveis", "áveis"), ("avel", "ável"),
     ("ssao", "ssão"), ("nsao", "nsão"),
-    # Hiato u+i tonico: construido, reconstruida, distribuidos.
+    # Hiato u+i tônico: construído, reconstruída, distribuídos.
+    #
+    # O lookbehind é o que separa hiato de dígrafo. Depois de `gu`/`qu` o u não é vogal
+    # plena — "seguidas", "conseguida", "extinguida" não levam acento — e em `cu` o "ui"
+    # é ditongo ("cuidado"). Sem a guarda a regra escrevia "seguídas".
     ("uidos", "uídos"), ("uidas", "uídas"), ("uido", "uído"), ("uida", "uída"),
 )
 MIN_RAIZ = 3  # evita casar palavra curta que so parece ter o sufixo
 
+# Guarda por sufixo, aplicada só na hora de casar — o mapa de substituição continua
+# indexado pelo sufixo literal, senão a chave vira a própria regex e o lookup quebra.
+GUARDAS: dict[str, str] = dict.fromkeys(
+    ("uidos", "uidas", "uido", "uida"), r"(?<![gqc])"
+)
+
 _SUFIXO_RE = re.compile(
     r"(?<![\w\-/])([a-zA-ZÀ-ÿ]{" + str(MIN_RAIZ) + r",}?)("
-    + "|".join(s for s, _ in SUFIXOS) + r")(?![\w\-/])"
+    + "|".join(GUARDAS.get(s, "") + s for s, _ in SUFIXOS) + r")(?![\w\-/])"
 )
 
 _FENCE = re.compile(r"```.*?```", re.S)
@@ -155,7 +253,7 @@ _AMBIGUAS_RE = re.compile(
 
 
 def _match_case(original: str, substituto: str) -> str:
-    """Preserva o padrao de caixa do original."""
+    """Preserva o padrão de caixa do original."""
     if original.isupper():
         return substituto.upper()
     if original[0].isupper():
@@ -164,7 +262,7 @@ def _match_case(original: str, substituto: str) -> str:
 
 
 def protected_spans(text: str) -> list[tuple[int, int]]:
-    """Trechos intocaveis: codigo, wikilink, URL e frontmatter."""
+    """Trechos intocáveis: código, wikilink, URL e frontmatter."""
     spans = []
     for padrao in (_FRONTMATTER, _FENCE, _INLINE, _LINK, _URL):
         spans += [m.span() for m in padrao.finditer(text)]
@@ -179,7 +277,7 @@ _SUFIXO_MAP: dict[str, str] = dict(SUFIXOS)
 
 
 def fix_text(text: str) -> tuple[str, int]:
-    """Aplica dicionario explicito e regras de sufixo, fora dos trechos protegidos."""
+    """Aplica dicionário explicito e regras de sufixo, fora dos trechos protegidos."""
     spans = protected_spans(text)
     trocas = 0
 
@@ -206,7 +304,7 @@ def fix_text(text: str) -> tuple[str, int]:
 
 
 def report_ambiguous(text: str) -> list[str]:
-    """Palavras ambiguas presentes — para revisao humana, nunca troca automatica."""
+    """Palavras ambiguas presentes — para revisão humana, nunca troca automática."""
     spans = protected_spans(text)
     achadas = {
         m.group(0).lower()
@@ -217,7 +315,7 @@ def report_ambiguous(text: str) -> list[str]:
 
 
 def target_pages(root: Path, *, incluir_espelhadas: bool = False) -> list[Path]:
-    """Paginas do vault sob revisao, fora de `graphs/` e das areas espelhadas."""
+    """Páginas do vault sob revisão, fora de `graphs/` e das áreas espelhadas."""
     wiki = root / "wiki"
     if not wiki.is_dir():
         return []

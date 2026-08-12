@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Constroi o indice de busca da wiki AI-Brain.
+"""Constroi o índice de busca da wiki AI-Brain.
 
 Mesma espinha do build_skills_index.py — varredura, embed via Ollama, escrita atomica,
---check-stale — apontada para outro corpus. Indice **separado** do de skills
-(~/.claude/harness/wiki-index/), para nao contaminar o skill-router em producao.
+--check-stale — apontada para outro corpus. Índice **separado** do de skills
+(~/.claude/harness/wiki-index/), para não contaminar o skill-router em produção.
 
-As primitivas de embedding (l2norm/pack_f16/ollama_embed/atomic_write) sao importadas
-do build_skills_index, nao copiadas.
+As primitivas de embedding (l2norm/pack_f16/ollama_embed/atomic_write) são importadas
+do build_skills_index, não copiadas.
 
-Diferenca de corpus que motiva o chunking: uma skill e "nome. descricao" — cabe num
-vetor. Uma pagina de wiki e prosa longa e multi-assunto; embedada inteira vira um
-centroide, e pergunta sobre uma secao especifica perde para o assunto medio da pagina.
-Por isso cada secao (cabecalho de nivel 2-4) vira seu proprio vetor, e a consulta
-deduplica por pagina depois.
+Diferença de corpus que motiva o chunking: uma skill e "nome. descrição" — cabe num
+vetor. Uma página de wiki e prosa longa e multi-assunto; embedada inteira vira um
+centroide, e pergunta sobre uma seção especifica perde para o assunto medio da página.
+Por isso cada seção (cabeçalho de nível 2-4) vira seu próprio vetor, e a consulta
+deduplica por página depois.
 
 Uso: python build_wiki_index.py --root DIR [--no-embed] [--check-stale] [--out DIR]
 --check-stale: exit 0 = fresco, exit 1 = stale/ausente.
@@ -38,8 +38,8 @@ HOME = os.path.expanduser("~")
 DEFAULT_OUT = os.path.join(HOME, ".claude", "harness", "wiki-index")
 ALIASES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki-aliases.json")
 
-# Espelha wiki_lint: paginas meta sao navegacao, nao conhecimento; a subarvore do
-# graphify e gerada por maquina e inundaria o indice com 949 notas de no.
+# Espelha wiki_lint: páginas meta são navegação, não conhecimento; a subarvore do
+# graphify e gerada por maquina e inundaria o índice com 949 notas de no.
 META_PAGES = {"index.md", "log.md"}
 GENERATED_SUBTREE = "graphs"
 
@@ -56,7 +56,7 @@ _TABLE_SEP_RE = re.compile(r"^\|[\s:|-]+\|$")
 
 
 def _default_root():
-    """Resolve o sub-vault AI-Brain na precedencia do vault_sync.py."""
+    """Resolve o sub-vault AI-Brain na precedência do vault_sync.py."""
     ai_brain = os.environ.get("AI_BRAIN_PATH")
     if ai_brain:
         return ai_brain
@@ -67,7 +67,7 @@ def _default_root():
 
 
 def page_files(root):
-    """Paginas de wiki/ que entram no indice, ordenadas por caminho."""
+    """Páginas de wiki/ que entram no índice, ordenadas por caminho."""
     wiki = os.path.join(root, "wiki")
     found = []
     for dirpath, dirnames, filenames in os.walk(wiki):
@@ -87,10 +87,10 @@ def flatten_row(line):
 
 
 def clean_lines(block):
-    """Prosa util de um bloco: sem ruido de markup, com tabelas achatadas.
+    """Prosa útil de um bloco: sem ruido de markup, com tabelas achatadas.
 
-    Tabelas entram porque neste vault e nelas que moram as decisoes (assimilacoes,
-    recusas, knobs); pula-las esvaziava justamente as paginas mais consultaveis.
+    Tabelas entram porque neste vault e nelas que moram as decisoes (assimilações,
+    recusas, knobs); pula-las esvaziava justamente as páginas mais consultáveis.
     """
     out = []
     for raw in block:
@@ -108,7 +108,7 @@ def clean_lines(block):
 
 
 def split_sections(body):
-    """Divide o corpo em (cabecalho, linhas) por heading de nivel 2-4."""
+    """Divide o corpo em (cabeçalho, linhas) por heading de nível 2-4."""
     sections, heading, block = [], "", []
     for raw in body.splitlines():
         match = _HEADING_RE.match(raw)
@@ -122,7 +122,7 @@ def split_sections(body):
 
 
 def load_aliases(path=ALIASES_JSON):
-    """Aliases curados por page_id. Chaves com '_' inicial sao comentarios."""
+    """Aliases curados por page_id. Chaves com '_' inicial são comentários."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -133,7 +133,7 @@ def load_aliases(path=ALIASES_JSON):
 
 
 def page_meta(path, wiki_dir, text, aliases_map=None):
-    """Metadados comuns a todos os chunks de uma pagina."""
+    """Metadados comuns a todos os chunks de uma página."""
     fm_match = _FM_BLOCK_RE.match(text)
     fm_raw = fm_match.group(1) if fm_match else ""
     body = text[fm_match.end():] if fm_match else text
@@ -156,7 +156,7 @@ def page_meta(path, wiki_dir, text, aliases_map=None):
         "path": path,
         # aliases alimentam a Camada A (match exato): derivados do nome/titulo mais os
         # curados em wiki-aliases.json. Tags ficam de fora de proposito — "meta" e
-        # "harness" aparecem em dezenas de paginas e disparariam em tudo.
+        # "harness" aparecem em dezenas de páginas e disparariam em tudo.
         "aliases": sorted(
             ({stem, stem.replace("-", " "), title} | set((aliases_map or {}).get(page_id, [])))
             - {""}
@@ -164,9 +164,9 @@ def page_meta(path, wiki_dir, text, aliases_map=None):
     }, body
 
 
-# Numa colecao de referencia o cabecalho E o nome canonico do verbete — "Embedding",
+# Numa coleção de referência o cabeçalho É o nome canônico do verbete — "Embedding",
 # "Disjuntor", "Norma L2". Vira alias para a Camada A responder em ~200ms a quem sabe o
-# nome. Noutras paginas o cabecalho e estrutural ("Contexto", "Objetivo", "Estado") e
+# nome. Noutras páginas o cabeçalho é estrutural ("Contexto", "Objetivo", "Estado") e
 # viraria gatilho falso em qualquer prompt que use a palavra.
 HEADING_E_NOME = ("compendium",)
 
@@ -176,9 +176,9 @@ def _chunk(meta, heading, text, first):
     aliases = list(meta["aliases"]) if first else []
     if heading and meta["type"] in HEADING_E_NOME:
         aliases.append(heading)
-        # A Camada A procura o alias DENTRO do prompt: um rotulo longo como
-        # "Disjuntor (circuit breaker)" nunca casa com quem digita so "disjuntor".
-        # A forma sem o parentetico e o nome curto pelo qual as pessoas perguntam.
+        # A Camada A procura o alias DENTRO do prompt: um rótulo longo como
+        # "Disjuntor (circuit breaker)" nunca casa com quem digita só "disjuntor".
+        # A forma sem o parentético é o nome curto pelo qual as pessoas perguntam.
         curto = re.sub(r"\s*\([^)]*\)\s*$", "", heading).strip()
         if curto and curto != heading:
             aliases.append(curto)
@@ -193,8 +193,8 @@ def _chunk(meta, heading, text, first):
         "path": meta["path"],
         "description": text[:CHUNK_CHARS],
         "aliases": aliases,
-        # A wiki nao tem entrada desabilitada nem contador de uso — neutros por
-        # construcao, para caber no contrato de layer_b/pick sem fork.
+        # A wiki não tem entrada desabilitada nem contador de uso — neutros por
+        # construção, para caber no contrato de layer_b/pick sem fork.
         "enabled": True,
         "usage_count": 0,
         "vec_row": -1,
@@ -202,7 +202,7 @@ def _chunk(meta, heading, text, first):
 
 
 def page_chunks(path, wiki_dir, aliases_map=None):
-    """Registros indexaveis de uma pagina — um por secao, agrupando secoes curtas."""
+    """Registros indexáveis de uma página — um por seção, agrupando seções curtas."""
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
@@ -218,7 +218,7 @@ def page_chunks(path, wiki_dir, aliases_map=None):
         pending.append((heading, lines))
         joined = " ".join(line for _, group in pending for line in group)
         if len(joined) < MIN_CHUNK_CHARS:
-            continue  # secao curta demais para virar vetor propria: acumula
+            continue  # seção curta demais para virar vetor própria: acumula
         headings = [h for h, _ in pending if h]
         records.append(_chunk(meta, headings[0] if headings else "", joined, not records))
         pending = []
@@ -233,7 +233,7 @@ def page_chunks(path, wiki_dir, aliases_map=None):
 
 
 def scan_pages(root, aliases_map=None):
-    """Lista os registros indexaveis da wiki (um ou mais chunks por pagina)."""
+    """Lista os registros indexáveis da wiki (um ou mais chunks por página)."""
     wiki = os.path.join(root, "wiki")
     aliases_map = load_aliases() if aliases_map is None else aliases_map
     records = []
@@ -243,7 +243,7 @@ def scan_pages(root, aliases_map=None):
 
 
 def fingerprint(root):
-    """Hash de caminho+mtime+tamanho de cada pagina — base do --check-stale.
+    """Hash de caminho+mtime+tamanho de cada página — base do --check-stale.
 
     Usa caminho **relativo** a wiki/: hashear o absoluto fazia o mesmo vault parecer
     stale so porque a raiz chegou como 'C:\\...' num lugar e 'C:/...' noutro (o
@@ -262,7 +262,7 @@ def fingerprint(root):
 
 
 def embed_text(chunk):
-    """Documento embedado: titulo da pagina, secao, tipo, tags e o texto do chunk."""
+    """Documento embedado: título da página, seção, tipo, tags e o texto do chunk."""
     tags = " ".join(chunk["tags"])
     heading = chunk["heading"] or chunk["title"]
     return (f"search_document: {chunk['title']} — {heading}. "
@@ -270,7 +270,7 @@ def embed_text(chunk):
 
 
 def build(root, out_dir=DEFAULT_OUT, no_embed=False, pages=None):
-    """Constroi e grava o indice. Retorna o nº de chunks indexados."""
+    """Constroi e grava o índice. Retorna o nº de chunks indexados."""
     if pages is None:
         pages = scan_pages(root)
     dim, blob = 0, b""
@@ -301,7 +301,7 @@ def build(root, out_dir=DEFAULT_OUT, no_embed=False, pages=None):
 
 
 def check_stale(root, out_dir=DEFAULT_OUT):
-    """True se o indice esta ausente ou desatualizado em relacao ao disco."""
+    """True se o índice esta ausente ou desatualizado em relação ao disco."""
     try:
         with open(os.path.join(out_dir, "meta.json"), encoding="utf-8") as f:
             meta = json.load(f)

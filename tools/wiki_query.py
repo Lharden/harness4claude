@@ -1,14 +1,14 @@
-"""Consulta semantica da wiki AI-Brain — a operacao `query` do padrao LLM Wiki.
+"""Consulta semântica da wiki AI-Brain — a operação `query` do padrão LLM Wiki.
 
-Espelha o skill-router: **Camada A** (match exato de titulo/slug), pinada no topo, e
-**Camada B** (cosseno sobre embeddings) completando sempre. As tres funcoes de decisao
-(`layer_a`, `layer_b`, `pick`) sao importadas de hooks/skill_router.py, nao copiadas —
-os registros de pagina carregam `enabled`/`usage_count` neutros justamente para caber
+Espelha o skill-router: **Camada A** (match exato de título/slug), pinada no topo, e
+**Camada B** (cosseno sobre embeddings) completando sempre. As três funções de decisão
+(`layer_a`, `layer_b`, `pick`) são importadas de hooks/skill_router.py, não copiadas —
+os registros de página carregam `enabled`/`usage_count` neutros justamente para caber
 nesse contrato.
 
-Contrato de falha herdado do router: **nunca levanta**. Ollama fora do ar, indice
+Contrato de falha herdado do router: **nunca levanta**. Ollama fora do ar, índice
 ausente ou corrompido degradam para a Camada A (ou para lista vazia), nunca para
-exceção — quem chama e um passo de pipeline que nao pode quebrar por causa de busca.
+exceção — quem chama e um passo de pipeline que não pode quebrar por causa de busca.
 
 Uso:
     python tools/wiki_query.py "pergunta" [--top-k N] [--index DIR] [--json]
@@ -33,7 +33,7 @@ OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = sr.EMBED_MODEL
 
 # Mais folgado que o EMBED_TIMEOUT=1.2s do router: ali o embed roda no caminho quente
-# de todo prompt; aqui e uma consulta deliberada, onde esperar 8s e aceitavel.
+# de todo prompt; aqui e uma consulta deliberada, onde esperar 8s e aceitável.
 EMBED_TIMEOUT = 8.0
 DEFAULT_TOP_K = 5
 SNIPPET_CHARS = 240
@@ -41,34 +41,45 @@ SNIPPET_CHARS = 240
 # Dois patamares, ambos medidos com scripts/calibrate_wiki_floor.py contra
 # tests/data/golden-wiki.json — nenhum dos dois foi chutado.
 #
-# MIN_COS = "vale mostrar". Com chunking por secao, as respostas certas aparecem em
-# rank 1 de 512 mas com cosseno 0.33-0.40: cortar em 0.45 descartaria acerto #1. A
-# 0.32 o hit@3 e 93%; acima disso cai para 87%.
+# MIN_COS = "vale mostrar". Com chunking por seção, as respostas certas aparecem em
+# rank 1 mas com cosseno 0.31-0.40: cortar em 0.45 descartaria acerto #1.
 #
-# CONFIDENT_COS = "vale afirmar". E o MIN_COS=0.45 do skill-router, aqui reaproveitado
-# como barra de confianca: nenhuma pergunta fora do dominio do vault alcanca esse
+# Recalibrado sobre 640 chunks e 20 positivas (a primeira medição foi com 512 e 15). O
+# patamar de 0.20 a 0.36 é plano — 95% de hit@3, 1 falso-positivo — e só desaba a partir
+# de 0.38. Dentro de um platô, o piso mais baixo é o melhor: custa o mesmo e alcança
+# mais. A 0.32 a pergunta "como sei que uma mudança não quebrou nada" ficava sem
+# resposta com a página certa em rank 1 a 0.3144, seis milésimos abaixo do corte.
+#
+#   piso   0.28  0.30  0.32  0.34  0.36  0.38  0.40  0.45
+#   hit@3   95%   95%   95%   95%   95%   90%   85%   75%
+#   falso+    1     1     1     1     1     1     1     0
+#
+# CONFIDENT_COS = "vale afirmar". É o MIN_COS=0.45 do skill-router, aqui reaproveitado
+# como barra de confiança: nenhuma pergunta fora do domínio do vault alcança esse
 # patamar (medido: 0 falso-positivos em 0.45). Quem consome decide o que fazer com hit
-# abaixo da barra — mostrar como "talvez" em vez de afirmar cobertura.
-MIN_COS = 0.32
+# abaixo da barra — mostrar como "talvez" em vez de afirmar cobertura. O falso-positivo
+# que sobra em 0.30 vive nessa faixa: aparece marcado "confira antes de citar", que é
+# exatamente o que a faixa existe para dizer.
+MIN_COS = 0.30
 CONFIDENT_COS = 0.45
 
-# Quantos chunks buscar por pagina desejada antes de deduplicar.
+# Quantos chunks buscar por página desejada antes de deduplicar.
 OVERFETCH = 4
 
 # Abaixo deste tamanho de corpus, a regra relativa do pick (cos >= mediana + margem)
-# e degenerada: com 2 chunks a mediana E o proprio topo, e todo hit abaixo dele cai.
-# Invisivel nos 512 chunks do vault real, fatal num vault recem-criado.
+# e degenerada: com 2 chunks a mediana E o próprio topo, e todo hit abaixo dele cai.
+# Invisível nos 512 chunks do vault real, fatal num vault recem-criado.
 MIN_CHUNKS_FOR_MARGIN = 10
 
-# Como neutralizar a regra sem forkar o pick: cosseno vive em [-1, 1], entao
+# Como neutralizar a regra sem forkar o pick: cosseno vive em [-1, 1], então
 # `mediana + NEUTRALIZED_MARGIN` fica sempre <= 0 e o piso absoluto (MIN_COS > 0) passa
-# a ser o unico filtro. Zerar a margem nao bastaria — a comparacao com a mediana
+# a ser o único filtro. Zerar a margem não bastaria — a comparação com a mediana
 # continuaria barrando tudo que estivesse abaixo dela.
 NEUTRALIZED_MARGIN = -2.0
 
 
 def load_index(index_dir: Path = DEFAULT_INDEX) -> tuple[dict, list]:
-    """Carrega o indice e os vetores. Devolve ({}, []) se ausente ou corrompido."""
+    """Carrega o índice e os vetores. Devolve ({}, []) se ausente ou corrompido."""
     try:
         with open(Path(index_dir) / "wiki-index.json", encoding="utf-8") as handle:
             index = json.load(handle)
@@ -87,7 +98,7 @@ def load_index(index_dir: Path = DEFAULT_INDEX) -> tuple[dict, list]:
 
 
 def embed_query(question: str, *, timeout: float = EMBED_TIMEOUT) -> list[float]:
-    """Embeda a pergunta via Ollama, normalizada. Levanta se o Ollama nao responder."""
+    """Embeda a pergunta via Ollama, normalizada. Levanta se o Ollama não responder."""
     request = urllib.request.Request(
         OLLAMA_URL.rstrip("/") + "/api/embed",
         data=json.dumps(
@@ -102,9 +113,9 @@ def embed_query(question: str, *, timeout: float = EMBED_TIMEOUT) -> list[float]
     return [x / norm for x in vector]
 
 
-# Numa pagina comum, tres secoes sao tres partes do mesmo argumento e a citacao util e a
-# pagina. Numa colecao de referencia, tres secoes sao tres VERBETES diferentes — deduplicar
-# por pagina ali jogaria fora duas respostas legitimas para caber uma.
+# Numa página comum, três seções são três partes do mesmo argumento e a citação útil é a
+# página. Numa coleção de referência, três seções são três VERBETES diferentes — deduplicar
+# por página ali jogaria fora duas respostas legítimas para caber uma.
 UNIDADE_E_A_SECAO = ("compendium",)
 
 
@@ -114,8 +125,21 @@ def _chave_de_dedupe(chunk: dict, fallback: str) -> str:
     return chunk.get("page_id", fallback)
 
 
+def chaves_de_citacao(hit: dict) -> set[str]:
+    """Formas pelas quais um resultado pode ser citado como alvo esperado.
+
+    Mora aqui, e não no teste, porque o golden e o calibrador precisam da MESMA regra:
+    quando só o teste sabia dela, o calibrador passou a marcar todo caso de compêndio
+    como MISS e a tabela de piso ficou inutilizável.
+    """
+    chaves = {hit["id"]}
+    if hit.get("section"):
+        chaves.add(f"{hit['id']}#{hit['section']}")
+    return chaves
+
+
 def dedupe_by_page(hits: list[dict], top_k: int) -> list[dict]:
-    """Mantem o melhor chunk por unidade de sentido — pagina, ou secao no compendio."""
+    """Mantém o melhor chunk por unidade de sentido — página, ou seção no compêndio."""
     best: dict[str, dict] = {}
     for hit in hits:
         chave = _chave_de_dedupe(hit["skill"], hit["id"])
@@ -129,14 +153,14 @@ def dedupe_by_page(hits: list[dict], top_k: int) -> list[dict]:
 def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_TOP_K) -> list[dict]:
     """Camada A pinada no topo, Camada B **sempre** completando. Nunca levanta.
 
-    Aqui a Camada A nao curto-circuita a B, ao contrario do skill-router. La o match
-    exato de nome de skill E a decisao: ha um vencedor e a rota acaba. Aqui um match
-    exato diz "este verbete e relevante", nao "mais nada e" — quem pergunta "o que fazer
-    quando o embedding cai no meio do pipeline" nomeia um verbete mas quer outra pagina.
-    Custa uma ida ao Ollama por consulta; e uma consulta deliberada, com 8s de folga.
+    Aqui a Camada A não curto-circuita a B, ao contrário do skill-router. Lá o match
+    exato de nome de skill É a decisão: há um vencedor e a rota acaba. Aqui um match
+    exato diz "este verbete é relevante", não "mais nada é" — quem pergunta "o que fazer
+    quando o embedding cai no meio do pipeline" nomeia um verbete mas quer outra página.
+    Custa uma ida ao Ollama por consulta; é uma consulta deliberada, com 8s de folga.
 
-    Sobre-busca antes de deduplicar: varios chunks da mesma pagina podem ocupar o topo,
-    e cortar em top_k antes da dedupe devolveria uma pagina so.
+    Sobre-busca antes de deduplicar: vários chunks da mesma página podem ocupar o topo,
+    e cortar em top_k antes da dedupe devolveria uma página só.
     """
     a_hits = sr.layer_a(question.lower(), pages)
     b_scored: list[dict] = []
@@ -157,14 +181,14 @@ def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_
 
 
 def snippet(page: dict, limit: int = SNIPPET_CHARS) -> str:
-    """Trecho citavel da pagina."""
+    """Trecho citável da página."""
     text = page.get("description", "")
     return f"{text[:limit].rsplit(' ', 1)[0]}..." if len(text) > limit else text
 
 
 def query(question: str, *, index_dir: Path = DEFAULT_INDEX,
           top_k: int = DEFAULT_TOP_K) -> dict:
-    """Executa a consulta e devolve resultado estruturado com citacoes."""
+    """Executa a consulta e devolve resultado estruturado com citações."""
     index, vecs = load_index(index_dir)
     chunks = index.get("pages", [])
     if not chunks:
@@ -181,7 +205,7 @@ def query(question: str, *, index_dir: Path = DEFAULT_INDEX,
             "type": page.get("type", "page"),
             "layer": hit["layer"],
             "score": score,
-            # Camada A e match exato de titulo/slug: confianca nao depende de cosseno.
+            # Camada A e match exato de titulo/slug: confiança não depende de cosseno.
             "confident": hit["layer"] == "A" or score >= CONFIDENT_COS,
             "wikilink": (
                 f"[[{page_id}#{page.get('heading')}]]"

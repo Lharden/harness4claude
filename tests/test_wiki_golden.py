@@ -1,9 +1,9 @@
-"""Acuracia da operacao query no golden set da wiki.
+"""Acuracia da operação query no golden set da wiki.
 
-Espelha tests/test_router_golden.py: requer indice real + Ollama, pula se ausentes.
+Espelha tests/test_router_golden.py: requer índice real + Ollama, pula se ausentes.
 Dois gates, um por banda:
-  - positives: a pagina alvo no top-3 em >= 80% dos casos (banda "vale mostrar")
-  - negatives: zero hits **confiantes** — pergunta fora do dominio nao pode fazer a
+  - positives: a página alvo no top-3 em >= 80% dos casos (banda "vale mostrar")
+  - negatives: zero hits **confiantes** — pergunta fora do domínio não pode fazer a
     wiki afirmar cobertura (banda "vale afirmar")
 """
 
@@ -41,21 +41,11 @@ def _golden() -> dict:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
-def _chaves(hit: dict) -> set[str]:
-    """Formas pelas quais um hit pode ser citado no golden.
-
-    No compendio a unidade de sentido e a secao: tres verbetes da mesma pagina sao tres
-    respostas diferentes, e casar so `compendio/02 recuperacao-busca` daria o caso por
-    certo sem provar que o verbete certo veio. Fora dele o alvo continua sendo a pagina.
-    """
-    chaves = {hit["id"]}
-    if hit.get("section"):
-        chaves.add(f"{hit['id']}#{hit['section']}")
-    return chaves
+_chaves = wq.chaves_de_citacao
 
 
 def test_golden_bem_formado() -> None:
-    """O golden set e artefato versionado: nao pode degradar sem alguem perceber."""
+    """O golden set e artefato versionado: não pode degradar sem alguém perceber."""
     golden = _golden()
 
     assert len(golden["positives"]) >= 15
@@ -68,7 +58,7 @@ def test_golden_bem_formado() -> None:
 
 @needs_stack
 def test_alvos_do_golden_existem_no_indice() -> None:
-    """Alvo renomeado ou apagado inutiliza o caso — falhar aqui, nao no hit rate."""
+    """Alvo renomeado ou apagado inutiliza o caso — falhar aqui, não no hit rate."""
     index, _ = wq.load_index()
     conhecidos = {chunk["page_id"] for chunk in index["pages"]}
     conhecidos |= {chunk["id"] for chunk in index["pages"]}

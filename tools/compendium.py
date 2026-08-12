@@ -12,7 +12,7 @@ ou o defeito tem nome e linha.
 
 Três campos além do schema original, e são eles que separam consultar de aprender:
 
-    intuicao         a analogia que faz entender, não a definição formal
+    intuição         a analogia que faz entender, não a definição formal
     onde_no_codigo   `arquivo:símbolo` real de um dos projetos — verificável
     quando_nao_usar  o limite. É onde mora o entendimento de verdade: saber o nome
                      de uma técnica é diferente de saber quando ela não serve.
@@ -20,7 +20,7 @@ Três campos além do schema original, e são eles que separam consultar de apre
 Uso:
     python tools/compendium.py check                    # valida o contrato
     python tools/compendium.py build [--write]          # gera as páginas
-    python tools/compendium.py candidates [--gate]     # o que apareceu e nao esta aqui
+    python tools/compendium.py candidates [--gate]     # o que apareceu e não esta aqui
 """
 
 from __future__ import annotations
@@ -273,6 +273,10 @@ def render_collection(registry: dict, categoria: dict, hoje: str) -> str:
     """Uma página por categoria; cada verbete é uma seção `##`."""
     termos = _por_categoria(registry).get(categoria["id"], [])
     categorias = {c["id"]: c for c in registry["categories"]}
+    # O `kind` é um id kebab-case (`padrao`, `metodo`); quem lê a página quer o rótulo
+    # ("Padrão de projeto"). Imprimir o id deixava a linha de metadados sem acento e
+    # com vocabulário de máquina, no meio de uma coleção escrita para ser lida.
+    kinds = {k["id"]: k.get("label", k["id"]) for k in registry.get("kinds", [])}
     linhas = [
         "---",
         "type: compendium",
@@ -318,7 +322,8 @@ def render_collection(registry: dict, categoria: dict, hoje: str) -> str:
             linhas += [f"> - {fonte}" for fonte in termo["sources"]]
             linhas.append("")
         linhas += [
-            f"*{termo['kind']} · {termo['status']} · revisado em {termo['reviewed']}*",
+            (f"*{kinds.get(termo['kind'], termo['kind'])} · {termo['status']}"
+             f" · revisado em {termo['reviewed']}*"),
             "",
         ]
 
@@ -496,6 +501,10 @@ _PARECE_ARQUIVO = re.compile(r"\.(py|md|sh|json|toml|yaml|yml|txt|js|mjs|tex|csv
 _PARECE_IDENTIFICADOR = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 # Sequências tipo `P-1.b`, `a-1`, `t-20260728` — id de tarefa, não conceito.
 _PARECE_ID = re.compile(r"^[a-z]?-?\d|^[a-z]-\d", re.I)
+# Referência interna de documento: `US-2`, `AC-1`, `p.1`, `top-3`. O separador é o que a
+# distingue de nome de técnica — `BM25`, `HNSW`, `p50` e `LoRA` colam letra e dígito, e
+# uma regra sem o separador mataria os quatro.
+_PARECE_REFERENCIA = re.compile(r"^[a-z]{1,4}[-.]\d+$", re.I)
 
 # Duas ocorrências ainda era ruído: 368 tokens apareciam exatamente duas vezes e quase
 # nenhum era conceito. Três é o ponto onde a repetição começa a significar alguma coisa.
@@ -513,6 +522,8 @@ def _forma_valida(token: str) -> bool:
     if len(token) < 3 or _PARECE_ARQUIVO.search(token):
         return False
     if _PARECE_IDENTIFICADOR.match(token) or _PARECE_ID.match(token):
+        return False
+    if _PARECE_REFERENCIA.match(token):
         return False
     return not ("/" in token or "\\" in token)
 

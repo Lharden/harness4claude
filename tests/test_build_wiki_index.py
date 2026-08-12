@@ -1,4 +1,4 @@
-"""Testes do build_wiki_index — chunking por secao e frescor do indice."""
+"""Testes do build_wiki_index — chunking por seção e frescor do índice."""
 
 import json
 import os
@@ -92,7 +92,7 @@ def test_aliases_curados_entram_no_primeiro_chunk(tmp_path: Path) -> None:
     assert "prior art" in chunks[0]["aliases"]
 
 
-# --- cabecalho como nome canonico -----------------------------------------
+# --- cabeçalho como nome canônico -----------------------------------------
 
 
 COMPENDIO_FM = "---\ntype: compendium\nupdated: 2026-01-01\nstatus: active\n---\n\n"
@@ -121,7 +121,7 @@ def test_cabecalho_estrutural_nao_vira_alias(tmp_path: Path) -> None:
 
 
 def test_alias_curto_sem_parentetico(tmp_path: Path) -> None:
-    """A Camada A procura o alias DENTRO do prompt: rotulo longo nunca casa com o curto."""
+    """A Camada A procura o alias DENTRO do prompt: rótulo longo nunca casa com o curto."""
     escrever_verbete(tmp_path, "compendio/03 confiabilidade.md", "Disjuntor (circuit breaker)")
 
     aliases = chunks_of(tmp_path, "compendio/03 confiabilidade.md")[0]["aliases"]

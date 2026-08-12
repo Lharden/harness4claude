@@ -1,7 +1,7 @@
-"""Testes do wiki_accents — restauracao de acentos que nao chuta.
+"""Testes do wiki_accents — restauração de acentos que não chuta.
 
-A ferramenta reescreve prosa do usuario. O risco nao e deixar de corrigir: e **corromper
-texto ja correto**. Estes testes travam as fronteiras — o que ela NAO pode tocar pesa
+A ferramenta reescreve prosa do usuário. O risco não e deixar de corrigir: e **corromper
+texto já correto**. Estes testes travam as fronteiras — o que ela NÃO pode tocar pesa
 mais que o que ela corrige.
 """
 
@@ -21,7 +21,7 @@ from tools.wiki_accents import (
 FM = "---\ntype: concept\ncreated: 2026-01-01\nupdated: 2026-01-01\nstatus: active\n---\n\n"
 
 
-# --- dicionario explicito -------------------------------------------------
+# --- dicionário explicito -------------------------------------------------
 
 
 def test_troca_palavra_sem_homografo() -> None:
@@ -42,14 +42,14 @@ def test_preserva_caixa() -> None:
 
 
 def test_sufixo_cobre_palavra_fora_do_dicionario() -> None:
-    """O ponto das regras: cobrir o que ainda nao foi escrito."""
+    """O ponto das regras: cobrir o que ainda não foi escrito."""
     novo, n = fix_text("A consolidacao das operacoes e reversivel.")
 
     assert "consolidação" in novo
     assert "operações" in novo
     assert "reversível" in novo
     assert n == 3
-    assert "consolidacao" not in SEGURAS  # nenhuma delas esta no dicionario
+    assert "consolidacao" not in SEGURAS  # nenhuma delas esta no dicionário
 
 
 def test_sufixo_hiato_ui() -> None:
@@ -60,14 +60,14 @@ def test_sufixo_hiato_ui() -> None:
 
 
 def test_sufixo_com_excecao_fica_de_fora() -> None:
-    """"-logia" e "-aria" tem palavra sem acento — sufixo com excecao nao e regra."""
+    """"-logia" e "-aria" tem palavra sem acento — sufixo com exceção não e regra."""
     novo, n = fix_text("A metodologia e a cronologia da maquinaria.")
 
     assert n == 0
     assert "metodologia" in novo
 
 
-# --- o que NAO pode ser tocado --------------------------------------------
+# --- o que NÃO pode ser tocado --------------------------------------------
 
 
 def test_nao_toca_frontmatter() -> None:
@@ -109,7 +109,7 @@ def test_nao_toca_url() -> None:
 
 
 def test_nao_toca_caminho_de_arquivo() -> None:
-    """Barra antes ou depois impede o match — caminho nao e prosa."""
+    """Barra antes ou depois impede o match — caminho não e prosa."""
     novo, n = fix_text("Ver docs/decisao/versao.md no repo.")
 
     assert n == 0
@@ -139,7 +139,7 @@ def test_ambigua_dentro_de_codigo_nao_e_relatada() -> None:
 
 
 def test_listas_nao_se_sobrepoem() -> None:
-    """Palavra em SEGURAS seria trocada; em AMBIGUAS, so relatada. Nas duas, contradicao."""
+    """Palavra em SEGURAS seria trocada; em AMBIGUAS, so relatada. Nas duas, contradição."""
     assert not (set(SEGURAS) & set(AMBIGUAS))
 
 
@@ -180,7 +180,7 @@ def test_subarvore_gerada_fica_de_fora(tmp_path: Path) -> None:
 
 
 def test_idempotente(tmp_path: Path) -> None:
-    """Rodar duas vezes nao pode reacentuar o que ja esta acentuado."""
+    """Rodar duas vezes não pode reacentuar o que já esta acentuado."""
     texto = "A decisao das operacoes nao e reversivel."
 
     uma, n1 = fix_text(texto)
@@ -188,3 +188,22 @@ def test_idempotente(tmp_path: Path) -> None:
 
     assert uma == duas
     assert n1 > 0 and n2 == 0
+
+
+def test_digrafo_gu_qu_cu_nao_recebe_hiato() -> None:
+    """O acento em `-uído` marca hiato; depois de `gu`/`qu`/`cu` o u não e vogal plena."""
+    texto = "tres falhas seguidas, a meta conseguida, e tome cuidado"
+
+    resultado, _ = fix_text(texto)
+
+    assert "seguidas" in resultado
+    assert "conseguida" in resultado
+    assert "cuidado" in resultado
+
+
+def test_hiato_legitimo_continua_acentuado() -> None:
+    """A guarda não pode custar o caso que a regra existe para pegar."""
+    resultado, _ = fix_text("o indice construido com chaves distribuidas")
+
+    assert "construído" in resultado
+    assert "distribuídas" in resultado

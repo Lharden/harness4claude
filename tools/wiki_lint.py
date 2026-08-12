@@ -1,4 +1,4 @@
-"""Health check read-only da wiki AI-Brain (padrao LLM Wiki).
+"""Health check read-only da wiki AI-Brain (padrão LLM Wiki).
 
 Reporta, nunca corrige — conforme AI-Brain/CLAUDE.md ("NUNCA corrige
 automaticamente. So reporta."). Mesmo contrato de saida do vault_sync_doctor:
@@ -7,7 +7,7 @@ JSON estruturado no stdout, `ready` booleano, exit 1 quando ha erros.
 Uso:
     python tools/wiki_lint.py [--root DIR] [--stale-days N] [--report]
 Env: AI_BRAIN_PATH / VAULT_PATH resolvem o sub-vault quando --root e omitido,
-na mesma precedencia do scripts/vault_sync.py.
+na mesma precedência do scripts/vault_sync.py.
 """
 
 from __future__ import annotations
@@ -22,32 +22,32 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-# Paginas meta: existem para serem o indice/registro, nao para receber in-links.
+# Páginas meta: existem para serem o indice/registro, não para receber in-links.
 META_PAGES = {"index.md", "log.md"}
 
-# `type: index` no frontmatter cumpre o mesmo papel em qualquer pasta: um indice existe
-# para ser linkado DE, nao PARA. Sem esta regra todo indice gerado nasce orfao, e a
-# "correcao" seria linka-lo de algum lugar artificial so para calar o lint.
+# `type: index` no frontmatter cumpre o mesmo papel em qualquer pasta: um índice existe
+# para ser linkado DE, não PARA. Sem esta regra todo índice gerado nasce órfão, e a
+# "correção" seria linka-lo de algum lugar artificial so para calar o lint.
 _INDEX_TYPE_RE = re.compile(r"^type:\s*index\s*$", re.M)
 _FRONTMATTER_BLOCK_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 
-# Subarvore gerada por maquina (graphify). Vale como alvo de link, mas nao entra
-# nas checagens de frontmatter/orfa/estagnada — 900+ notas inundariam o relatorio.
+# Subarvore gerada por maquina (graphify). Vale como alvo de link, mas não entra
+# nas checagens de frontmatter/orfa/estagnada — 900+ notas inundariam o relatório.
 GENERATED_SUBTREE = "graphs"
 
-# Alvos que aparecem em exemplos de schema, nao sao links reais.
+# Alvos que aparecem em exemplos de schema, não são links reais.
 PLACEHOLDER_BASENAMES = {"page-name", "link", "none", "slug", "..."}
 
 _WIKILINK_RE = re.compile(r"\[\[([^\]\n]+?)\]\]")
 
 DEFAULT_STALE_DAYS = 90
 
-# A partir de quantas paginas uma subarvore precisa de uma porta `00 ...` de entrada.
+# A partir de quantas páginas uma subarvore precisa de uma porta `00 ...` de entrada.
 MIN_PAGES_FOR_MOC = 5
 
 # Campos que o Dataview consulta e que o schema do AI-Brain/CLAUDE.md exige. `type`
-# classifica; `updated` ordena. Sem eles a pagina existe mas nao aparece em consulta
-# nenhuma — presente no disco, ausente na navegacao.
+# classifica; `updated` ordena. Sem eles a página existe mas não aparece em consulta
+# nenhuma — presente no disco, ausente na navegação.
 REQUIRED_FIELDS = ("type", "updated")
 
 
@@ -72,7 +72,7 @@ class _Report:
 
 
 def _default_root() -> Path:
-    """Resolve o sub-vault AI-Brain na mesma precedencia do vault_sync.py."""
+    """Resolve o sub-vault AI-Brain na mesma precedência do vault_sync.py."""
     ai_brain = os.environ.get("AI_BRAIN_PATH")
     if ai_brain:
         return Path(ai_brain)
@@ -94,10 +94,10 @@ def has_frontmatter(path: Path) -> bool:
 def missing_fields(path: Path) -> list[str]:
     """Campos do schema ausentes no frontmatter.
 
-    O lint checava presenca de frontmatter, nao seu conteudo — entao tres paginas
+    O lint checava presença de frontmatter, não seu conteúdo — então três páginas
     escritas a mao em junho passaram anos com `tipo:`/`data:` em portugues em vez de
-    `type:`/`updated:`. Elas eram validas para o lint e **invisiveis para o Dataview**,
-    que consulta por nome de campo. Presenca sem contrato nao e validacao.
+    `type:`/`updated:`. Elas eram validas para o lint e **invisíveis para o Dataview**,
+    que consulta por nome de campo. Presença sem contrato não e validação.
     """
     match = _FRONTMATTER_BLOCK_RE.match(_read(path))
     if not match:
@@ -107,7 +107,7 @@ def missing_fields(path: Path) -> list[str]:
 
 
 def is_index_page(path: Path) -> bool:
-    """True se a pagina se declara `type: index` no frontmatter."""
+    """True se a página se declara `type: index` no frontmatter."""
     match = _FRONTMATTER_BLOCK_RE.match(_read(path))
     return bool(match and _INDEX_TYPE_RE.search(match.group(1)))
 
@@ -134,7 +134,7 @@ def _read(path: Path) -> str:
 
 
 def _wiki_pages(root: Path) -> list[Path]:
-    """Paginas de wiki/ sujeitas ao lint (exclui a subarvore gerada)."""
+    """Páginas de wiki/ sujeitas ao lint (exclui a subarvore gerada)."""
     wiki = root / "wiki"
     if not wiki.is_dir():
         return []
@@ -159,7 +159,7 @@ def _rel(path: Path, root: Path) -> str:
 def _link_resolver(root: Path):
     """Constroi um resolvedor de wikilink no comportamento do Obsidian.
 
-    Tenta, nesta ordem: caminho relativo a wiki/, caminho relativo a pagina de
+    Tenta, nesta ordem: caminho relativo a wiki/, caminho relativo a página de
     origem (cobre `../` e saidas para output/), e por fim match de basename em
     todo o sub-vault.
     """
@@ -179,7 +179,7 @@ def _link_resolver(root: Path):
 
 
 def inbox_redundant_pairs(root: Path) -> list[str]:
-    """Notas de raw/inbox que ja tem gemea `.done.md` — captura duplicada."""
+    """Notas de raw/inbox que já tem gemea `.done.md` — captura duplicada."""
     inbox = root / "raw" / "inbox"
     if not inbox.is_dir():
         return []
@@ -194,13 +194,13 @@ def inbox_redundant_pairs(root: Path) -> list[str]:
 def subtrees_without_moc(root: Path, *, minimo: int = MIN_PAGES_FOR_MOC) -> list[str]:
     """Subarvores de `wiki/` grandes o bastante para precisar de porta de entrada.
 
-    Uma pasta com uma ou duas paginas se le direto; a partir de um punhado, quem chega
-    sem contexto precisa de um `00 ...` dizendo por onde comecar. Aviso, nao erro: e um
-    julgamento editorial, e o lint nao decide isso por voce.
+    Uma pasta com uma ou duas páginas se le direto; a partir de um punhado, quem chega
+    sem contexto precisa de um `00 ...` dizendo por onde comecar. Aviso, não erro: e um
+    julgamento editorial, e o lint não decide isso por você.
 
-    So vale da profundidade 2 para baixo. As areas de primeiro nivel (`projects/`,
-    `specs/`…) ja tem porta: o MOC raiz cobre todas por construcao. Cobrar um `00 ...`
-    delas seria pedir duplicata do que o MOC ja diz.
+    So vale da profundidade 2 para baixo. As áreas de primeiro nível (`projects/`,
+    `specs/`…) já tem porta: o MOC raiz cobre todas por construção. Cobrar um `00 ...`
+    delas seria pedir duplicata do que o MOC já diz.
     """
     wiki = root / "wiki"
     if not wiki.is_dir():
@@ -221,10 +221,10 @@ def subtrees_without_moc(root: Path, *, minimo: int = MIN_PAGES_FOR_MOC) -> list
 
 
 def stray_wiki_tree(root: Path) -> bool:
-    """True se ha uma arvore `wiki/` irma do AI-Brain — regressao do bug VAULT_PATH.
+    """True se ha uma arvore `wiki/` irma do AI-Brain — regressão do bug VAULT_PATH.
 
-    So acusa quando a assinatura bate (log.md ou specs/ dentro), para nao
-    confundir com uma pasta `wiki` legitima do usuario no vault.
+    So acusa quando a assinatura bate (log.md ou specs/ dentro), para não
+    confundir com uma pasta `wiki` legítima do usuário no vault.
     """
     sibling = root.parent / "wiki"
     if not sibling.is_dir():
@@ -233,7 +233,7 @@ def stray_wiki_tree(root: Path) -> bool:
 
 
 def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[str, Any]:
-    """Analisa a wiki e devolve o resultado estruturado. Nao escreve nada."""
+    """Analisa a wiki e devolve o resultado estruturado. Não escreve nada."""
     root = root.resolve()
     report = _R = _Report()
     pages = _wiki_pages(root)
@@ -244,7 +244,7 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
 
     resolves = _link_resolver(root)
     lintable = [page for page in pages if page.name not in META_PAGES]
-    # Indices entram no lint de frontmatter e cobertura, mas nao na checagem de in-link.
+    # Índices entram no lint de frontmatter e cobertura, mas não na checagem de in-link.
     navegacao = {page for page in pages if is_index_page(page)}
 
     # --- frontmatter ------------------------------------------------------
@@ -255,7 +255,7 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
     campos_faltando: dict[str, list[str]] = {}
     for page in pages:
         if not has_frontmatter(page):
-            continue  # ja reportado acima; nao duplicar o mesmo defeito
+            continue  # já reportado acima; não duplicar o mesmo defeito
         ausentes = missing_fields(page)
         if ausentes:
             rel = _rel(page, root)
@@ -268,16 +268,16 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
             )
 
     # --- wikilinks e os DOIS grafos de in-link ----------------------------
-    # `alcancavel` conta link de qualquer pagina, indice inclusive: responde "da para
-    # chegar la?". `integrado` so conta link vindo de pagina de conteudo: responde "isto
+    # `alcancavel` conta link de qualquer página, índice inclusive: responde "da para
+    # chegar la?". `integrado` so conta link vindo de página de conteúdo: responde "isto
     # esta tecido no conhecimento, ou so catalogado?".
     #
     # Separar os dois e o que permite existir um MOC que linka tudo. Com um grafo so, o
-    # primeiro indice generico zeraria a checagem de orfa para sempre — todo mundo
-    # linkado, ninguem integrado, e o instrumento cego.
+    # primeiro índice genérico zeraria a checagem de órfã para sempre — todo mundo
+    # linkado, ninguém integrado, e o instrumento cego.
     alcancavel: dict[str, int] = {_rel(page, root): 0 for page in pages}
     integrado: dict[str, int] = {_rel(page, root): 0 for page in pages}
-    # Chaveado pelo ultimo segmento: `../projects/x` e `projects/x` sao o mesmo alvo.
+    # Chaveado pelo último segmento: `../projects/x` e `projects/x` são o mesmo alvo.
     broken: dict[str, set[str]] = {}
     index_path = root / "wiki" / "index.md"
     index_targets: list[str] = []
@@ -317,7 +317,7 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
     for target in phantom_entries:
         _R.add("error", "index_phantom", f"index.md aponta para pagina inexistente: {target}")
 
-    # --- inalcancaveis, nao-integradas e estagnadas -----------------------
+    # --- inalcancáveis, nao-integradas e estagnadas -----------------------
     cutoff = time.time() - stale_days * 86400
     unreachable, orphans, stale = [], [], []
     for page in lintable:
@@ -348,7 +348,7 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
             rel,
         )
 
-    # --- inbox e arvore orfa ----------------------------------------------
+    # --- inbox e arvore órfã ----------------------------------------------
     redundant = inbox_redundant_pairs(root)
     for name in redundant:
         _R.add("warning", "inbox_redundant", f"raw/inbox tem par redundante .md/.done.md: {name}")
@@ -403,7 +403,7 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
 
 
 def render_report(result: dict[str, Any]) -> str:
-    """Renderiza o relatorio priorizado em Markdown."""
+    """Renderiza o relatório priorizado em Markdown."""
     summary = result["summary"]
     lines = [
         f"# Wiki Lint — {date.today().isoformat()}",

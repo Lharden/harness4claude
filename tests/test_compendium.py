@@ -17,6 +17,7 @@ from tools.compendium import (
     find_candidates,
     known_tokens,
     load_registry,
+    render_collection,
     render_map,
     validate_registry,
     verify_code_refs,
@@ -68,7 +69,7 @@ def test_registry_minimo_e_valido(tmp_path: Path) -> None:
 
 
 def test_campo_didatico_e_obrigatorio(tmp_path: Path) -> None:
-    """Sem intuicao e sem limite, o verbete vira dicionario comum."""
+    """Sem intuição e sem limite, o verbete vira dicionário comum."""
     sem_intuicao = BASE.replace('intuicao = "Um vetor por pagina vira centroide."\n', "")
     sem_limite = BASE.replace('quando_nao_usar = "Documento curto e monotematico."\n', "")
 
@@ -99,7 +100,7 @@ def test_relacao_para_alvo_inexistente_e_erro(tmp_path: Path) -> None:
 
 
 def test_label_com_caractere_que_quebra_ancora(tmp_path: Path) -> None:
-    """`[[pagina#termo]]` deixa de resolver e o verbete fica inalcancavel."""
+    """`[[pagina#termo]]` deixa de resolver e o verbete fica inalcancável."""
     corpo = BASE.replace('label = "Chunking"', 'label = "Chunking [beta]"')
 
     assert any("heading do Obsidian" in e for e in validate_registry(carregar(tmp_path, corpo)))
@@ -124,7 +125,7 @@ def test_referencia_de_codigo_valida_passa(tmp_path: Path) -> None:
 
 
 def test_simbolo_renomeado_e_acusado(tmp_path: Path) -> None:
-    """O campo so vale se apodrecer ruidosamente — senao aponta para funcao de 2024."""
+    """O campo so vale se apodrecer ruidosamente — senao aponta para função de 2024."""
     raiz = tmp_path / "repo"
     (raiz / "src").mkdir(parents=True)
     (raiz / "src" / "a.py").write_text("def outro_nome(): ...\n", encoding="utf-8")
@@ -145,7 +146,7 @@ def test_arquivo_removido_e_acusado(tmp_path: Path) -> None:
 
 
 def test_repo_ausente_na_maquina_nao_e_falso_alarme(tmp_path: Path) -> None:
-    """O vault e multi-maquina: repo ausente aqui nao torna o verbete errado."""
+    """O vault e multi-maquina: repo ausente aqui não torna o verbete errado."""
     registry = {"terms": [{"id": "t", "onde_no_codigo": "outro-repo/x.py:y"}]}
 
     assert verify_code_refs(registry, {"repo": tmp_path}) == []
@@ -174,7 +175,7 @@ def test_build_e_idempotente(tmp_path: Path) -> None:
 
 
 def test_mapa_so_existe_quando_ha_relacao(tmp_path: Path) -> None:
-    """Mapa sem aresta e uma pagina vazia fingindo ser diagrama."""
+    """Mapa sem aresta e uma página vazia fingindo ser diagrama."""
     registry = carregar(tmp_path)
     categoria = registry["categories"][0]
 
@@ -182,7 +183,7 @@ def test_mapa_so_existe_quando_ha_relacao(tmp_path: Path) -> None:
 
 
 def test_mapa_carrega_o_verbo_da_relacao(tmp_path: Path) -> None:
-    """E o que o graph view nativo do Obsidian nao faz: mostrar COMO se ligam."""
+    """E o que o graph view nativo do Obsidian não faz: mostrar COMO se ligam."""
     corpo = BASE + textwrap.dedent("""
         relacoes = [{ target = "cosseno", relation = "é medido por" }]
 
@@ -245,7 +246,7 @@ def test_ignorado_nao_reaparece(tmp_path: Path) -> None:
 
 
 def test_identificador_e_caminho_nao_sao_candidatos(tmp_path: Path) -> None:
-    """A primeira versao devolveu 1594 itens, quase todos assim."""
+    """A primeira versão devolveu 1594 itens, quase todos assim."""
     fonte = tmp_path / "a.md"
     fonte.write_text(
         ("Rodar tmp_path e os.path.join com SKILL.md e state.json. " * (MIN_OCORRENCIAS + 1)),
@@ -281,3 +282,14 @@ def test_bloco_de_codigo_nao_gera_candidato(tmp_path: Path) -> None:
     fonte.write_text("```python\nHNSW = 1\nHNSW = 2\nHNSW = 3\n```\n", encoding="utf-8")
 
     assert find_candidates([fonte], set(), set()) == []
+
+
+def test_metadados_mostram_o_rotulo_e_nao_o_id(tmp_path: Path) -> None:
+    """`padrao` é chave de máquina; a página é lida por gente, que quer "Padrão"."""
+    corpo = BASE.replace('label = "Tecnica"', 'label = "Técnica de recuperação"')
+    registry = carregar(tmp_path, corpo)
+
+    pagina = render_collection(registry, registry["categories"][0], "2026-08-12")
+
+    assert "*Técnica de recuperação · confirmado" in pagina
+    assert "*tecnica ·" not in pagina

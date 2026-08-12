@@ -1,13 +1,13 @@
 """Gera o index.md da wiki AI-Brain a partir do disco.
 
-Contraparte do wiki_lint: o lint acusa divergencia entre disco e indice nos dois
-sentidos, este script resolve. Sem um gerador, o indice volta a apodrecer — foi o que
-aconteceu entre 2026-05 e 2026-08 (54 de 63 paginas ficaram fora, 5 entradas apontavam
-para paginas inexistentes).
+Contraparte do wiki_lint: o lint acusa divergência entre disco e índice nos dois
+sentidos, este script resolve. Sem um gerador, o índice volta a apodrecer — foi o que
+aconteceu entre 2026-05 e 2026-08 (54 de 63 páginas ficaram fora, 5 entradas apontavam
+para páginas inexistentes).
 
 Uso:
     python tools/wiki_index.py [--root DIR] [--write]
-Sem --write, imprime o indice no stdout (diff-avel contra o atual).
+Sem --write, imprime o índice no stdout (diff-avel contra o atual).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pathlib import Path
 META_PAGES = {"index.md", "log.md"}
 GENERATED_SUBTREE = "graphs"
 
-# Ordem de leitura do indice: da fonte crua para a sintese, depois operacao.
+# Ordem de leitura do índice: da fonte crua para a síntese, depois operação.
 SECTIONS: tuple[tuple[str, str, str], ...] = (
     ("sources", "Sources", "1 página por fonte processada."),
     ("entities", "Entities", "pessoas, produtos, ferramentas, organizações."),
@@ -47,7 +47,7 @@ SUMMARY_MAX = 95
 
 
 def summarize(path: Path, *, limit: int = SUMMARY_MAX) -> str:
-    """Primeira linha de prosa da pagina, sem markup, truncada em palavra inteira."""
+    """Primeira linha de prosa da página, sem markup, truncada em palavra inteira."""
     body = _FRONTMATTER_RE.sub("", path.read_text(encoding="utf-8", errors="replace"))
     for raw in body.splitlines():
         line = raw.strip()
@@ -62,7 +62,7 @@ def summarize(path: Path, *, limit: int = SUMMARY_MAX) -> str:
 
 
 def section_pages(wiki: Path, folder: str) -> list[Path]:
-    """Paginas de uma secao, ordenadas por subpasta e nome."""
+    """Páginas de uma seção, ordenadas por subpasta e nome."""
     directory = wiki / folder
     if not directory.is_dir():
         return []
@@ -73,7 +73,7 @@ def section_pages(wiki: Path, folder: str) -> list[Path]:
 
 
 def build_index(root: Path, *, today: str | None = None) -> str:
-    """Monta o conteudo completo do index.md."""
+    """Monta o conteúdo completo do index.md."""
     wiki = root / "wiki"
     stamp = today or date.today().isoformat()
     lines = [
@@ -95,7 +95,7 @@ def build_index(root: Path, *, today: str | None = None) -> str:
         "",
     ]
 
-    # Paginas na raiz de wiki/ (o MOC, por exemplo) nao pertencem a nenhuma secao. Sem
+    # Páginas na raiz de wiki/ (o MOC, por exemplo) não pertencem a nenhuma seção. Sem
     # esta entrada elas ficavam fora do index e o lint as acusava — corretamente.
     entrada = sorted(
         (p for p in wiki.glob("*.md") if p.name not in META_PAGES),
@@ -185,9 +185,9 @@ def build_specs_index(root: Path, *, today: str | None = None) -> str:
     """Índice de `wiki/specs/` agrupado por frente.
 
     Existe por um motivo mecanico: spec espelhada chega ao vault sem in-link de lugar
-    nenhum, e 16 delas viraram orfas. Linkar a mao nao escala — uma spec nova nasceria
-    orfa de novo. Aqui o vinculo e derivado do carimbo `project:` que o `vault_sync`
-    aplica na copia, entao acompanha o disco sozinho.
+    nenhum, e 16 delas viraram órfãs. Linkar a mao não escala — uma spec nova nasceria
+    órfã de novo. Aqui o vinculo e derivado do carimbo `project:` que o `vault_sync`
+    aplica na copia, então acompanha o disco sozinho.
     """
     wiki = root / "wiki"
     specs = [p for p in section_pages(wiki, "specs") if p.name != SPECS_INDEX_NAME]
@@ -216,7 +216,7 @@ def build_specs_index(root: Path, *, today: str | None = None) -> str:
         "",
     ]
 
-    # "sem frente" por ultimo: e a fila de triagem, nao uma frente de verdade.
+    # "sem frente" por último: e a fila de triagem, não uma frente de verdade.
     ordem = sorted(k for k in por_frente if k != SEM_FRENTE)
     if SEM_FRENTE in por_frente:
         ordem.append(SEM_FRENTE)
@@ -239,7 +239,7 @@ def build_specs_index(root: Path, *, today: str | None = None) -> str:
 
 
 def default_root() -> Path:
-    """Resolve o sub-vault AI-Brain na precedencia do vault_sync.py."""
+    """Resolve o sub-vault AI-Brain na precedência do vault_sync.py."""
     ai_brain = os.environ.get("AI_BRAIN_PATH")
     if ai_brain:
         return Path(ai_brain)
@@ -250,7 +250,7 @@ def default_root() -> Path:
 
 
 def _index_is_stale(root: Path) -> bool | None:
-    """True/False se der para checar o wiki-index; None quando indisponivel."""
+    """True/False se der para checar o wiki-index; None quando indisponível."""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
         import build_wiki_index
@@ -263,9 +263,9 @@ def _index_is_stale(root: Path) -> bool | None:
 def build_digest(root: Path, *, max_decisions: int = 12) -> str:
     """Bloco curto para injetar no SessionStart.
 
-    O index.md inteiro passa de 10 KB — caro demais para entrar em toda sessao. Este
-    digest entrega o que faz diferenca no comeco: que o vault existe, o que ele cobre,
-    quais decisoes ja estao registradas (a superficie de prior-art) e como consultar.
+    O index.md inteiro passa de 10 KB — caro demais para entrar em toda sessão. Este
+    digest entrega o que faz diferença no comeco: que o vault existe, o que ele cobre,
+    quais decisoes já estao registradas (a superficie de prior-art) e como consultar.
     """
     wiki = root / "wiki"
     if not wiki.is_dir():

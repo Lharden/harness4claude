@@ -1,17 +1,17 @@
 """Gera o MOC raiz do AI-Brain — a porta de entrada humana do vault.
 
-Por que existe, sendo que `index.md` ja lista tudo: sao artefatos para leitores
-diferentes. O `index.md` e um **catalogo** — plano, alfabetico, uma linha por pagina,
-otimo para grep e para o agente. O MOC e um **mapa de intencao**: agrupa por pergunta
+Por que existe, sendo que `index.md` já lista tudo: são artefatos para leitores
+diferentes. O `index.md` e um **catalogo** — plano, alfabetico, uma linha por página,
+otimo para grep e para o agente. O MOC e um **mapa de intenção**: agrupa por pergunta
 ("como o sistema funciona", "o que decidimos") em vez de por pasta, e responde primeiro
 a quem chega sem saber o que procurar.
 
 Cada porta traz duas visoes da mesma coisa:
   - uma **consulta Dataview**, que vive sozinha e ordena pelo que mudou mais recente;
   - uma **espinha de wikilinks** gerada, que funciona sem plugin, entra no grafo do
-    Obsidian e e legivel por grep.
+    Obsidian e e legível por grep.
 
-O bloco Dataview nao substitui a espinha: Dataview so renderiza dentro do Obsidian, e
+O bloco Dataview não substitui a espinha: Dataview so renderiza dentro do Obsidian, e
 metade dos leitores deste vault e um agente lendo markdown cru.
 
 Uso:
@@ -31,7 +31,7 @@ from wiki_lint import analyze_wiki
 
 MOC_NAME = "00 MOC AI-Brain.md"
 
-# Cada porta e uma pergunta, nao uma pasta. `areas` sao as pastas que a respondem.
+# Cada porta e uma pergunta, não uma pasta. `areas` são as pastas que a respondem.
 PORTAS: tuple[dict, ...] = (
     {
         "titulo": "Como o sistema funciona",
@@ -60,13 +60,13 @@ PORTAS: tuple[dict, ...] = (
     },
 )
 
-# Uma pagina por area no MOC seria ilegivel em `projects/` (39 paginas). O corte mostra
+# Uma página por área no MOC seria ilegível em `projects/` (39 páginas). O corte mostra
 # as principais e remete ao index.md, que e o catalogo completo.
 MAX_POR_AREA = 12
 
 
 def dataview_block(root: Path, areas: tuple[str, ...]) -> list[str]:
-    """Consulta Dataview cobrindo as areas da porta, ordenada pelo que mudou por ultimo."""
+    """Consulta Dataview cobrindo as áreas da porta, ordenada pelo que mudou por último."""
     fontes = " or ".join(f'"{root.name}/wiki/{area}"' for area in areas)
     return [
         "```dataview",
@@ -80,14 +80,14 @@ def dataview_block(root: Path, areas: tuple[str, ...]) -> list[str]:
 
 
 def area_spine(root: Path, area: str) -> list[str]:
-    """Wikilinks da area. MOCs de subprojeto vem primeiro: sao a entrada natural."""
+    """Wikilinks da área. MOCs de subprojeto vem primeiro: são a entrada natural."""
     wiki = root / "wiki"
     paginas = [p for p in section_pages(wiki, area) if p.name != SPECS_INDEX_NAME]
     if not paginas:
         return []
-    # Profundidade primeiro: em `projects/` as paginas rasas sao as frentes em si, e as
-    # fundas sao capitulos internos (`plans/`, `projects/`). Ordenar so por nome enterrava
-    # as frentes sob os capitulos de outra frente.
+    # Profundidade primeiro: em `projects/` as páginas rasas são as frentes em si, e as
+    # fundas são capítulos internos (`plans/`, `projects/`). Ordenar so por nome enterrava
+    # as frentes sob os capítulos de outra frente.
     paginas.sort(
         key=lambda p: (
             len(p.relative_to(wiki).parts),
@@ -107,7 +107,7 @@ def area_spine(root: Path, area: str) -> list[str]:
 
 
 def health_panel(root: Path) -> list[str]:
-    """Numeros do lint no proprio vault: deriva visivel sem abrir terminal."""
+    """Números do lint no próprio vault: deriva visível sem abrir terminal."""
     try:
         resultado = analyze_wiki(root)
     except Exception:
@@ -136,7 +136,7 @@ def health_panel(root: Path) -> list[str]:
 
 
 def build_moc(root: Path, *, today: str | None = None) -> str:
-    """Monta o conteudo do MOC raiz."""
+    """Monta o conteúdo do MOC raiz."""
     stamp = today or date.today().isoformat()
     linhas = [
         "---",

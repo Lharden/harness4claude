@@ -1,7 +1,7 @@
 """Testes do MOC raiz e das duas checagens de estrutura que ele exigiu.
 
-O ponto delicado: um MOC que linka tudo **destroi** a checagem de orfa. Com um grafo de
-in-link so, o primeiro indice generico deixaria todo mundo linkado e ninguem integrado —
+O ponto delicado: um MOC que linka tudo **destroi** a checagem de órfã. Com um grafo de
+in-link so, o primeiro índice genérico deixaria todo mundo linkado e ninguém integrado —
 e o instrumento cego. Dai os dois grafos (`alcancavel` x `integrado`), que estes testes
 travam.
 """
@@ -51,17 +51,17 @@ def test_moc_agrupa_por_pergunta_e_nao_por_pasta(tmp_path: Path) -> None:
     assert "## O que decidimos" in moc
     assert "## Onde está o trabalho" in moc
     assert "[[decisions/assimilacoes]]" in moc
-    assert "type: index" in moc  # senao o MOC contaria como citacao de conteudo
+    assert "type: index" in moc  # senao o MOC contaria como citação de conteúdo
 
 
 def test_porta_vazia_diz_que_esta_vazia(tmp_path: Path) -> None:
-    """Area que S4 vai preencher nao pode fingir que ja existe."""
+    """Área que S4 vai preencher não pode fingir que já existe."""
     vault_minimo(tmp_path)  # sem `workflows/` nem `ops/`
 
     moc = build_moc(tmp_path)
 
     assert "Será preenchido pelos resumos de workflow." in moc
-    # A porta de aprender NAO esta vazia aqui: concepts/ ja a preenche.
+    # A porta de aprender NÃO esta vazia aqui: concepts/ já a preenche.
     assert "Será preenchido pelo compêndio." not in moc
 
 
@@ -90,7 +90,7 @@ def test_moc_traz_dataview_e_espinha_de_wikilink(tmp_path: Path) -> None:
 
 
 def test_espinha_ordena_por_profundidade(tmp_path: Path) -> None:
-    """Pagina rasa e a frente; funda e capitulo interno de outra frente."""
+    """Página rasa e a frente; funda e capítulo interno de outra frente."""
     escrever(tmp_path, "projects/frente-rasa.md", "# Rasa\n\nx", "project")
     escrever(tmp_path, "projects/outra/01 Capitulo.md", "# Cap\n\nx", "project")
     escrever(tmp_path, "projects/outra/00 MOC.md", "# MOC\n\nx", "project")
@@ -119,10 +119,10 @@ def test_painel_de_saude_traz_os_numeros_do_lint(tmp_path: Path) -> None:
 
     assert "## Saúde do vault" in moc
     assert "| Links quebrados |" in moc
-    assert "wiki_lint.py" in moc  # o comando para reproduzir fica na propria pagina
+    assert "wiki_lint.py" in moc  # o comando para reproduzir fica na própria página
 
 
-# --- o MOC nao pode cegar o lint ------------------------------------------
+# --- o MOC não pode cegar o lint ------------------------------------------
 
 
 def test_moc_nao_conta_como_citacao_de_conteudo(tmp_path: Path) -> None:
@@ -134,9 +134,9 @@ def test_moc_nao_conta_como_citacao_de_conteudo(tmp_path: Path) -> None:
     resultado = analyze_wiki(tmp_path)
     s = resultado["summary"]
 
-    # Alcancavel pelo MOC: nenhum erro de pagina inalcancavel.
+    # Alcancável pelo MOC: nenhum erro de página inalcancável.
     assert s["unreachable_pages"] == []
-    # Mas nao integrada: o aviso permanece, que e a informacao util.
+    # Mas não integrada: o aviso permanece, que e a informação útil.
     assert "projects/frente.md" in s["orphan_pages"]
 
 
@@ -152,7 +152,7 @@ def test_citacao_de_conteudo_integra_de_verdade(tmp_path: Path) -> None:
 
 
 def test_moc_entra_no_index_gerado(tmp_path: Path) -> None:
-    """Pagina na raiz de wiki/ nao pertence a secao nenhuma — ficava fora e o lint acusava."""
+    """Página na raiz de wiki/ não pertence a seção nenhuma — ficava fora e o lint acusava."""
     vault_minimo(tmp_path)
     (tmp_path / "wiki" / MOC_NAME).write_text(build_moc(tmp_path), encoding="utf-8")
     (tmp_path / "wiki" / "index.md").write_text(build_index(tmp_path), encoding="utf-8")
@@ -167,7 +167,7 @@ def test_moc_entra_no_index_gerado(tmp_path: Path) -> None:
 
 
 def test_area_de_primeiro_nivel_nao_precisa_de_00(tmp_path: Path) -> None:
-    """O MOC raiz ja cobre todas — cobrar `00 ...` seria pedir duplicata."""
+    """O MOC raiz já cobre todas — cobrar `00 ...` seria pedir duplicata."""
     for i in range(MIN_PAGES_FOR_MOC + 1):
         escrever(tmp_path, f"specs/s{i}.md", "x", "spec")
 
@@ -190,7 +190,7 @@ def test_subarvore_com_00_passa(tmp_path: Path) -> None:
 
 
 def test_subarvore_pequena_passa(tmp_path: Path) -> None:
-    """Duas paginas se leem direto; exigir porta seria burocracia."""
+    """Duas páginas se leem direto; exigir porta seria burocracia."""
     for i in range(MIN_PAGES_FOR_MOC - 1):
         escrever(tmp_path, f"projects/frente-z/c{i}.md", "x", "project")
 
