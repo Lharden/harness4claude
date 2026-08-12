@@ -37,7 +37,8 @@ def test_golden_top3_hit_rate():
     real; isolar HARNESS_DIR aqui nao teria efeito e apenas mascararia a
     dependencia. Ver docs/self-reform/claude/TEST_MATRIX.md.
     """
-    data = json.load(open(GOLDEN, encoding="utf-8"))
+    with open(GOLDEN, encoding="utf-8") as f:
+        data = json.load(f)
     index, vecs = sr.load_index()
     skills = index["skills"]
     known = {s["id"] for s in skills}
@@ -56,8 +57,8 @@ def test_golden_top3_hit_rate():
 
 def test_golden_negatives_no_injection():
     for case in data_negatives():
-        assert sr.passes_guards(case["prompt"],
-                                state_json=os.path.join(os.path.dirname(GOLDEN), "no-state.json")) is False, case["reason"]
+        sem_estado = os.path.join(os.path.dirname(GOLDEN), "no-state.json")
+        assert sr.passes_guards(case["prompt"], state_json=sem_estado) is False, case["reason"]
 
 
 def data_negatives():

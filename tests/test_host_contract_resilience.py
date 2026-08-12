@@ -122,7 +122,7 @@ class TestCrlfNaoFragmentaBucket:
     def test_bucket_bate_com_o_resolvedor(self, tmp_path):
         """O nome criado pelo hook tem de ser o mesmo que o resolvedor calcula."""
         sys.path.insert(0, str(ROOT / "scripts"))
-        from harness_paths import project_slug  # noqa: PLC0415
+        from harness_paths import project_slug
 
         harness = tmp_path / "h"
         repo = self._repo(tmp_path)

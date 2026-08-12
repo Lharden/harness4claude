@@ -1,5 +1,10 @@
 pytest>=7.0
 pyyaml>=6.0
+# Lint. O ruleset esta fixado em pyproject.toml: sem ele o conjunto de regras mudava
+# sozinho a cada upgrade do ruff, e o health-check so conferia que o binario existia.
+# Agora `ruff check .` roda de fato no health-check. O pyright vem do npm
+# (`npm install -g pyright`); a config dele fica em [tool.pyright] do mesmo pyproject.
+ruff>=0.16
 # Security scanning (skill: security-scan-python). Instalados no bootstrap
 # (SessionStart -> pip install --user) para a skill funcionar em cada maquina.
 bandit>=1.7

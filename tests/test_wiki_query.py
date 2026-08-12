@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import build_wiki_index as bwi  # noqa: E402
+import build_wiki_index as bwi
 
-from tools import wiki_query as wq  # noqa: E402
+from tools import wiki_query as wq
 
 LONGO = "conteudo relevante o suficiente para virar um chunk proprio nesta secao. " * 3
 FRONTMATTER = "---\ntype: decision\ncreated: 2026-01-01\nupdated: 2026-01-01\nstatus: active\ntags: [x]\n---\n\n"
@@ -161,8 +161,42 @@ def test_route_restaura_os_knobs_globais_do_router(tmp_path: Path) -> None:
 
     out = montar_indice(tmp_path)
     index, vecs = wq.load_index(out)
-    antes = (sr.TOP_K, sr.MIN_COS)
+    antes = (sr.TOP_K, sr.MIN_COS, sr.MIN_MARGIN)
 
     wq.route("recusas", index["pages"], vecs, top_k=2)
 
-    assert (sr.TOP_K, sr.MIN_COS) == antes
+    assert antes == (sr.TOP_K, sr.MIN_COS, sr.MIN_MARGIN)
+
+
+def chunks_fake(n: int) -> list[dict]:
+    return [
+        {"id": f"p{i}", "page_id": f"p{i}", "vec_row": i, "enabled": True,
+         "usage_count": 0, "aliases": [], "name": f"p{i}", "heading": "",
+         "title": f"p{i}", "type": "page", "path": "", "description": "x"}
+        for i in range(n)
+    ]
+
+
+def test_corpus_pequeno_dispensa_a_regra_de_margem(monkeypatch) -> None:
+    """Com 2 chunks a mediana E o topo: exigir mediana+margem descartaria o acerto."""
+    import skill_router as sr
+
+    monkeypatch.setattr(wq, "embed_query", lambda *_a, **_k: [1.0, 0.0])
+    vecs = [[1.0, 0.0], [0.6, 0.8]]  # cos com a consulta: 1.00 e 0.60
+    antes = sr.MIN_MARGIN
+
+    hits = wq.route("consulta", chunks_fake(2), vecs, top_k=3)
+
+    assert [h["skill"]["page_id"] for h in hits] == ["p0", "p1"]
+    assert antes == sr.MIN_MARGIN, "knob global do router nao foi restaurado"
+
+
+def test_corpus_grande_mantem_a_regra_de_margem(monkeypatch) -> None:
+    """Acima do limiar, o melhor-de-um-lote-ruim continua sendo filtrado."""
+    monkeypatch.setattr(wq, "embed_query", lambda *_a, **_k: [1.0, 0.0])
+    n = wq.MIN_CHUNKS_FOR_MARGIN + 2
+    vecs = [[1.0, 0.0] for _ in range(n)]  # todos identicos: nenhum se destaca
+
+    hits = wq.route("consulta", chunks_fake(n), vecs, top_k=3)
+
+    assert hits == []

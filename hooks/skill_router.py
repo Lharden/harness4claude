@@ -135,7 +135,7 @@ def layer_a(prompt_low, skills):
     for s in skills:
         terms = list(s.get("aliases", []))
         if _is_specific_name(s["name"]):
-            terms = [s["name"]] + terms
+            terms = [s["name"], *terms]
         for term in terms:
             t = term.strip().lower()
             if len(t) < 3:
@@ -152,7 +152,8 @@ def layer_b(qvec, skills, vecs):
         row = s.get("vec_row", -1)
         if row < 0 or row >= len(vecs):
             continue
-        cos = sum(a * b for a, b in zip(qvec, vecs[row]))
+        # strict=False explicito: o truncamento ja era o comportamento anterior.
+        cos = sum(a * b for a, b in zip(qvec, vecs[row], strict=False))
         boost = min(0.1, 0.03 * math.log1p(s.get("usage_count", 0)))
         scored.append({"id": s["id"], "cos": cos, "score": cos + boost,
                        "layer": "B", "skill": s})

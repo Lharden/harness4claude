@@ -117,8 +117,10 @@ def test_build_no_embed_and_check_stale(tmp_path):
     out = str(tmp_path / "idx")
     n = bsi.build(out_dir=out, no_embed=True, skills=skills)
     assert n == 1
-    idx = json.load(open(os.path.join(out, "skills-index.json"), encoding="utf-8"))
-    meta = json.load(open(os.path.join(out, "meta.json"), encoding="utf-8"))
+    with open(os.path.join(out, "skills-index.json"), encoding="utf-8") as f:
+        idx = json.load(f)
+    with open(os.path.join(out, "meta.json"), encoding="utf-8") as f:
+        meta = json.load(f)
     assert idx["dim"] == 0 and idx["skills"][0]["vec_row"] == -1
     assert meta["count"] == 1
     assert os.path.getsize(os.path.join(out, "embeddings.f16.bin")) == 0
@@ -158,10 +160,12 @@ def test_build_with_fake_embeddings(tmp_path, monkeypatch):
         skills = _fake_skills(tmp_path)
         out = str(tmp_path / "idx")
         assert bsi.build(out_dir=out, skills=skills) == 1
-        idx = json.load(open(os.path.join(out, "skills-index.json"), encoding="utf-8"))
+        with open(os.path.join(out, "skills-index.json"), encoding="utf-8") as f:
+            idx = json.load(f)
         assert idx["dim"] == 3 and idx["skills"][0]["vec_row"] == 0
         import struct as st
-        raw = open(os.path.join(out, "embeddings.f16.bin"), "rb").read()
+        with open(os.path.join(out, "embeddings.f16.bin"), "rb") as f:
+            raw = f.read()
         v = st.unpack("<3e", raw)
         assert abs(v[0] - 1 / 3) < 1e-2 and abs(sum(x * x for x in v) - 1.0) < 1e-2
     finally:

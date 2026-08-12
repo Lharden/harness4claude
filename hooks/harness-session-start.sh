@@ -191,6 +191,35 @@ except Exception:
 STATE_DIR_PY="${STATE_DIR_PY%$'\r'}"   # $() tira \n final, mas nao o \r do Windows
 [ -z "$STATE_DIR_PY" ] && STATE_DIR_PY="$HARNESS_DIR_PY"
 
+# ============================================================================
+# Digest do vault AI-Brain (~400 bytes)
+# ============================================================================
+# Calculado UMA vez aqui e usado em TODOS os caminhos de saida. Ha tres: bucket
+# de projeto novo (state.json ausente), pipeline expirado pelo TTL, e o caminho
+# normal. Injetar so no ultimo deixaria justamente a primeira sessao de cada
+# projeto — quando o contexto do vault mais importa — sem nenhum aviso de que a
+# memoria de decisao existe.
+if command -v cygpath &>/dev/null; then
+    PLUGIN_DIR_PY="$(cygpath -w "$PLUGIN_DIR")"
+else
+    PLUGIN_DIR_PY="$PLUGIN_DIR"
+fi
+export PYTHONUTF8=1
+export PLUGIN_DIR_PY
+# `tr -d '\r'`: o print() do Windows emite CRLF e o \r vazaria para dentro do JSON do
+# systemMessage. E o mesmo defeito que fez raiz e subdiretorio virarem buckets distintos
+# (auditoria 2026-07-28) — silencioso e chato de rastrear depois.
+VAULT_DIGEST="$(python -c "
+import os, sys
+sys.path.insert(0, os.path.join(os.environ['PLUGIN_DIR_PY'], 'tools'))
+try:
+    import wiki_index
+    print(wiki_index.build_digest(wiki_index.default_root()))
+except Exception:
+    pass
+" 2>/dev/null | tr -d '\r' || true)"
+export VAULT_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     python -c "
@@ -202,6 +231,14 @@ json.dump({'task_id': None, 'schema_version': 3, 'classification': None,
            'artifacts_so_far': [], 'started_at': None},
           open(os.path.join(d, 'state.json'), 'w'), indent=2)
 " "$STATE_DIR_PY" 2>/dev/null || exit 0
+    # Bucket recem-criado: nao ha pipeline a retomar, mas o digest do vault ainda
+    # vale — e a primeira sessao do projeto e onde ele mais rende.
+    python -c "
+import json, os
+digest = os.environ.get('VAULT_DIGEST', '').strip()
+if digest:
+    print(json.dumps({'systemMessage': digest}))
+" 2>/dev/null
     exit 0
 fi
 
@@ -223,25 +260,19 @@ if [ -n "$EXPIRED_TASK" ]; then
     python -c "
 import json, os
 tid = os.environ.get('HARNESS_EXPIRED_TASK', 'unknown')
-print(json.dumps({
-    'systemMessage': (
-        f'HARNESS v3 EXPIRED: pipeline anterior (task {tid}) passou do TTL e foi '
-        f'encerrado como abandonado. Nao ha pipeline ativo — a proxima tarefa '
-        f'sera classificada do zero.'
-    )
-}))
+partes = [
+    f'HARNESS v3 EXPIRED: pipeline anterior (task {tid}) passou do TTL e foi '
+    f'encerrado como abandonado. Nao ha pipeline ativo — a proxima tarefa '
+    f'sera classificada do zero.'
+]
+digest = os.environ.get('VAULT_DIGEST', '').strip()
+if digest:
+    partes.append(digest)
+print(json.dumps({'systemMessage': '\n\n'.join(partes)}))
 " 2>/dev/null
     exit 0
 fi
 
-if command -v cygpath &>/dev/null; then
-    PLUGIN_DIR_PY="$(cygpath -w "$PLUGIN_DIR")"
-else
-    PLUGIN_DIR_PY="$PLUGIN_DIR"
-fi
-
-export PYTHONUTF8=1
-export PLUGIN_DIR_PY
 python -c "
 import json, os, sys
 
@@ -264,17 +295,10 @@ try:
 except Exception:
     pass
 
-# 2. Digest do vault AI-Brain (~400 bytes): sem isto a wiki existe e ninguem abre.
-#    O index.md inteiro passa de 10 KB — caro demais para toda sessao.
-try:
-    sys.path.insert(0, os.path.join(os.environ['PLUGIN_DIR_PY'], 'tools'))
-    import wiki_index
-
-    digest = wiki_index.build_digest(wiki_index.default_root())
-    if digest:
-        parts.append(digest)
-except Exception:
-    pass
+# 2. Digest do vault AI-Brain, ja calculado acima e valido nos tres caminhos de saida.
+digest = os.environ.get('VAULT_DIGEST', '').strip()
+if digest:
+    parts.append(digest)
 
 if parts:
     print(json.dumps({'systemMessage': '\n\n'.join(parts)}))

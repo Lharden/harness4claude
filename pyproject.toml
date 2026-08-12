@@ -1,0 +1,74 @@
+# Configuracao de lint e type-check do harness4claude.
+#
+# Antes deste arquivo o repo nao tinha config nenhuma: o `ruff` rodava com o default da
+# versao instalada, entao o conjunto de regras mudava sozinho a cada upgrade e o
+# health-check so verificava que o binario existia — nunca o executava. Fixar o ruleset
+# aqui torna o gate reproduzivel entre maquinas.
+#
+# Uso:
+#   ruff check .          # lint
+#   ruff format --diff .  # formatacao (nao aplicada automaticamente)
+#   pyright               # type-check
+
+[tool.ruff]
+# 120 e o estilo de fato do repo, medido: as linhas longas pre-existentes ficam entre
+# 101 e 123 chars. Escolher 100 seria impor um numero novo e gerar 11 achados em codigo
+# que ja funciona; 120 formaliza o que ja era praticado.
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    ".pytest_tmp_*",
+    "graphify-out",
+    "pip",
+]
+
+[tool.ruff.lint]
+# E/F: pycodestyle + pyflakes (base). I: ordenacao de imports.
+# UP: pyupgrade. B: bugbear. C4: comprehensions. SIM: simplificacoes.
+# ISC: concatenacao implicita de strings — pega o classico "esqueceu a virgula?".
+# RUF: regras proprias do ruff, incluindo noqa nao utilizado.
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "ISC", "RUF"]
+
+ignore = [
+    # `except Exception` e deliberado em toda a cadeia de hooks e busca: o contrato do
+    # skill-router e "NUNCA bloqueia — qualquer falha degrada, nunca levanta". Trocar
+    # por excecoes especificas quebraria justamente essa garantia.
+    "BLE001",
+    # Corpo de except que so faz `pass`/`continue` — mesma razao acima.
+    "SIM105",
+    # RUF001-003 acusam "caractere unicode ambiguo": e regra anti-homoglifo, pensada
+    # para codigo em ingles. Aqui docstrings, comentarios e mensagens sao em portugues,
+    # com acento e travessao — 13 falsos positivos e nenhum achado real.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # Variavel desempacotada e nao usada: ruido de estilo em `a, _ = ...`.
+    "RUF059",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Hooks e ferramentas precisam ajustar sys.path antes de importar modulos irmaos:
+# nao ha pacote instalavel aqui, os scripts rodam soltos.
+"tools/*.py" = ["E402"]
+"scripts/*.py" = ["E402"]
+"hooks/*.py" = ["E402"]
+"tests/*.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tools"]
+
+[tool.pyright]
+# Codigo de execucao apenas. `tests/` fica de fora por ora: os testes usam importlib
+# dinamico e literais de string onde o modulo declara `Literal[...]` — padroes em que o
+# checker acusa 6 erros sem apontar defeito real. Incluir tests/ agora entregaria um
+# gate vermelho no dia 1, e gate que nao passa e gate que ninguem roda: exatamente o
+# defeito que este arquivo veio consertar. Reavaliar quando os modulos expuserem tipos
+# publicos.
+include = ["tools", "scripts", "hooks"]
+exclude = ["**/__pycache__", ".pytest_tmp_*", "graphify-out", "pip", "worktrees"]
+typeCheckingMode = "basic"
+pythonVersion = "3.10"
+# Os scripts se importam por sys.path em vez de pacote instalado; sem isto o pyright
+# reclama de todo import irmao.
+extraPaths = ["tools", "scripts", "hooks"]
+reportMissingImports = "warning"

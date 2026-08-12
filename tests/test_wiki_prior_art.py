@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import build_wiki_index as bwi  # noqa: E402
+import build_wiki_index as bwi
 
-from tools import wiki_prior_art as pa  # noqa: E402
+from tools import wiki_prior_art as pa
 
 FRONTMATTER = "---\ntype: {tipo}\ncreated: 2026-01-01\nupdated: 2026-01-01\nstatus: active\ntags: [x]\n---\n\n"
 ENCHIMENTO = "texto de apoio suficiente para o bloco virar um chunk indexavel aqui. " * 2

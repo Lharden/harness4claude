@@ -29,9 +29,9 @@ import logging
 import os
 import re
 import shutil
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger("harness.vault_sync")
 
@@ -132,13 +132,43 @@ def remember_today(cwd: Path) -> list[Path]:
     return found
 
 
+LOG_HEADER = """---
+type: log
+created: {hoje}
+updated: {hoje}
+status: active
+tags:
+  - meta
+---
+
+# Operations Log
+
+Append-only. Cada ingest/inbox/lint/sync fica registrado aqui. Nunca reescreva — so
+prune trimestral com flag `[lint]`.
+
+Formato: `YYYY-MM-DD HH:MM — operation: short description`
+
+---
+"""
+
+
 def append_log(vault: Path, message: str) -> None:
-    """Append append-only em wiki/log.md (não falha se indisponível)."""
+    """Append append-only em wiki/log.md (não falha se indisponível).
+
+    Cria o arquivo com frontmatter quando ele ainda nao existe: sem isso, o primeiro
+    sync de um vault novo ja nascia com um erro de lint (`missing_frontmatter`), porque
+    o schema do AI-Brain exige frontmatter em toda pagina de wiki/.
+    """
     log_file = vault / "wiki" / "log.md"
-    stamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+    agora = datetime.now(timezone.utc).astimezone()
     try:
+        if not log_file.exists():
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            log_file.write_text(
+                LOG_HEADER.format(hoje=agora.strftime("%Y-%m-%d")), encoding="utf-8"
+            )
         with log_file.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n{stamp} — {message}\n")
+            fh.write(f"\n{agora.strftime('%Y-%m-%d %H:%M')} — {message}\n")
     except OSError as exc:
         logger.warning("nao foi possivel escrever log.md: %s", exc)
 

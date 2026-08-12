@@ -26,7 +26,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from build_skills_index import (  # noqa: E402
+from build_skills_index import (
     EMBED_MODEL,
     atomic_write,
     l2norm,

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Iterable, Literal
+from typing import Literal
 
 """Thin harness-lite supervisor adapter (harness-lite P100-T04).
 

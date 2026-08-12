@@ -110,8 +110,8 @@ def build_index(root: Path, *, today: str | None = None) -> str:
     lines += [
         f"## Graphs (`wiki/{GENERATED_SUBTREE}/`)",
         "",
-        "*Knowledge graphs por repo, exportados pelo graphify. Geradas por maquina — "
-        "fora das checagens de orfa/estagnada do lint.*",
+        ("*Knowledge graphs por repo, exportados pelo graphify. Geradas por maquina — "
+         "fora das checagens de orfa/estagnada do lint.*"),
         "",
     ]
     if (generated / "index.md").is_file():
@@ -210,7 +210,7 @@ def build_digest(root: Path, *, max_decisions: int = 12) -> str:
     if stale:
         linhas.append(
             "O indice de busca esta desatualizado — rode "
-            "scripts/build_wiki_index.py antes de confiar numa consulta."
+             "scripts/build_wiki_index.py antes de confiar numa consulta."
         )
 
     linhas.append(

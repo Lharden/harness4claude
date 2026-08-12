@@ -87,7 +87,7 @@ def test_dedupe(tmp_path, monkeypatch):
     h = [{"id": "a:1", "score": 1.0, "layer": "A", "skill": _skill("a:1")}]
     assert [x["id"] for x in sr.apply_dedupe(list(h), "s1")] == ["a:1"]
     assert sr.apply_dedupe(list(h), "s1") == []            # mesmo conjunto consecutivo
-    h2 = h + [{"id": "b:2", "score": 0.9, "layer": "B", "cos": 0.9,
+    h2 = [*h, {"id": "b:2", "score": 0.9, "layer": "B", "cos": 0.9,
                "skill": _skill("b:2")}]
     assert len(sr.apply_dedupe(list(h2), "s1")) == 2       # conjunto diferente, a:1 2a oferta
     # 4a chamada: a:1 estourou MAX_OFFERS_PER_SKILL (2 ofertas) e sai; sobra b:2

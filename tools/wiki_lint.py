@@ -295,9 +295,11 @@ def render_report(result: dict[str, Any]) -> str:
         f"# Wiki Lint — {date.today().isoformat()}",
         "",
         f"Vault: `{result['root']}`",
-        f"Veredito: **{'OK' if result['ready'] else 'ERROS'}** "
-        f"({summary['error_count']} erros, {summary['warning_count']} avisos) "
-        f"sobre {summary['pages']} paginas (+{summary['graph_notes']} notas geradas).",
+        (
+            f"Veredito: **{'OK' if result['ready'] else 'ERROS'}** "
+            f"({summary['error_count']} erros, {summary['warning_count']} avisos) "
+            f"sobre {summary['pages']} paginas (+{summary['graph_notes']} notas geradas)."
+        ),
     ]
     for level, header in (("error", "Erros"), ("warning", "Avisos")):
         rows = [f for f in result["findings"] if f["level"] == level]

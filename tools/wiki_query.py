@@ -26,7 +26,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hooks"))
-import skill_router as sr  # noqa: E402
+import skill_router as sr
 
 DEFAULT_INDEX = Path.home() / ".claude" / "harness" / "wiki-index"
 OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
@@ -54,6 +54,17 @@ CONFIDENT_COS = 0.45
 
 # Quantos chunks buscar por pagina desejada antes de deduplicar.
 OVERFETCH = 4
+
+# Abaixo deste tamanho de corpus, a regra relativa do pick (cos >= mediana + margem)
+# e degenerada: com 2 chunks a mediana E o proprio topo, e todo hit abaixo dele cai.
+# Invisivel nos 512 chunks do vault real, fatal num vault recem-criado.
+MIN_CHUNKS_FOR_MARGIN = 10
+
+# Como neutralizar a regra sem forkar o pick: cosseno vive em [-1, 1], entao
+# `mediana + NEUTRALIZED_MARGIN` fica sempre <= 0 e o piso absoluto (MIN_COS > 0) passa
+# a ser o unico filtro. Zerar a margem nao bastaria — a comparacao com a mediana
+# continuaria barrando tudo que estivesse abaixo dela.
+NEUTRALIZED_MARGIN = -2.0
 
 
 def load_index(index_dir: Path = DEFAULT_INDEX) -> tuple[dict, list]:
@@ -116,12 +127,14 @@ def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_
             b_scored = sr.layer_b(embed_query(question), pages, vecs)
         except Exception:  # Ollama fora / timeout / payload torto: degrada p/ Camada A
             b_scored = []
-    saved_top_k, sr.TOP_K = sr.TOP_K, top_k * OVERFETCH
-    saved_min_cos, sr.MIN_COS = sr.MIN_COS, MIN_COS
+    saved = (sr.TOP_K, sr.MIN_COS, sr.MIN_MARGIN)
+    sr.TOP_K, sr.MIN_COS = top_k * OVERFETCH, MIN_COS
+    if len(b_scored) < MIN_CHUNKS_FOR_MARGIN:
+        sr.MIN_MARGIN = NEUTRALIZED_MARGIN
     try:
         chosen = sr.pick(a_hits, b_scored)
     finally:
-        sr.TOP_K, sr.MIN_COS = saved_top_k, saved_min_cos
+        sr.TOP_K, sr.MIN_COS, sr.MIN_MARGIN = saved
     return dedupe_by_page(chosen, top_k)
 
 
@@ -174,13 +187,20 @@ def render(result: dict) -> str:
     if not result["hits"]:
         return f'Nenhuma pagina acima do piso para: "{result["question"]}"'
     lines = [
-        f'Consulta: "{result["question"]}"  '
-        f'({result["pages_indexed"]} paginas / {result["chunks_indexed"]} secoes indexadas)',
+        (
+            f'Consulta: "{result["question"]}"  '
+            f'({result["pages_indexed"]} paginas / {result["chunks_indexed"]} secoes indexadas)'
+        ),
         "",
     ]
     if not result["confident_hits"]:
-        lines += ["A wiki pode nao cobrir isto — nenhum resultado atingiu a barra de "
-                  "confianca. Os abaixo sao os mais proximos; confira antes de citar.", ""]
+        lines += [
+            (
+                "A wiki pode nao cobrir isto — nenhum resultado atingiu a barra de "
+                "confianca. Os abaixo sao os mais proximos; confira antes de citar."
+            ),
+            "",
+        ]
     for i, hit in enumerate(result["hits"], 1):
         secao = f" › {hit['section']}" if hit["section"] else ""
         marca = "" if hit["confident"] else "  (abaixo da barra)"

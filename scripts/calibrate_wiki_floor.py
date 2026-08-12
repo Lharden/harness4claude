@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "hooks"))
 
-import wiki_query as wq  # noqa: E402
+import wiki_query as wq
 
 GOLDEN = os.path.join(ROOT, "tests", "data", "golden-wiki.json")
 CANDIDATES = [0.20, 0.24, 0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38, 0.40, 0.45]
@@ -74,7 +74,7 @@ def main():
         pos = tops(golden["positives"], pages, vecs, floor, args.top_k)
         neg = tops(golden["negatives"], pages, vecs, floor, args.top_k)
         hits = sum(any(e in top for e in c["expect_any"])
-                   for c, top in zip(golden["positives"], pos))
+                   for c, top in zip(golden["positives"], pos, strict=True))
         falsos = sum(bool(t) for t in neg)
         taxa = hits / len(golden["positives"])
         resultados[floor] = (taxa, falsos, pos)
@@ -86,7 +86,7 @@ def main():
     taxa, falsos, pos = resultados[escolhido]
     rotulo = "piso recomendado" if viavel else "melhor hit rate (gate de falso+ NAO satisfeito)"
     print(f"\n{rotulo}: {escolhido}  (hit {taxa:.0%}, falso+ {falsos})")
-    for case, top in zip(golden["positives"], pos):
+    for case, top in zip(golden["positives"], pos, strict=True):
         if not any(e in top for e in case["expect_any"]):
             print(f"  MISS {case['prompt'][:52]!r} -> {top}")
     return 0

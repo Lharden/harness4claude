@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from record_signal import build_task, record  # type: ignore[import-not-found]  # noqa: E402
+from record_signal import build_task, record  # type: ignore[import-not-found]
 
 DEFAULT_TTL_HOURS = 24
 
@@ -149,7 +149,7 @@ def expire(
             timestamp=(now or datetime.now(timezone.utc)).isoformat(),
         )
         record(signals_dir, task)
-    except Exception:  # noqa: BLE001 — telemetria nunca pode impedir o destravamento
+    except Exception:
         pass
 
     _atomic_write_json(state_path, dict(IDLE_STATE))
@@ -172,7 +172,7 @@ def main() -> int:
 
     try:
         expired = expire(Path(harness_dir), ttl_hours, signals_dir=args.signals_dir)
-    except Exception:  # noqa: BLE001 — contrato: nunca falhar
+    except Exception:
         return 0
 
     if expired:

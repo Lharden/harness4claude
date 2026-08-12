@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import wiki_query as wq  # noqa: E402
+import wiki_query as wq
 
 DEFAULT_TOP_K = 4
 SNIPPET_CHARS = 180
@@ -188,14 +188,21 @@ def render(dados: dict) -> str:
     linhas = [
         "## Prior-art na wiki AI-Brain",
         "",
-        "Decisoes ja registradas que tocam esta tarefa. Confira se alguma resolve o "
-        "ponto — pode ja ter entrado, ou ja ter sido recusada com motivo.",
+        (
+            "Decisoes ja registradas que tocam esta tarefa. Confira se alguma resolve o "
+            "ponto — pode ja ter entrado, ou ja ter sido recusada com motivo."
+        ),
         "",
     ]
     linhas += [_linha(h) for h in achados]
     if dados.get("stale"):
-        linhas += ["", "*Indice de busca desatualizado — pode haver decisao recente fora "
-                       "deste resultado (`scripts/build_wiki_index.py`).*"]
+        linhas += [
+            "",
+            (
+                "*Indice de busca desatualizado — pode haver decisao recente fora "
+                "deste resultado (`scripts/build_wiki_index.py`).*"
+            ),
+        ]
     return "\n".join(linhas)
 
 

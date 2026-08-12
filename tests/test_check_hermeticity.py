@@ -124,5 +124,5 @@ class TestSnapshotFormat:
         _run("--snapshot", str(snap), harness_dir=populated)
         data = json.loads(snap.read_text(encoding="utf-8"))
         assert "harness_dir" in data, "o snapshot deve registrar o dir inspecionado"
-        assert "files" in data and data["files"], "deve conter os hashes"
+        assert data.get("files"), "deve conter os hashes"
         assert "level" in data, "deve registrar o nivel (A ou A+B)"

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import vault_sync as vs  # noqa: E402
+import vault_sync as vs
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "vault_sync.py"
 TRACE = "trace-regressao.md"

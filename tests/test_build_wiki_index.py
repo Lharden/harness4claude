@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import build_wiki_index as bwi  # noqa: E402
+import build_wiki_index as bwi
 
 FRONTMATTER = """---
 type: decision
