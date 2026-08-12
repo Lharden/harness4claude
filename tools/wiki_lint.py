@@ -25,6 +25,12 @@ from typing import Any
 # Paginas meta: existem para serem o indice/registro, nao para receber in-links.
 META_PAGES = {"index.md", "log.md"}
 
+# `type: index` no frontmatter cumpre o mesmo papel em qualquer pasta: um indice existe
+# para ser linkado DE, nao PARA. Sem esta regra todo indice gerado nasce orfao, e a
+# "correcao" seria linka-lo de algum lugar artificial so para calar o lint.
+_INDEX_TYPE_RE = re.compile(r"^type:\s*index\s*$", re.M)
+_FRONTMATTER_BLOCK_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
+
 # Subarvore gerada por maquina (graphify). Vale como alvo de link, mas nao entra
 # nas checagens de frontmatter/orfa/estagnada — 900+ notas inundariam o relatorio.
 GENERATED_SUBTREE = "graphs"
@@ -75,6 +81,12 @@ def has_frontmatter(path: Path) -> bool:
             return handle.readline().strip() == "---"
     except OSError:
         return False
+
+
+def is_index_page(path: Path) -> bool:
+    """True se a pagina se declara `type: index` no frontmatter."""
+    match = _FRONTMATTER_BLOCK_RE.match(_read(path))
+    return bool(match and _INDEX_TYPE_RE.search(match.group(1)))
 
 
 def parse_wikilinks(text: str) -> list[str]:
@@ -180,6 +192,8 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
 
     resolves = _link_resolver(root)
     lintable = [page for page in pages if page.name not in META_PAGES]
+    # Indices entram no lint de frontmatter e cobertura, mas nao na checagem de in-link.
+    navegacao = {page for page in pages if is_index_page(page)}
 
     # --- frontmatter ------------------------------------------------------
     missing_frontmatter = [_rel(page, root) for page in pages if not has_frontmatter(page)]
@@ -231,6 +245,8 @@ def analyze_wiki(root: Path, *, stale_days: int = DEFAULT_STALE_DAYS) -> dict[st
     cutoff = time.time() - stale_days * 86400
     orphans, stale = [], []
     for page in lintable:
+        if page in navegacao:
+            continue
         rel = _rel(page, root)
         if inbound.get(rel, 0) > 0:
             continue

@@ -64,15 +64,23 @@ def newer(src: Path, dst: Path) -> bool:
     return not dst.exists() or src.stat().st_mtime > dst.stat().st_mtime
 
 
-def stamp_frontmatter(text: str, page_type: str, *, source: str, today: str) -> str:
+def stamp_frontmatter(
+    text: str, page_type: str, *, source: str, today: str, project: str | None = None
+) -> str:
     """Prefixa frontmatter Obsidian quando o texto nao tem — corpo intacto.
 
     Artefatos crus do harness (specs, CONTEXT) nascem sem frontmatter; sem carimbo
     eles chegam ao vault como paginas invalidas pelo schema do AI-Brain/CLAUDE.md.
     Carimbar na copia (e nao na origem) mantem o repo de trabalho limpo.
+
+    `project` e o slug da frente de onde o artefato veio. Sem ele, uma spec espelhada
+    chega ao vault sem nenhuma pista de a que projeto pertence — e foi por isso que 16
+    delas ficaram orfas, sem in-link de lugar nenhum. Quem sabe a origem e o sync, no
+    momento da copia; depois a informacao se perde.
     """
     if text.lstrip("﻿ \t\r\n").startswith("---"):
         return text
+    projeto = f"project: {project}\n" if project else ""
     return (
         "---\n"
         f"type: {page_type}\n"
@@ -80,6 +88,7 @@ def stamp_frontmatter(text: str, page_type: str, *, source: str, today: str) -> 
         f"updated: {today}\n"
         "status: active\n"
         f"tags: [{page_type}, harness]\n"
+        f"{projeto}"
         f"source: {source}\n"
         "---\n\n"
     ) + text
@@ -91,6 +100,7 @@ def mirror(
     *,
     page_type: str | None = None,
     rename: Callable[[Path], str] | None = None,
+    project: str | None = None,
 ) -> int:
     """Copia cada source para dst_dir se mais novo. Retorna nº de cópias feitas.
 
@@ -109,7 +119,9 @@ def mirror(
         if page_type:
             text = src.read_text(encoding="utf-8", errors="replace")
             dst.write_text(
-                stamp_frontmatter(text, page_type, source=src.name, today=today),
+                stamp_frontmatter(
+                    text, page_type, source=src.name, today=today, project=project
+                ),
                 encoding="utf-8",
             )
             shutil.copystat(src, dst)  # preserva mtime: mantem o sync idempotente
@@ -190,13 +202,17 @@ def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
     counts = {
         "sessions": mirror(glob_md(harness_dir / "traces"), vault / "wiki" / "sessions"),
         "specs": mirror(
-            glob_md(cwd / "docs" / "specs"), vault / "wiki" / "specs", page_type="spec"
+            glob_md(cwd / "docs" / "specs"),
+            vault / "wiki" / "specs",
+            page_type="spec",
+            project=slug,
         ),
         "decisions": mirror(
             context_docs(cwd),
             vault / "wiki" / "decisions",
             page_type="decision",
             rename=lambda _src: f"{slug}-context.md",
+            project=slug,
         ),
         "inbox": mirror(remember_today(cwd), vault / "raw" / "inbox"),
     }

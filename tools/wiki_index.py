@@ -150,6 +150,79 @@ def build_index(root: Path, *, today: str | None = None) -> str:
     return "\n".join(lines)
 
 
+_PROJECT_RE = re.compile(r"^project:\s*(\S+)\s*$", re.M)
+_TITLE_RE = re.compile(r"^#\s+(.+)$", re.M)
+
+SPECS_INDEX_NAME = "00 Índice de Specs.md"
+SEM_FRENTE = "sem frente declarada"
+
+
+def page_project(path: Path) -> str:
+    """Frente declarada no frontmatter (`project:`), ou o rótulo de indefinido."""
+    match = _FRONTMATTER_RE.match(path.read_text(encoding="utf-8", errors="replace"))
+    if not match:
+        return SEM_FRENTE
+    found = _PROJECT_RE.search(match.group(0))
+    return found.group(1).strip().strip("\"'") if found else SEM_FRENTE
+
+
+def build_specs_index(root: Path, *, today: str | None = None) -> str:
+    """Índice de `wiki/specs/` agrupado por frente.
+
+    Existe por um motivo mecanico: spec espelhada chega ao vault sem in-link de lugar
+    nenhum, e 16 delas viraram orfas. Linkar a mao nao escala — uma spec nova nasceria
+    orfa de novo. Aqui o vinculo e derivado do carimbo `project:` que o `vault_sync`
+    aplica na copia, entao acompanha o disco sozinho.
+    """
+    wiki = root / "wiki"
+    specs = [p for p in section_pages(wiki, "specs") if p.name != SPECS_INDEX_NAME]
+    stamp = today or date.today().isoformat()
+
+    por_frente: dict[str, list[Path]] = {}
+    for spec in specs:
+        por_frente.setdefault(page_project(spec), []).append(spec)
+
+    lines = [
+        "---",
+        "type: index",
+        f"created: {stamp}",
+        f"updated: {stamp}",
+        "status: active",
+        "tags:",
+        "  - meta",
+        "---",
+        "",
+        "# Índice de Specs",
+        "",
+        "Gerado por `tools/wiki_index.py --specs`, agrupado pelo carimbo `project:` que o",
+        "`vault_sync` aplica ao espelhar. Nao editar a mao — a proxima geracao sobrescreve.",
+        "",
+        f"{len(specs)} specs em {len(por_frente)} frentes.",
+        "",
+    ]
+
+    # "sem frente" por ultimo: e a fila de triagem, nao uma frente de verdade.
+    ordem = sorted(k for k in por_frente if k != SEM_FRENTE)
+    if SEM_FRENTE in por_frente:
+        ordem.append(SEM_FRENTE)
+
+    for frente in ordem:
+        lines += [f"## {frente}", ""]
+        if frente == SEM_FRENTE:
+            lines += [
+                "*Espelhadas antes de o carimbo `project:` existir. Preencher o campo no",
+                "frontmatter move a spec para a frente certa na proxima geracao.*",
+                "",
+            ]
+        for page in por_frente[frente]:
+            link = page.relative_to(wiki).as_posix()[:-3]
+            titulo = _TITLE_RE.search(page.read_text(encoding="utf-8", errors="replace"))
+            rotulo = titulo.group(1).strip() if titulo else page.stem
+            lines.append(f"- [[{link}]] — {rotulo}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def default_root() -> Path:
     """Resolve o sub-vault AI-Brain na precedencia do vault_sync.py."""
     ai_brain = os.environ.get("AI_BRAIN_PATH")
@@ -230,6 +303,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--digest", action="store_true",
         help="Imprime o bloco curto de SessionStart em vez do index completo.",
     )
+    parser.add_argument(
+        "--specs", action="store_true",
+        help="Gera o indice de specs agrupado por frente em vez do index mestre.",
+    )
     return parser
 
 
@@ -239,10 +316,14 @@ def main() -> None:
     if args.digest:
         print(build_digest(root))
         return
-    content = build_index(root)
+    alvo = (root / "wiki" / "specs" / SPECS_INDEX_NAME) if args.specs else (
+        root / "wiki" / "index.md"
+    )
+    content = build_specs_index(root) if args.specs else build_index(root)
     if args.write:
-        (root / "wiki" / "index.md").write_text(content, encoding="utf-8")
-        print(f"index.md regenerado em {root / 'wiki' / 'index.md'}")
+        alvo.parent.mkdir(parents=True, exist_ok=True)
+        alvo.write_text(content, encoding="utf-8")
+        print(f"gerado: {alvo}")
     else:
         print(content)
 
