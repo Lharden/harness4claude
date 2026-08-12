@@ -47,7 +47,8 @@ não encontra nada.** Ou seja, há **duas categorias de latência**, não um ún
 | MIN_MARGIN | 0.05 | exigência acima da mediana dos cosines |
 | DISABLED_MIN / DISABLED_LEAD | 0.60 / 0.08 | bar p/ sugerir skill de plugin desabilitado |
 | MAX_OFFERS_PER_SKILL | 2 | dedupe por sessão |
-| EMBED_TIMEOUT | 1.2s | acima disso degrada p/ Camada A |
+| CONNECT_TIMEOUT | 0.15s | pre-check TCP: porta morta falha aqui, sem pagar o teto de leitura |
+| EMBED_TIMEOUT | 3.0s | teto de leitura; acima disso degrada p/ Camada A |
 | HARNESS_OLLAMA_URL (env) | http://localhost:11434 | override do endpoint |
 | HARNESS_SKILLS_INDEX (env) | ~/.claude/harness/skills-index | override do índice (testes) |
 
@@ -56,15 +57,47 @@ não encontra nada.** Ou seja, há **duas categorias de latência**, não um ún
 Máquina: RTX 5000 Ada, Windows, Ollama `nomic-embed-text-v2-moe`. Índice: 276 skills, dim 768.
 Todos os números abaixo foram medidos e confirmados de forma independente.
 
-- **Acurácia:** golden set top-3 hit rate **93.3% (14/15)** — gate era ≥80% → **PASS**.
-  Único MISS conhecido: `"help me debug this failing test..."` (retorna zero hits; nenhum
-  alias/skill cadastrado casa com essa frase — candidato a novo alias).
+- **Acurácia:** golden set top-3 hit rate **100% (15/15)** — gate ≥80% → **PASS**.
+  Medido em 2026-08-12, 3 rodadas idênticas, índice reconstruído (246 skills, dim 768).
 
-  > ⚠️ **Número contestado (auditoria 2026-07-28).** `TEST_MATRIX.md` registra
-  > `test_router_golden::test_golden_top3_hit_rate` como known-failure medindo
-  > **47%** contra estes 93,3%, com causa raiz em aberto. Nenhum dos dois valores
-  > foi reproduzido na auditoria: sem Ollama de pé o teste **skipa**, não falha.
-  > Trate os 93,3% como não-verificados até uma medição nova com o índice atual.
+  Histórico da medição, toda ela determinística (3 rodadas por cenário):
+
+  | Índice | Aliases | hit@3 | MISS |
+  |---|---|---|---|
+  | 2026-07-24, 276 skills | 8 entradas | 93,3% (14/15) | `"help me debug this failing test…"` |
+  | 2026-08-12, 246 skills | 8 entradas | 93,3% (14/15) | o mesmo |
+  | 2026-08-12, 246 skills | +`systematic-debugging` | **100% (15/15)** | — |
+
+  O índice encolheu de 276 para 246 skills entre julho e agosto (plugins desabilitados ou
+  removidos) **sem mexer no hit rate** — a acurácia não era artefato do corpus antigo.
+  O MISS único, que o doc marcava como "candidato a novo alias", foi fechado exatamente
+  assim: 3 aliases em `skill-aliases.json` o levaram de zero hits para Camada A, ou seja,
+  caminho rápido (~437ms) em vez de depender do embed.
+
+  > ✅ **Causa raiz do 47% fechada (2026-08-12, issue #13).** O `TEST_MATRIX.md`
+  > registrava este teste como known-failure medindo **47%** contra os 93,3%, com
+  > causa em aberto e hipótese de contaminação via `state.json`. Reproduzido:
+  > **os 47% são a Camada A sozinha.** Varrendo o `EMBED_TIMEOUT` contra o golden
+  > set, o hit rate fica em 93% até 0.30s e cai para exatamente **46,7% (8/15
+  > vazios)** em 0.05s — o valor em que nenhum embed completa. Não é contaminação:
+  > o teste chama `route()` direto e nunca toca `passes_guards`, a única função que
+  > lê `state.json`.
+  >
+  > Repro:
+  > ```python
+  > import json, sys; sys.path.insert(0, "hooks")
+  > import skill_router as sr
+  > data = json.load(open("tests/data/golden-prompts.json", encoding="utf-8"))
+  > index, vecs = sr.load_index()
+  > sr.EMBED_TIMEOUT = 0.05
+  > print(sum(any(e in [h["id"] for h in sr.route(c["prompt"], index["skills"], vecs)]
+  >               for e in c["expect_any"]) for c in data["positives"]) / 15)  # 0.4666
+  > ```
+  >
+  > **Implicação de projeto, agora demonstrada:** 47% era o *piso* do modo degradado, e
+  > o piso é elevável. Adicionar os aliases de `systematic-debugging` subiu o piso de
+  > **46,7% para 53,3%** — mesma medição, `EMBED_TIMEOUT=0.05`. Cada MISS resolvido em
+  > `skill-aliases.json` sobe o piso e vira caminho rápido permanente.
 - **Latência — Camada A (fast path, alias/nome bateu, embed pulado):**
   p50 ~437ms · **p95 ~470–535ms** — abaixo da meta de ~600ms. É o caso comum para
   prompts que casam com palavra-chave/alias.
@@ -76,8 +109,10 @@ Todos os números abaixo foram medidos e confirmados de forma independente.
   disparam concorrentemente; a latência observada é o `max()` das duas, não a soma),
   respeitando o timeout de 5000ms do hook.
 - **Ollama fora do ar:** degradação graciosa — a Camada A (aliases) continua respondendo,
-  nenhuma exceção escapa do hook, exit 0 sempre. No Windows uma porta morta bloqueia até
-  `EMBED_TIMEOUT` (1.2s) em vez de recusar a conexão na hora, então o pior caso é
+  nenhuma exceção escapa do hook, exit 0 sempre. Desde 2026-08-12 um pre-check TCP
+  (`CONNECT_TIMEOUT` 0.15s) separa "porta morta" de "modelo ocupado": porta morta custa
+  ~150ms em vez de bloquear até o teto de leitura, e o `EMBED_TIMEOUT` pôde subir para
+  3.0s sem encarecer esse caso. Histórico — antes disso o pior caso era
   ~1.7s antes de degradar (a correção se mantém — só não é instantânea).
 - **Supressão por guard:** o router fica silencioso durante um pipeline harness ativo
   (por design — quem está roteando ali é o harness-workflow) e em prompts triviais/curtos.

@@ -59,7 +59,7 @@ Registrados em `waves/w0-chao-de-fabrica/baseline-suite.json`. Qualquer afirmaç
 
 | Teste | Natureza | Status |
 |---|---|---|
-| `test_router_golden::test_golden_top3_hit_rate` | Determinístico — 47% contra os 93,3% documentados em `docs/router.md` | **SKIP, não FAIL** (auditoria 2026-07-28): sem Ollama de pé o teste é pulado, então nenhum dos dois números foi reproduzido. Os 93,3% ficaram marcados como não-verificados em `docs/router.md`. Causa raiz segue em aberto |
+| `test_router_golden::test_golden_top3_hit_rate` | Determinístico | **RESOLVIDO** (2026-08-12, issue #13). Os dois números foram reproduzidos e a causa raiz é uma só: **47% é a Camada A sozinha**, o que sobra quando o embed não completa — não contaminação de `state.json` (o teste chama `route()` direto e nunca toca `passes_guards`). Com o embed funcionando o hit rate mede 93,3% no índice de julho e no de agosto; com os aliases de `systematic-debugging` vai a **100% (15/15)**, 3 rodadas idênticas. Ver `docs/router.md` § Medições |
 | `test_state_lock::TestConcurrency::test_two_concurrent_acquires_serialize` | Flaky de timing — `assert elapsed <= 3` recebeu `4` sob carga da suíte | **Não reproduzido** em 3 execuções completas na auditoria 2026-07-28 |
 | `test_harness::TestReclassify::test_15_counter_increments` | Era flaky por estado compartilhado (1 de 3 execuções no baseline) | **Resolvido** por P-1.b (hermetismo) — verde nas execuções da auditoria 2026-07-28 |
 
