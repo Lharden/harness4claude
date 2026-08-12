@@ -19,6 +19,14 @@ Todos operam sobre a **raiz do vault** via `--root`. Aponte para o seu vault
 | `vault_sync_doctor.py` | Valida prontidão de sync (plugins, .gitignore, git aninhado, REST) | `python -m tools.vault_sync_doctor --root "$VAULT_PATH" --check-rest` |
 | `export_plugins.py` | Gera `vault-plugins.lock.json` (lista+manifests leve, sem binários) | `python -m tools.export_plugins --root "$VAULT_PATH" --out vault-plugins.lock.json` |
 | `vault_maintenance.py` | Auditoria/manutenção conservadora das notas Markdown | `python -m tools.vault_maintenance --root "$VAULT_PATH"` |
+| `arsenal.py` | Registry das ferramentas **ativas**: contrato, reconciliação com o disco, orçamento de tokens do roster e colisão de gatilho | `python tools/arsenal.py budget --report` |
+
+**Compêndio e arsenal são irmãos, e a diferença importa:** um verbete do compêndio
+é inerte e custa zero token por sessão; uma skill instalada é ativa, cobra ~93
+tokens em *toda* sessão e muda como o agente decide. Por isso o compêndio não tem
+teto e o arsenal tem. O arsenal guarda **apenas julgamento** — por que entrou,
+com que limite, como sair; todo fato (versão, custo, uso, se está habilitado) é
+lido do disco na hora, e `check` reprova se um campo mensurável aparecer no TOML.
 
 Rode como módulo (`python -m tools.X`) a partir da raiz do repo, ou passe `--root`
 explícito. Testes em `../tests/test_vault_*.py` e `../tests/test_export_plugins.py`.
