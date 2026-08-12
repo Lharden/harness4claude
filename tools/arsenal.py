@@ -366,6 +366,34 @@ def _short(plugin_label: str) -> str:
     return plugin_label.split("@")[0]
 
 
+CATALOGO_JSON = Path.home() / ".claude" / "plugins" / "plugin-catalog-cache.json"
+MODELO_CATALOGO = "claude-opus-4-7"
+
+
+def catalogo() -> dict[str, dict]:
+    """Catálogo de marketplace, chaveado por nome curto. Vazio se ausente/ilegível."""
+    try:
+        with open(CATALOGO_JSON, encoding="utf-8") as handle:
+            bruto = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return {_short(k): v for k, v in (bruto.get("catalog", {}).get("plugins", {}) or {}).items()}
+
+
+def custo_oficial(entrada: dict) -> int | None:
+    """`always_on` do catálogo: os tokens que o plugin cobra por sessão, medidos na fonte.
+
+    Preferido sobre a aproximação chars/4 porque é fato, não estimativa — e fato
+    vem do disco. Conferido em 2026-08-12 contra a medição local: no item
+    dominante (data-engineering) bate em 3% (3.751 oficial vs 3.876 estimado);
+    nos pequenos desvia até 2x, porque hooks e comandos entram de forma diferente
+    na conta da Anthropic. Só cobre plugin de marketplace — plugin local e skill
+    pessoal não estão no catálogo, e para esses a aproximação continua valendo.
+    """
+    valor = ((entrada.get("tokens") or {}).get(MODELO_CATALOGO) or {}).get("always_on")
+    return int(valor) if isinstance(valor, (int, float)) else None
+
+
 def uso_de_plugin() -> dict[str, int]:
     """pluginUsage somado por nome curto.
 
@@ -435,8 +463,14 @@ def agregado_por_ferramenta(entradas: list[dict]) -> dict[str, dict]:
         alvo["skills"].append(s["id"])
 
     plugin_usage = uso_de_plugin()
+    cat = catalogo()
     for chave, alvo in agregado.items():
         alvo["usos_plugin"] = plugin_usage.get(chave, 0)
+        oficial = custo_oficial(cat.get(chave) or {}) if alvo["enabled"] else None
+        alvo["tokens_oficiais"] = oficial
+        # Fato ganha de estimativa. `chars` continua exposto para conferência.
+        alvo["tokens"] = oficial if oficial is not None else tokens(alvo["chars"])
+        alvo["fonte_do_custo"] = "catalogo" if oficial is not None else "estimado"
     return agregado
 
 
@@ -513,7 +547,7 @@ def command_reconcile(root: Path) -> dict:
         achado(
             "fantasma", ident, "error",
             f"habilitado no disco, sem decisão no registry ({info['n_skills']} skill(s), "
-            f"~{tokens(info['chars'])} tok/sessão)",
+            f"{info['tokens']} tok/sessão)",
             chars=info["chars"], n_skills=info["n_skills"], usos=info["usos"],
         )
 
@@ -530,7 +564,7 @@ def command_reconcile(root: Path) -> dict:
             achado(
                 "absorvido_mas_instalado", ident, "warning",
                 f"a peça já foi absorvida em {item.get('absorvido_em')}, mas o pacote inteiro "
-                f"continua habilitado (~{tokens(info['chars'])} tok/sessão) — pagando duas vezes",
+                f"continua habilitado ({info['tokens']} tok/sessão) — pagando duas vezes",
                 chars=info["chars"],
             )
         if info and info["enabled"] and item.get("decisao") == "prova":
@@ -696,6 +730,190 @@ def command_build(root: Path, escrever: bool) -> dict:
     }
 
 
+VISTOS_REL = Path("arsenal") / "vistos.toml"
+CATALOGO_STALE_DIAS = 14
+
+
+def _idade_do_catalogo() -> int | None:
+    """Dias desde o fetch do catálogo. None se ilegível."""
+    try:
+        with open(CATALOGO_JSON, encoding="utf-8") as handle:
+            carimbo = str(json.load(handle).get("fetchedAt", ""))[:10]
+        return (date.today() - date.fromisoformat(carimbo)).days
+    except (OSError, ValueError):
+        return None
+
+
+def load_vistos(root: Path) -> set[str]:
+    caminho = Path(root) / VISTOS_REL
+    if not caminho.is_file():
+        return set()
+    with open(caminho, "rb") as handle:
+        return set(tomllib.load(handle).get("vistos") or [])
+
+
+def _grava_vistos(root: Path, ids: set[str]) -> None:
+    caminho = Path(root) / VISTOS_REL
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    corpo = "\n".join(f'  "{i}",' for i in sorted(ids))
+    caminho.write_text(
+        "# Marketplace já triado. NÃO é julgamento — é só memória de que algo já\n"
+        "# passou pelos olhos, para o funil proativo reportar apenas a novidade.\n"
+        "# Quem carrega decisão é tools.toml (entrou) e dispensados.toml (não entrou).\n"
+        f'\nupdated = "{date.today().isoformat()}"\nvistos = [\n{corpo}\n]\n',
+        encoding="utf-8",
+    )
+
+
+def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: bool) -> dict:
+    """Funil proativo: o que apareceu e ainda não passou por decisão.
+
+    Roda sem gatilho do usuário, ao contrário da skill `assimilar` — aqui a fonte
+    é fechada e verificável (catálogo local, notas de sessão locais), então não há
+    material de terceiro para colocar em quarentena nem link para buscar.
+    """
+    if not marketplaces and not sessoes:
+        marketplaces = sessoes = True
+
+    decididos: set[str] = set()
+    caminho = registry_path(root)
+    if caminho.is_file():
+        decididos |= {str(t.get("id")) for t in (load_registry(caminho).get("tools") or [])}
+    decididos |= set(load_dispensados(root))
+    vistos = load_vistos(root)
+
+    avisos: list[str] = []
+    novos: list[dict] = []
+
+    if marketplaces:
+        idade = _idade_do_catalogo()
+        if idade is None:
+            avisos.append(f"catálogo ilegível em {CATALOGO_JSON} — nenhuma novidade pode ser detectada")
+        elif idade > CATALOGO_STALE_DIAS:
+            # Sem este aviso, "nada novo" fica indistinguível de "não conferi", e o
+            # funil proativo passa a dar a impressão de cobertura que não tem.
+            avisos.append(
+                f"catálogo tem {idade} dias (fetchedAt). 'Nada novo' aqui pode significar "
+                "'catálogo não atualizou'. Rode `claude plugin marketplace update`."
+            )
+        cat = catalogo()
+        for ident, entrada in sorted(cat.items()):
+            if ident in decididos or ident in vistos:
+                continue
+            novos.append({
+                "id": ident, "origem": "marketplace",
+                "tokens": custo_oficial(entrada),
+                "n_skills": len(((entrada.get("components") or {}).get("skills")) or []),
+            })
+
+    if sessoes:
+        conhecidos = {i.lower() for i in decididos | vistos}
+        for md in sorted((Path(root) / "raw").rglob("*.md")):
+            try:
+                texto = md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for termo in set(re.findall(r"`([a-z][a-z0-9._@/-]{3,40})`", texto)):
+                base = termo.split("/")[-1].split("@")[0].lower()
+                if base in conhecidos or "." in base or len(base) < 4:
+                    continue
+                conhecidos.add(base)
+                novos.append({"id": base, "origem": "sessao", "onde": md.name})
+
+    if aceitar and novos:
+        _grava_vistos(root, vistos | {n["id"] for n in novos})
+
+    do_mkt = [n for n in novos if n["origem"] == "marketplace"]
+    return {
+        "comando": "candidates",
+        "ready": True,  # candidato não é defeito: é trabalho a fazer.
+        "errors": [],
+        "warnings": avisos,
+        "resumo": {
+            "novos": len(novos),
+            "de_marketplace": len(do_mkt),
+            "de_sessao": len(novos) - len(do_mkt),
+            "ja_decididos": len(decididos),
+            "ja_vistos": len(vistos),
+            "baseline_gravada": bool(aceitar and novos),
+        },
+        "candidatos": sorted(novos, key=lambda n: (-(n.get("tokens") or 0), n["id"]))[:60],
+    }
+
+
+def command_gate(root: Path, alvo: str) -> dict:
+    """A única barreira dura do sistema: instalar exige decisão prévia e orçamento.
+
+    Três motivos de bloqueio, e só três:
+      1. sem entrada no registry  — instalar sem decidir é como o roster chegou a
+         63% de peso morto sem ninguém perceber;
+      2. em dispensados.toml      — a decisão já foi tomada; reverter é explícito,
+         não por acidente de digitação;
+      3. estoura o teto           — o custo entra ANTES, com o número na mão.
+
+    NÃO bloqueia por colisão de gatilho, embora o plano original previsse: as
+    descrições de um plugin ainda não instalado não estão em lugar nenhum para
+    serem embedadas, e o catálogo traz só os nomes das skills. Colisão continua
+    sendo detecção pós-instalação, via `arsenal collisions`. Prometer um bloqueio
+    que não acontece é pior que não prometer.
+    """
+    ident = _short(alvo.strip())
+    dispensados = load_dispensados(root)
+    caminho = registry_path(root)
+    entradas: dict[str, dict] = {}
+    teto = TETO_TOKENS_PADRAO
+    if caminho.is_file():
+        registry = load_registry(caminho)
+        entradas = {str(t.get("id")): t for t in (registry.get("tools") or []) if t.get("id")}
+        teto = int(registry.get("teto_tokens") or TETO_TOKENS_PADRAO)
+
+    def bloqueio(motivo: str, comoResolver: str) -> dict:
+        return {"comando": "gate", "ready": False, "errors": [motivo],
+                "warnings": [], "resumo": {"alvo": ident, "como_resolver": comoResolver}}
+
+    if ident in dispensados:
+        item = dispensados[ident]
+        return bloqueio(
+            f"'{ident}' foi dispensado em {item.get('decidido_em')}: {item.get('motivo')}",
+            "Se a decisão mudou, tire de dispensados.toml e escreva a entrada nova em "
+            "tools.toml dizendo o que mudou.",
+        )
+
+    if ident not in entradas:
+        return bloqueio(
+            f"'{ident}' não tem decisão registrada em arsenal/tools.toml",
+            "Rode a skill `assimilar` com a fonte — ela decompõe, confronta com o que já "
+            "existe aqui e escreve a decisão. Instalar é a exceção; absorver costuma bastar.",
+        )
+
+    item = entradas[ident]
+    if item.get("decisao") == "absorvido":
+        return bloqueio(
+            f"'{ident}' está como 'absorvido': a peça já entrou em {item.get('absorvido_em')}",
+            "Instalar agora paga o pacote inteiro por algo que já foi reimplementado aqui. "
+            "Se o pacote inteiro passou a ser necessário, mude a decisão para 'adotado'.",
+        )
+
+    atual = command_budget(teto)
+    gasto = atual["resumo"]["tokens"]
+    custo = custo_oficial(catalogo().get(ident) or {})
+    if custo is None:
+        return {"comando": "gate", "ready": True, "errors": [],
+                "warnings": [f"custo de '{ident}' não está no catálogo — orçamento não pôde ser "
+                             f"conferido antes. Rode `arsenal budget` depois de instalar."],
+                "resumo": {"alvo": ident, "gasto_atual": gasto, "teto": teto}}
+    if gasto + custo > teto:
+        return bloqueio(
+            f"'{ident}' custa {custo} tok e o roster já gasta {gasto} de {teto} — "
+            f"instalar estouraria em {gasto + custo - teto}",
+            "Dispense algo de peso equivalente antes, ou suba o teto_tokens no registry "
+            "com o motivo escrito.",
+        )
+    return {"comando": "gate", "ready": True, "errors": [], "warnings": [],
+            "resumo": {"alvo": ident, "custo": custo, "gasto_atual": gasto,
+                       "sobra_depois": teto - gasto - custo, "teto": teto}}
+
+
 def _lista_load_bearing(itens: list[dict], limite: int = 6) -> str:
     return ", ".join(f"{v['id']}={v['usos_plugin']}" for v in itens[:limite])
 
@@ -706,22 +924,24 @@ def command_budget(teto: int) -> dict:
     habilitadas = [v for v in disco.values() if v["enabled"]]
 
     chars = sum(v["chars"] for v in habilitadas)
+    tok_total = sum(v["tokens"] for v in habilitadas)
+    n_oficiais = sum(1 for v in habilitadas if v["fonte_do_custo"] == "catalogo")
     total_skills = sum(1 for s in entradas if s["enabled"])
     usadas = sum(1 for s in entradas if s["enabled"] and (s.get("usage_count") or 0) > 0)
     # "Sem retorno no roster" != "morto". Custa tokens de descrição e nenhuma
     # skill sua foi invocada; se usos_plugin for alto, o alvo certo é encurtar as
     # descrições, não desinstalar. Ferramenta sem chars não entra: não custa nada.
-    sem_retorno = [v for v in habilitadas if v["usos"] == 0 and v["chars"] > 0]
-    chars_sem_retorno = sum(v["chars"] for v in sem_retorno)
+    sem_retorno = [v for v in habilitadas if v["usos"] == 0 and v["tokens"] > 0]
+    tok_sem_retorno = sum(v["tokens"] for v in sem_retorno)
     load_bearing = [v for v in sem_retorno if v["usos_plugin"] >= 100]
 
-    ranking = sorted(habilitadas, key=lambda v: (-v["chars"], v["id"]))
-    excedente = tokens(chars) - teto
+    ranking = sorted(habilitadas, key=lambda v: (-v["tokens"], v["id"]))
+    excedente = tok_total - teto
 
     erros = []
     if excedente > 0:
         erros.append(
-            f"orçamento estourado: ~{tokens(chars)} tok > teto {teto} (excedente ~{excedente})"
+            f"orçamento estourado: {tok_total} tok > teto {teto} (excedente {excedente})"
         )
 
     return {
@@ -729,8 +949,8 @@ def command_budget(teto: int) -> dict:
         "ready": not erros,
         "errors": erros,
         "warnings": (
-            ([f"~{tokens(chars_sem_retorno)} tok "
-              f"({round(100 * chars_sem_retorno / chars) if chars else 0}%) em "
+            ([f"{tok_sem_retorno} tok "
+              f"({round(100 * tok_sem_retorno / tok_total) if tok_total else 0}%) em "
               f"{len(sem_retorno)} ferramenta(s) que custam roster e nunca tiveram skill invocada"]
              if sem_retorno else [])
             + ([f"dessas, {len(load_bearing)} têm uso pesado por hook/MCP "
@@ -738,24 +958,29 @@ def command_budget(teto: int) -> dict:
                if load_bearing else [])
         ),
         "resumo": {
-            "chars_exatos": chars,
-            "tokens_aprox": tokens(chars),
+            "tokens": tok_total,
             "teto": teto,
             "excedente": max(0, excedente),
+            "chars_exatos": chars,
             "entradas_no_roster": total_skills,
             "entradas_com_uso": usadas,
             "ferramentas_habilitadas": len(habilitadas),
+            "custo_do_catalogo": n_oficiais,
+            "custo_estimado": len(habilitadas) - n_oficiais,
             "ferramentas_sem_retorno": len(sem_retorno),
-            "tokens_sem_retorno": tokens(chars_sem_retorno),
+            "tokens_sem_retorno": tok_sem_retorno,
             "dessas_load_bearing": len(load_bearing),
-            "nota": f"chars é exato; tokens ~ chars/{CHARS_POR_TOKEN}, aproximação declarada",
+            "nota": (
+                f"custo vem do catálogo ({MODELO_CATALOGO}.always_on) quando existe; "
+                f"senão ~ chars/{CHARS_POR_TOKEN}. `fonte_do_custo` diz qual foi usada em cada linha."
+            ),
         },
         "ranking": [
             {
                 "id": v["id"], "n_skills": v["n_skills"], "n_comandos": v["n_comandos"],
-                "chars": v["chars"], "tokens": tokens(v["chars"]),
+                "chars": v["chars"], "tokens": v["tokens"], "fonte_do_custo": v["fonte_do_custo"],
                 "usos": v["usos"], "usos_plugin": v["usos_plugin"],
-                "tokens_por_uso": (tokens(v["chars"]) if v["usos"] == 0 else round(tokens(v["chars"]) / v["usos"])),
+                "tokens_por_uso": (v["tokens"] if v["usos"] == 0 else round(v["tokens"] / v["usos"])),
             }
             for v in ranking
         ],
@@ -926,6 +1151,15 @@ def main() -> int:
     construir.add_argument("--write", action="store_true", help="grava; sem isso imprime")
     orc = sub.add_parser("budget", parents=[comum], help="Custo do roster contra o teto.")
     orc.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
+    portao = sub.add_parser("gate", parents=[comum],
+                            help="Pode instalar? Exit 1 = bloqueado, com o motivo.")
+    portao.add_argument("--tool", required=True, help="id do plugin (nome curto)")
+    cand = sub.add_parser("candidates", parents=[comum],
+                          help="Funil proativo: o que apareceu e não passou por decisão.")
+    cand.add_argument("--marketplaces", action="store_true", help="só o catálogo")
+    cand.add_argument("--sessions", action="store_true", help="só as notas de sessão")
+    cand.add_argument("--accept", action="store_true",
+                      help="marca os listados como vistos (baseline; não é decisão)")
     col = sub.add_parser("collisions", parents=[comum], help="Descrições que disputam o mesmo gatilho.")
     col.add_argument("--min", dest="minimo", type=float, default=COS_CRUZADO_ALERTA)
     col.add_argument("--todas", action="store_true", help="inclui skills desabilitadas")
@@ -939,6 +1173,10 @@ def main() -> int:
         res = command_reconcile(root)
     elif args.comando == "build":
         res = command_build(root, args.write)
+    elif args.comando == "gate":
+        res = command_gate(root, args.tool)
+    elif args.comando == "candidates":
+        res = command_candidates(root, args.marketplaces, args.sessions, args.accept)
     elif args.comando == "budget":
         res = command_budget(args.teto)
     else:

@@ -337,11 +337,26 @@ class TestBudget:
         fake_claude({"magro": {"skills": {"s": "curta"}}})
         assert ars.command_budget(teto=10_000)["ready"] is True
 
-    def test_chars_e_exato_e_tokens_declarado_como_aproximacao(self, ars, fake_claude):
+    def test_custo_diz_de_onde_veio_em_cada_linha(self, ars, fake_claude):
+        """Plugin fora do catalogo cai na estimativa, e a linha DIZ isso. Numero
+        que nao declara a procedencia vira fato por habito."""
         fake_claude({"p": {"skills": {"s": "d" * 100}}})
         res = ars.command_budget(teto=10_000)
         assert res["resumo"]["chars_exatos"] > 100
-        assert "aproxima" in res["resumo"]["nota"]
+        assert all("fonte_do_custo" in r for r in res["ranking"])
+        assert res["ranking"][0]["fonte_do_custo"] == "estimado"
+
+    def test_custo_do_catalogo_ganha_da_estimativa(self, ars, fake_claude, tmp_path, monkeypatch):
+        """always_on do catalogo e FATO medido na fonte; chars/4 e estimativa.
+        Fato ganha — e no item dominante os dois batem em 3%."""
+        fake_claude({"p": {"skills": {"s": "d" * 400}}})
+        cat = tmp_path / "catalogo.json"
+        cat.write_text(json.dumps({"catalog": {"plugins": {
+            "p@mkt": {"tokens": {ars.MODELO_CATALOGO: {"always_on": 777}}}}}}), encoding="utf-8")
+        monkeypatch.setattr(ars, "CATALOGO_JSON", cat)
+        res = ars.command_budget(teto=10_000)
+        assert res["resumo"]["tokens"] == 777
+        assert res["ranking"][0]["fonte_do_custo"] == "catalogo"
 
     def test_load_bearing_e_separado_de_peso_morto(self, ars, fake_claude):
         """Custa roster e nao tem uso de skill, mas o plugin e muito usado:
@@ -417,6 +432,61 @@ class TestCollisions:
         problema."""
         monkeypatch.setattr(ars, "IDX_DIR", tmp_path / "nao-existe")
         assert "MCP" in ars.command_collisions(minimo=0.5)["resumo"]["ponto_cego"]
+
+
+class TestCandidates:
+    """O funil proativo — roda sem gatilho do usuario, ao contrario da skill
+    `assimilar`. Fonte fechada e verificavel: catalogo local, notas locais."""
+
+    def _catalogo(self, ars, monkeypatch, tmp_path, plugins, fetched="2026-08-12"):
+        cat = tmp_path / "catalogo.json"
+        cat.write_text(json.dumps({"fetchedAt": f"{fetched}T00:00:00Z",
+                                   "catalog": {"plugins": plugins}}), encoding="utf-8")
+        monkeypatch.setattr(ars, "CATALOGO_JSON", cat)
+
+    def test_catalogo_velho_avisa_alto(self, ars, monkeypatch, tmp_path):
+        """Sem este aviso, "nada novo" fica indistinguivel de "nao conferi", e o
+        funil passa a dar impressao de cobertura que nao tem."""
+        self._catalogo(ars, monkeypatch, tmp_path, {}, fetched="2020-01-01")
+        res = ars.command_candidates(tmp_path, True, False, False)
+        assert any("dias" in w for w in res["warnings"]), res["warnings"]
+
+    def test_catalogo_ausente_avisa_em_vez_de_dizer_zero(self, ars, monkeypatch, tmp_path):
+        monkeypatch.setattr(ars, "CATALOGO_JSON", tmp_path / "nao-existe.json")
+        res = ars.command_candidates(tmp_path, True, False, False)
+        assert any("ilegível" in w or "ilegivel" in w for w in res["warnings"])
+
+    def test_ja_decidido_nao_reaparece(self, ars, monkeypatch, tmp_path):
+        """Adotado e dispensado ja passaram por decisao. Reapresenta-los seria
+        exatamente relitigar o que ja foi resolvido."""
+        self._catalogo(ars, monkeypatch, tmp_path, {
+            "superpowers@mkt": {}, "huggingface-skills@mkt": {}, "novidade@mkt": {}})
+        _escreve_registry(tmp_path, _registry(),
+                          dispensados=[{"id": "huggingface-skills", "motivo": "m",
+                                        "decidido_em": "2026-08-12"}])
+        res = ars.command_candidates(tmp_path, True, False, False)
+        assert [c["id"] for c in res["candidatos"]] == ["novidade"]
+
+    def test_accept_grava_baseline_e_silencia_a_segunda_passada(self, ars, monkeypatch, tmp_path):
+        self._catalogo(ars, monkeypatch, tmp_path, {"a@mkt": {}, "b@mkt": {}})
+        assert ars.command_candidates(tmp_path, True, False, True)["resumo"]["novos"] == 2
+        assert ars.command_candidates(tmp_path, True, False, False)["resumo"]["novos"] == 0
+
+    def test_candidato_nao_e_defeito(self, ars, monkeypatch, tmp_path):
+        """`ready` continua True: candidato e trabalho a fazer, nao erro. Se
+        reprovasse, o comando viveria vermelho e ninguem mais leria."""
+        self._catalogo(ars, monkeypatch, tmp_path, {"novo@mkt": {}})
+        res = ars.command_candidates(tmp_path, True, False, False)
+        assert res["ready"] is True and res["resumo"]["novos"] == 1
+
+    def test_custo_do_candidato_vem_do_catalogo(self, ars, monkeypatch, tmp_path):
+        """Saber o preco ANTES de instalar e o ponto: posthog custaria 17.793 tok,
+        tres vezes o roster inteiro."""
+        self._catalogo(ars, monkeypatch, tmp_path, {
+            "posthog@mkt": {"tokens": {ars.MODELO_CATALOGO: {"always_on": 17793}},
+                            "components": {"skills": [{"name": "x"}]}}})
+        res = ars.command_candidates(tmp_path, True, False, False)
+        assert res["candidatos"][0]["tokens"] == 17793
 
 
 def _escreve_registry(root: Path, registry: dict, dispensados: list | None = None) -> None:

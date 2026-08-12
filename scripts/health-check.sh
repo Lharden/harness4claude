@@ -106,8 +106,13 @@ else
     # Cada caso: nome | hook | payload | exit esperado | trecho exigido no stdout
     smoke() {
         _name="$1"; _hook="$2"; _payload="$3"; _want_code="$4"; _want_out="${5:-}"
+        # AI_BRAIN_PATH aponta para um vault VAZIO dentro do sandbox. Sem isso o
+        # arsenal-gate leria o vault real da maquina, e o smoke passaria a medir o
+        # conteudo do registry de quem roda em vez do gate. Vault vazio = nenhuma
+        # decisao registrada, que e exatamente o cenario que o gate deve bloquear.
         _out="$(printf '%s' "$_payload" | \
             HARNESS_DIR="$SMOKE_DIR/state" HARNESS_SKIP_DEPCHECK=1 \
+            AI_BRAIN_PATH="$SMOKE_DIR/vault" \
             bash "$HOOKS_DIR/$_hook" 2>/dev/null)" && _code=0 || _code=$?
         if [ "$_code" != "$_want_code" ]; then
             echo "[FAIL]   $_name — exit $_code, esperado $_want_code"
@@ -138,6 +143,22 @@ else
         '{"tool_input":{"command":"ls -la"}}' 0
 
     smoke "git-guard avisa payload estranho" harness-git-guard.sh \
+        '{"toolInput":{"command":"ls"}}' 0 "nao reconheceu"
+
+    # Arsenal gate: a unica barreira dura do sistema. Um plugin inexistente nao
+    # tem decisao no registry por definicao, entao serve de alvo estavel sem
+    # depender do conteudo do vault desta maquina.
+    smoke "arsenal-gate bloqueia install sem decisao" harness-arsenal-gate.sh \
+        '{"tool_input":{"command":"claude plugin install plugin-que-nao-existe-xyz@mkt"}}' 2
+
+    smoke "arsenal-gate passa comando benigno" harness-arsenal-gate.sh \
+        '{"tool_input":{"command":"ls -la"}}' 0
+
+    # Tirar nunca precisa de permissao: `disable` e `uninstall` passam direto.
+    smoke "arsenal-gate passa disable" harness-arsenal-gate.sh \
+        '{"tool_input":{"command":"claude plugin disable foo --scope user"}}' 0
+
+    smoke "arsenal-gate avisa payload estranho" harness-arsenal-gate.sh \
         '{"toolInput":{"command":"ls"}}' 0 "nao reconheceu"
 
     # Os tres recebem cwd para exercitar a propagacao ate o resolvedor de
