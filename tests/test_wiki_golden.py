@@ -41,6 +41,19 @@ def _golden() -> dict:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
+def _chaves(hit: dict) -> set[str]:
+    """Formas pelas quais um hit pode ser citado no golden.
+
+    No compendio a unidade de sentido e a secao: tres verbetes da mesma pagina sao tres
+    respostas diferentes, e casar so `compendio/02 recuperacao-busca` daria o caso por
+    certo sem provar que o verbete certo veio. Fora dele o alvo continua sendo a pagina.
+    """
+    chaves = {hit["id"]}
+    if hit.get("section"):
+        chaves.add(f"{hit['id']}#{hit['section']}")
+    return chaves
+
+
 def test_golden_bem_formado() -> None:
     """O golden set e artefato versionado: nao pode degradar sem alguem perceber."""
     golden = _golden()
@@ -58,6 +71,7 @@ def test_alvos_do_golden_existem_no_indice() -> None:
     """Alvo renomeado ou apagado inutiliza o caso — falhar aqui, nao no hit rate."""
     index, _ = wq.load_index()
     conhecidos = {chunk["page_id"] for chunk in index["pages"]}
+    conhecidos |= {chunk["id"] for chunk in index["pages"]}
 
     orfaos = [
         case["expect_any"]
@@ -73,8 +87,10 @@ def test_positives_top3_hit_rate() -> None:
     golden = _golden()
     detalhes, acertos = [], 0
     for case in golden["positives"]:
-        top = [hit["id"] for hit in wq.query(case["prompt"], top_k=TOP_K)["hits"]]
-        ok = any(alvo in top for alvo in case["expect_any"])
+        hits = wq.query(case["prompt"], top_k=TOP_K)["hits"]
+        top = [sorted(_chaves(hit))[-1] for hit in hits]
+        alcance = set().union(*(_chaves(hit) for hit in hits)) if hits else set()
+        ok = any(alvo in alcance for alvo in case["expect_any"])
         acertos += ok
         detalhes.append(f"{'OK  ' if ok else 'MISS'} {case['prompt'][:48]} -> {top}")
     taxa = acertos / len(golden["positives"])

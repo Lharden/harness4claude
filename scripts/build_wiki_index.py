@@ -164,8 +164,24 @@ def page_meta(path, wiki_dir, text, aliases_map=None):
     }, body
 
 
+# Numa colecao de referencia o cabecalho E o nome canonico do verbete — "Embedding",
+# "Disjuntor", "Norma L2". Vira alias para a Camada A responder em ~200ms a quem sabe o
+# nome. Noutras paginas o cabecalho e estrutural ("Contexto", "Objetivo", "Estado") e
+# viraria gatilho falso em qualquer prompt que use a palavra.
+HEADING_E_NOME = ("compendium",)
+
+
 def _chunk(meta, heading, text, first):
     """Monta um registro de chunk no formato que skill_router.layer_b/pick consome."""
+    aliases = list(meta["aliases"]) if first else []
+    if heading and meta["type"] in HEADING_E_NOME:
+        aliases.append(heading)
+        # A Camada A procura o alias DENTRO do prompt: um rotulo longo como
+        # "Disjuntor (circuit breaker)" nunca casa com quem digita so "disjuntor".
+        # A forma sem o parentetico e o nome curto pelo qual as pessoas perguntam.
+        curto = re.sub(r"\s*\([^)]*\)\s*$", "", heading).strip()
+        if curto and curto != heading:
+            aliases.append(curto)
     return {
         "id": f"{meta['page_id']}#{heading}" if heading else meta["page_id"],
         "page_id": meta["page_id"],
@@ -176,9 +192,7 @@ def _chunk(meta, heading, text, first):
         "tags": meta["tags"],
         "path": meta["path"],
         "description": text[:CHUNK_CHARS],
-        # Aliases so no primeiro chunk: senao a Camada A devolveria a mesma pagina
-        # uma vez por secao.
-        "aliases": meta["aliases"] if first else [],
+        "aliases": aliases,
         # A wiki nao tem entrada desabilitada nem contador de uso — neutros por
         # construcao, para caber no contrato de layer_b/pick sem fork.
         "enabled": True,

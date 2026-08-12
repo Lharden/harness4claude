@@ -92,6 +92,44 @@ def test_aliases_curados_entram_no_primeiro_chunk(tmp_path: Path) -> None:
     assert "prior art" in chunks[0]["aliases"]
 
 
+# --- cabecalho como nome canonico -----------------------------------------
+
+
+COMPENDIO_FM = "---\ntype: compendium\nupdated: 2026-01-01\nstatus: active\n---\n\n"
+
+
+def escrever_verbete(root: Path, rel: str, heading: str) -> None:
+    path = root / "wiki" / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"{COMPENDIO_FM}# Colecao\n\n## {heading}\n{LONGO}", encoding="utf-8"
+    )
+
+
+def test_cabecalho_de_verbete_vira_alias(tmp_path: Path) -> None:
+    """Quem sabe o nome do conceito merece resposta pela Camada A, sem passar por cosseno."""
+    escrever_verbete(tmp_path, "compendio/02 recuperacao.md", "Embedding")
+
+    assert "Embedding" in chunks_of(tmp_path, "compendio/02 recuperacao.md")[0]["aliases"]
+
+
+def test_cabecalho_estrutural_nao_vira_alias(tmp_path: Path) -> None:
+    """"Contexto"/"Objetivo" como alias disparariam em qualquer prompt que os use."""
+    write_page(tmp_path, "projects/p.md", f"# P\n\n## Contexto\n{LONGO}")
+
+    assert "Contexto" not in chunks_of(tmp_path, "projects/p.md")[0]["aliases"]
+
+
+def test_alias_curto_sem_parentetico(tmp_path: Path) -> None:
+    """A Camada A procura o alias DENTRO do prompt: rotulo longo nunca casa com o curto."""
+    escrever_verbete(tmp_path, "compendio/03 confiabilidade.md", "Disjuntor (circuit breaker)")
+
+    aliases = chunks_of(tmp_path, "compendio/03 confiabilidade.md")[0]["aliases"]
+
+    assert "Disjuntor (circuit breaker)" in aliases
+    assert "Disjuntor" in aliases
+
+
 def test_chunk_carrega_campos_neutros_do_contrato_do_router(tmp_path: Path) -> None:
     write_page(tmp_path, "decisions/a.md", f"# T\n\n## Um\n{LONGO}")
 

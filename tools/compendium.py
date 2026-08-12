@@ -502,8 +502,10 @@ _PARECE_ID = re.compile(r"^[a-z]?-?\d|^[a-z]-\d", re.I)
 MIN_OCORRENCIAS = 3
 
 
-# Fim de frase ou início de item — depois disto, maiúscula não significa nada.
-_INICIO_DE_FRASE = re.compile(r"(^|[.!?:;\n]|^\s*[-*>|#]+)\s*$")
+# Marcação que precede uma palavra sem ser texto: célula de tabela, item de lista,
+# heading, citação, negrito, código. Descascada antes de julgar a maiúscula.
+_MARCACAO = re.compile(r"[-*>|#`~\[\](){}\"'\s]+$")
+_FIM_DE_FRASE = ".!?:;"
 
 
 def _forma_valida(token: str) -> bool:
@@ -532,8 +534,14 @@ def _capitalizado_no_meio(texto: str, inicio: int) -> bool:
     Sem esta checagem a fila enchia de "Step", "Quando", "Sem", "Rodar" — palavra comum
     que só está maiúscula porque abre a sentença. "Obsidian" e "Ollama" aparecem
     maiúsculos no meio do texto, e é isso que os torna nome próprio.
+
+    Num vault escrito em markdown, "início de frase" precisa incluir início de célula de
+    tabela, de item de lista e de rótulo em negrito: `| Evidência |` e `**Rollback**` são
+    a mesma maiúscula estrutural que `. Quando`, e enchiam metade da fila.
     """
-    return not _INICIO_DE_FRASE.search(texto[max(0, inicio - 60):inicio])
+    linha = texto[:inicio].rsplit("\n", 1)[-1]
+    antes = _MARCACAO.sub("", linha)
+    return bool(antes) and antes[-1] not in _FIM_DE_FRASE
 
 
 def known_tokens(registry: dict) -> set[str]:

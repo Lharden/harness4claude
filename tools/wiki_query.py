@@ -1,7 +1,7 @@
 """Consulta semantica da wiki AI-Brain — a operacao `query` do padrao LLM Wiki.
 
-Espelha o skill-router: **Camada A** (match exato de titulo/slug) e, so quando A vem
-vazia, **Camada B** (cosseno sobre embeddings). As tres funcoes de decisao
+Espelha o skill-router: **Camada A** (match exato de titulo/slug), pinada no topo, e
+**Camada B** (cosseno sobre embeddings) completando sempre. As tres funcoes de decisao
 (`layer_a`, `layer_b`, `pick`) sao importadas de hooks/skill_router.py, nao copiadas —
 os registros de pagina carregam `enabled`/`usage_count` neutros justamente para caber
 nesse contrato.
@@ -127,14 +127,20 @@ def dedupe_by_page(hits: list[dict], top_k: int) -> list[dict]:
 
 
 def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_TOP_K) -> list[dict]:
-    """Camada A; Camada B so quando A vem vazia. Nunca levanta.
+    """Camada A pinada no topo, Camada B **sempre** completando. Nunca levanta.
+
+    Aqui a Camada A nao curto-circuita a B, ao contrario do skill-router. La o match
+    exato de nome de skill E a decisao: ha um vencedor e a rota acaba. Aqui um match
+    exato diz "este verbete e relevante", nao "mais nada e" — quem pergunta "o que fazer
+    quando o embedding cai no meio do pipeline" nomeia um verbete mas quer outra pagina.
+    Custa uma ida ao Ollama por consulta; e uma consulta deliberada, com 8s de folga.
 
     Sobre-busca antes de deduplicar: varios chunks da mesma pagina podem ocupar o topo,
     e cortar em top_k antes da dedupe devolveria uma pagina so.
     """
     a_hits = sr.layer_a(question.lower(), pages)
     b_scored: list[dict] = []
-    if vecs and not a_hits:
+    if vecs:
         try:
             b_scored = sr.layer_b(embed_query(question), pages, vecs)
         except Exception:  # Ollama fora / timeout / payload torto: degrada p/ Camada A
