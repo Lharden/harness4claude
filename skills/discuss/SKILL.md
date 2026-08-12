@@ -21,6 +21,23 @@ metadata:
 
 ## Protocolo
 
+### 0. Checar prior-art na wiki
+
+Antes de perguntar qualquer coisa, veja se a decisao ja foi tomada:
+
+```bash
+python "$CLAUDE_PLUGIN_ROOT/tools/wiki_prior_art.py" "<descricao da tarefa>"
+```
+
+- **Saida vazia** (o caso comum): siga para o passo 1, sem comentar.
+- **Bloco de prior-art**: leia as paginas citadas antes de perguntar. Se a tarefa
+  propoe algo ja recusado, traga isso ao usuario com o motivo registrado — a decisao
+  dele pode mudar, mas ele decide sabendo. Se ja foi adotado, nao reabra: pergunte se
+  quer estender ou substituir.
+
+Nunca bloqueia: o comando sai 0 mesmo com indice ausente ou Ollama fora do ar. Se o
+bloco avisar que o indice esta desatualizado, trate os achados como incompletos.
+
 ### 1. Extrair decisoes
 
 Pergunte ao usuario sobre estes eixos (apenas os relevantes ao pedido):
@@ -85,3 +102,12 @@ So prossiga para o proximo step do pipeline apos confirmacao.
 - Se o usuario nao tem opiniao sobre algo, classificar como Discretion
 - Manter CONTEXT.md conciso — nao e um PRD, e um registro de constraints
 - Todas as etapas downstream (brainstorming, prd, plan, tdd) DEVEM ler e respeitar CONTEXT.md
+- Prior-art informa, nao decide: achado da wiki e insumo para a conversa, nunca veto
+
+## Onde o CONTEXT.md vai parar
+
+O `vault_sync` espelha `docs/CONTEXT.md` para `wiki/decisions/{projeto}-context.md` no
+vault AI-Brain. Os tres tiers viram registro de assimilacao — **Locked** e o que foi
+adotado, **Deferred** e o que foi recusado, **Discretion** e a area de liberdade. E por
+isso que o passo 0 acha decisao de tarefas antigas: o que voce escrever aqui alimenta o
+prior-art da proxima.

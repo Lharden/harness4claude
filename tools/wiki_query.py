@@ -1,0 +1,212 @@
+"""Consulta semantica da wiki AI-Brain — a operacao `query` do padrao LLM Wiki.
+
+Espelha o skill-router: **Camada A** (match exato de titulo/slug) e, so quando A vem
+vazia, **Camada B** (cosseno sobre embeddings). As tres funcoes de decisao
+(`layer_a`, `layer_b`, `pick`) sao importadas de hooks/skill_router.py, nao copiadas —
+os registros de pagina carregam `enabled`/`usage_count` neutros justamente para caber
+nesse contrato.
+
+Contrato de falha herdado do router: **nunca levanta**. Ollama fora do ar, indice
+ausente ou corrompido degradam para a Camada A (ou para lista vazia), nunca para
+exceção — quem chama e um passo de pipeline que nao pode quebrar por causa de busca.
+
+Uso:
+    python tools/wiki_query.py "pergunta" [--top-k N] [--index DIR] [--json]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import struct
+import sys
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hooks"))
+import skill_router as sr  # noqa: E402
+
+DEFAULT_INDEX = Path.home() / ".claude" / "harness" / "wiki-index"
+OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
+EMBED_MODEL = sr.EMBED_MODEL
+
+# Mais folgado que o EMBED_TIMEOUT=1.2s do router: ali o embed roda no caminho quente
+# de todo prompt; aqui e uma consulta deliberada, onde esperar 8s e aceitavel.
+EMBED_TIMEOUT = 8.0
+DEFAULT_TOP_K = 5
+SNIPPET_CHARS = 240
+
+# Dois patamares, ambos medidos com scripts/calibrate_wiki_floor.py contra
+# tests/data/golden-wiki.json — nenhum dos dois foi chutado.
+#
+# MIN_COS = "vale mostrar". Com chunking por secao, as respostas certas aparecem em
+# rank 1 de 512 mas com cosseno 0.33-0.40: cortar em 0.45 descartaria acerto #1. A
+# 0.32 o hit@3 e 93%; acima disso cai para 87%.
+#
+# CONFIDENT_COS = "vale afirmar". E o MIN_COS=0.45 do skill-router, aqui reaproveitado
+# como barra de confianca: nenhuma pergunta fora do dominio do vault alcanca esse
+# patamar (medido: 0 falso-positivos em 0.45). Quem consome decide o que fazer com hit
+# abaixo da barra — mostrar como "talvez" em vez de afirmar cobertura.
+MIN_COS = 0.32
+CONFIDENT_COS = 0.45
+
+# Quantos chunks buscar por pagina desejada antes de deduplicar.
+OVERFETCH = 4
+
+
+def load_index(index_dir: Path = DEFAULT_INDEX) -> tuple[dict, list]:
+    """Carrega o indice e os vetores. Devolve ({}, []) se ausente ou corrompido."""
+    try:
+        with open(Path(index_dir) / "wiki-index.json", encoding="utf-8") as handle:
+            index = json.load(handle)
+    except (OSError, ValueError):
+        return {}, []
+    dim = index.get("dim") or 0
+    if not dim:
+        return index, []
+    try:
+        data = (Path(index_dir) / "embeddings.f16.bin").read_bytes()
+        rows = len(data) // (2 * dim)
+        flat = struct.unpack(f"<{rows * dim}e", data[: rows * dim * 2])
+    except (OSError, struct.error):
+        return index, []
+    return index, [flat[i * dim:(i + 1) * dim] for i in range(rows)]
+
+
+def embed_query(question: str, *, timeout: float = EMBED_TIMEOUT) -> list[float]:
+    """Embeda a pergunta via Ollama, normalizada. Levanta se o Ollama nao responder."""
+    request = urllib.request.Request(
+        OLLAMA_URL.rstrip("/") + "/api/embed",
+        data=json.dumps(
+            {"model": EMBED_MODEL, "input": [f"search_query: {question[:1500]}"],
+             "keep_alive": "30m"}
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        vector = json.load(response)["embeddings"][0]
+    norm = math.sqrt(sum(x * x for x in vector)) or 1.0
+    return [x / norm for x in vector]
+
+
+def dedupe_by_page(hits: list[dict], top_k: int) -> list[dict]:
+    """Mantem o melhor chunk de cada pagina — a citacao e a pagina, nao a secao."""
+    best: dict[str, dict] = {}
+    for hit in hits:
+        page_id = hit["skill"].get("page_id", hit["id"])
+        current = best.get(page_id)
+        if current is None or hit.get("score", 0) > current.get("score", 0):
+            best[page_id] = hit
+    ordered = sorted(best.values(), key=lambda h: h.get("score", 0), reverse=True)
+    return ordered[:top_k]
+
+
+def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_TOP_K) -> list[dict]:
+    """Camada A; Camada B so quando A vem vazia. Nunca levanta.
+
+    Sobre-busca antes de deduplicar: varios chunks da mesma pagina podem ocupar o topo,
+    e cortar em top_k antes da dedupe devolveria uma pagina so.
+    """
+    a_hits = sr.layer_a(question.lower(), pages)
+    b_scored: list[dict] = []
+    if vecs and not a_hits:
+        try:
+            b_scored = sr.layer_b(embed_query(question), pages, vecs)
+        except Exception:  # Ollama fora / timeout / payload torto: degrada p/ Camada A
+            b_scored = []
+    saved_top_k, sr.TOP_K = sr.TOP_K, top_k * OVERFETCH
+    saved_min_cos, sr.MIN_COS = sr.MIN_COS, MIN_COS
+    try:
+        chosen = sr.pick(a_hits, b_scored)
+    finally:
+        sr.TOP_K, sr.MIN_COS = saved_top_k, saved_min_cos
+    return dedupe_by_page(chosen, top_k)
+
+
+def snippet(page: dict, limit: int = SNIPPET_CHARS) -> str:
+    """Trecho citavel da pagina."""
+    text = page.get("description", "")
+    return f"{text[:limit].rsplit(' ', 1)[0]}..." if len(text) > limit else text
+
+
+def query(question: str, *, index_dir: Path = DEFAULT_INDEX,
+          top_k: int = DEFAULT_TOP_K) -> dict:
+    """Executa a consulta e devolve resultado estruturado com citacoes."""
+    index, vecs = load_index(index_dir)
+    chunks = index.get("pages", [])
+    if not chunks:
+        return {"question": question, "available": False, "hits": [], "confident_hits": 0}
+    hits = []
+    for hit in route(question, chunks, vecs, top_k=top_k):
+        page = hit["skill"]
+        score = round(float(hit.get("cos", hit.get("score", 1.0))), 4)
+        page_id = page.get("page_id", hit["id"])
+        hits.append({
+            "id": page_id,
+            "title": page.get("title", page_id),
+            "section": page.get("heading", ""),
+            "type": page.get("type", "page"),
+            "layer": hit["layer"],
+            "score": score,
+            # Camada A e match exato de titulo/slug: confianca nao depende de cosseno.
+            "confident": hit["layer"] == "A" or score >= CONFIDENT_COS,
+            "wikilink": f"[[{page_id}]]",
+            "path": page.get("path", ""),
+            "snippet": snippet(page),
+        })
+    return {
+        "question": question,
+        "available": True,
+        "pages_indexed": len({c["page_id"] for c in chunks}),
+        "chunks_indexed": len(chunks),
+        "embeddings": bool(vecs),
+        "confident_hits": sum(h["confident"] for h in hits),
+        "hits": hits,
+    }
+
+
+def render(result: dict) -> str:
+    """Renderiza o resultado para leitura humana."""
+    if not result["available"]:
+        return "wiki-index ausente ou vazio — rode scripts/build_wiki_index.py."
+    if not result["hits"]:
+        return f'Nenhuma pagina acima do piso para: "{result["question"]}"'
+    lines = [
+        f'Consulta: "{result["question"]}"  '
+        f'({result["pages_indexed"]} paginas / {result["chunks_indexed"]} secoes indexadas)',
+        "",
+    ]
+    if not result["confident_hits"]:
+        lines += ["A wiki pode nao cobrir isto — nenhum resultado atingiu a barra de "
+                  "confianca. Os abaixo sao os mais proximos; confira antes de citar.", ""]
+    for i, hit in enumerate(result["hits"], 1):
+        secao = f" › {hit['section']}" if hit["section"] else ""
+        marca = "" if hit["confident"] else "  (abaixo da barra)"
+        lines += [
+            f"{i}. {hit['wikilink']} — {hit['title']}{secao}{marca}",
+            f"   tipo: {hit['type']} · camada {hit['layer']} · score {hit['score']}",
+            f"   {hit['snippet']}",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("question", help="Pergunta em linguagem natural.")
+    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
+    parser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
+    parser.add_argument("--json", action="store_true", help="Saida JSON em vez de texto.")
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    result = query(args.question, index_dir=args.index, top_k=args.top_k)
+    print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else render(result))
+
+
+if __name__ == "__main__":
+    main()

@@ -234,9 +234,20 @@ print(json.dumps({
     exit 0
 fi
 
+if command -v cygpath &>/dev/null; then
+    PLUGIN_DIR_PY="$(cygpath -w "$PLUGIN_DIR")"
+else
+    PLUGIN_DIR_PY="$PLUGIN_DIR"
+fi
+
 export PYTHONUTF8=1
+export PLUGIN_DIR_PY
 python -c "
-import json, sys
+import json, os, sys
+
+parts = []
+
+# 1. Pipeline em andamento (comportamento historico do hook).
 try:
     with open(r'$STATE_FILE_PY') as f:
         state = json.load(f)
@@ -245,16 +256,28 @@ try:
         cls = state.get('classification', 'unknown')
         step = state.get('current_step') or (state['pipeline'][0] if state['pipeline'] else 'none')
         pipe = ' -> '.join(state['pipeline'])
-        msg = json.dumps({
-            'systemMessage': (
-                f'HARNESS v3 RESUMING: Active pipeline {cls} (task {tid}). '
-                f'Current step: {step}. Pipeline: {pipe}. '
-                f'Invoke harness-workflow skill to continue where you left off.'
-            )
-        })
-        print(msg)
+        parts.append(
+            f'HARNESS v3 RESUMING: Active pipeline {cls} (task {tid}). '
+            f'Current step: {step}. Pipeline: {pipe}. '
+            f'Invoke harness-workflow skill to continue where you left off.'
+        )
 except Exception:
     pass
+
+# 2. Digest do vault AI-Brain (~400 bytes): sem isto a wiki existe e ninguem abre.
+#    O index.md inteiro passa de 10 KB — caro demais para toda sessao.
+try:
+    sys.path.insert(0, os.path.join(os.environ['PLUGIN_DIR_PY'], 'tools'))
+    import wiki_index
+
+    digest = wiki_index.build_digest(wiki_index.default_root())
+    if digest:
+        parts.append(digest)
+except Exception:
+    pass
+
+if parts:
+    print(json.dumps({'systemMessage': '\n\n'.join(parts)}))
 " 2>/dev/null
 
 exit 0
