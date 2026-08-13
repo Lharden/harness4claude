@@ -72,7 +72,11 @@ class TestContratoDoRegistry:
     @pytest.mark.parametrize(
         ("campo", "valor"),
         [("versao", "1.2.0"), ("instalado", True), ("custo_tokens", 900),
-         ("usage_count", 40), ("n_skills", 14), ("enabled", True)],
+         ("usage_count", 40), ("n_skills", 14), ("enabled", True),
+         # `custo_real` entrou depois: na primeira assimilacao real (2026-08-13)
+         # o registro de um ponto cego de medicao virou um campo com numero
+         # dentro, e o check deixou passar porque a lista nao previa o nome.
+         ("custo_real", "~1497 tok"), ("custo", 1497), ("tokens_reais", 1497)],
     )
     def test_campo_mensuravel_reprova(self, ars, campo, valor):
         """A regra central. Fato guardado no registry vira a segunda verdade que deriva."""

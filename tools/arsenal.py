@@ -107,6 +107,19 @@ CAMPOS_MEDIVEIS = {
     "usage_count": "~/.claude.json -> skillUsage",
     "usos": "~/.claude.json -> skillUsage",
     "last_used_at": "~/.claude.json -> skillUsage",
+    # Entraram em 2026-08-13, na primeira assimilação real. Ao registrar que o
+    # budget subestima o superpowers (o hook injeta a skill inteira em toda
+    # sessão), a saída natural foi criar um campo `custo_real` com o número
+    # dentro — e `check` deixou passar, porque a lista não previa o nome.
+    #
+    # É a mesma falha que a regra existe para impedir, chegando pela porta dos
+    # fundos: número salvo no registry deriva do disco, tenha o nome que tiver.
+    # Um ponto cego se documenta em PROSA, com o comando que o reconfere; nunca
+    # como campo, que é o que convida a ler como dado.
+    "custo_real": "arsenal budget (e o ponto cego, em prosa no campo ponto_cego)",
+    "custo": "arsenal budget",
+    "custo_tok": "arsenal budget",
+    "tokens_reais": "arsenal budget",
 }
 
 # Teto do orçamento. 12.000 deixa ~4k de folga sobre a linha de base pós-poda
