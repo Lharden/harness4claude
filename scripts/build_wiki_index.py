@@ -262,7 +262,31 @@ def fingerprint(root):
 
 
 def embed_text(chunk):
-    """Documento embedado: título da página, seção, tipo, tags e o texto do chunk."""
+    """Documento embedado: título da página, seção, tipo, tags e o texto do chunk.
+
+    A ordem já foi trocada uma vez, em 2026-08-13, e voltou. Fica registrado
+    porque a ideia é boa e vai reaparecer.
+
+    A tentativa: pôr a SEÇÃO na frente. Os 25 verbetes da página do arsenal
+    começavam todos com os mesmos ~60 chars de título, e o que distinguia um do
+    outro era fração pequena do texto embedado. Medido em 6 chunks, a seção na
+    frente subia o cosseno da entidade de 0.415 para 0.434.
+
+    Por que voltou: os +0.019 foram medidos SÓ no conjunto positivo, e o custo
+    apareceu no negativo que já existia. Heading costuma começar com verbo
+    genérico ("Configurar", "Instalar"), e com ele na frente a consulta
+    "como configurar um reverse proxy nginx" — que nenhuma página do vault cobre
+    — passou a casar com "1. Configurar o Obsidian Sync" a 0.455, como hit
+    CONFIANTE. Ganho pequeno em recall, perda real em precisão, e precisão é o
+    que faz o prior-art ser silencioso quando não há o que dizer.
+
+    A lição, e ela é maior que a mudança: otimizar embedding contra amostra
+    positiva sem reconferir o conjunto negativo troca ruído por sinal sem avisar.
+
+    O problema que motivou tudo isso foi resolvido de outro jeito, e melhor:
+    `wiki_prior_art.registry_hits` casa o nome da ferramenta direto contra o
+    arsenal, exato e sem embed. Entidade se busca por nome.
+    """
     tags = " ".join(chunk["tags"])
     heading = chunk["heading"] or chunk["title"]
     return (f"search_document: {chunk['title']} — {heading}. "

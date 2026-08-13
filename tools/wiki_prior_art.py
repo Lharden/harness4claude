@@ -125,6 +125,86 @@ def literal_hits(task: str, chunks: list[dict]) -> list[dict]:
     return sorted(achados.values(), key=lambda h: (-len(h["terms"]), h["id"]))[:MAX_LITERAL_HITS]
 
 
+def registry_hits(task: str, root: Path | None = None) -> list[dict]:
+    """Camada de REGISTRO: casa o nome da ferramenta contra o arsenal, por id.
+
+    Existe porque a pergunta "isto já foi decidido?" tem uma resposta
+    autoritativa — `arsenal/tools.toml` e `arsenal/dispensados.toml` — e as duas
+    outras camadas tentavam chegar nela pelo caminho errado.
+
+    Medido em 2026-08-13: perguntar "graphify ja foi assimilado?" devolvia
+    silêncio, com o graphify registrado como adotado desde o dia anterior. A
+    camada literal descarta termo que aparece em muitas páginas (graphify é
+    citado em 52 chunks, logo não discrimina) e a semântica fazia o verbete
+    competir por cosseno com 673 chunks, perdendo para specs sobre o mesmo tema.
+
+    Entidade se busca por NOME, não por similaridade. Absorvido de
+    neo4j-labs/llm-graph-builder, que declara o schema de entidades ANTES da
+    extração em vez de deixar o LLM inferir: a lista de entidades é dado, e
+    dado se consulta.
+
+    Esta camada é exata e barata — nem embed nem índice. Nunca levanta: registry
+    ausente ou TOML quebrado devolve lista vazia, porque prior-art é passo de
+    contexto e não pode derrubar o pipeline.
+    """
+    import tomllib
+
+    raiz = Path(root) if root else _vault_root()
+    if raiz is None:
+        return []
+
+    entradas: list[tuple[str, dict, str]] = []
+    for rel, chave, estado in (("tools.toml", "tools", "registrada"),
+                               ("dispensados.toml", "dispensados", "dispensada")):
+        caminho = raiz / "arsenal" / rel
+        try:
+            with open(caminho, "rb") as handle:
+                dados = tomllib.load(handle)
+        except (OSError, ValueError):
+            continue
+        for item in dados.get(chave) or []:
+            if item.get("id"):
+                entradas.append((str(item["id"]), item, estado))
+    if not entradas:
+        return []
+
+    baixo = task.lower()
+    achados = []
+    for ident, item, estado in entradas:
+        alvo = ident.lower()
+        if not re.search(r"(?<![\w-])" + re.escape(alvo) + r"(?![\w-])", baixo):
+            continue
+        decisao = item.get("decisao") or ("dispensada" if estado == "dispensada" else "?")
+        motivo = item.get("por_que") or item.get("motivo") or ""
+        achados.append({
+            "id": f"arsenal/{ident}",
+            "title": f"{ident} — já {estado} no arsenal",
+            "section": f"decisao: {decisao}",
+            "type": "arsenal",
+            "layer": "registro",
+            "terms": [ident],
+            "confident": True,
+            "wikilink": "[[arsenal/00 Arsenal]]",
+            "path": str(raiz / "arsenal" / ("tools.toml" if estado == "registrada" else "dispensados.toml")),
+            "snippet": " ".join(str(motivo).split())[:240],
+        })
+    return achados
+
+
+def _vault_root() -> Path | None:
+    """Raiz do AI-Brain, na mesma precedência do vault_sync."""
+    import os
+    for var in ("AI_BRAIN_PATH",):
+        valor = os.environ.get(var)
+        if valor and Path(valor).is_dir():
+            return Path(valor)
+    valor = os.environ.get("VAULT_PATH")
+    if valor and (Path(valor) / "AI-Brain").is_dir():
+        return Path(valor) / "AI-Brain"
+    padrao = Path.home() / "Documents" / "mainframe" / "AI-Brain"
+    return padrao if padrao.is_dir() else None
+
+
 def _stale() -> bool:
     """True se o wiki-index esta desatualizado. Nunca levanta."""
     try:
@@ -137,15 +217,21 @@ def _stale() -> bool:
 
 
 def collect(task: str, *, top_k: int = DEFAULT_TOP_K, index_dir: Path | None = None) -> dict:
-    """Junta camada literal e camada semântica confiante. Nunca levanta."""
+    """Junta registro, camada literal e camada semântica confiante. Nunca levanta."""
     alvo = index_dir or wq.DEFAULT_INDEX
     try:
         index, _ = wq.load_index(alvo)
         chunks = index.get("pages", [])
     except Exception:
         chunks = []
+    # Registro primeiro: é exato, é barato e é a resposta autoritativa. Deixá-lo
+    # depois faria o hit certo competir por posição com vizinho temático.
+    try:
+        registros = registry_hits(task)
+    except Exception:  # noqa: BLE001 - passo de contexto, nunca derruba o pipeline
+        registros = []
     literais = literal_hits(task, chunks)
-    ja_citadas = {h["id"] for h in literais}
+    ja_citadas = {h["id"] for h in literais} | {h["id"] for h in registros}
 
     try:
         resultado = wq.query(task, top_k=top_k, index_dir=alvo)
@@ -165,6 +251,7 @@ def collect(task: str, *, top_k: int = DEFAULT_TOP_K, index_dir: Path | None = N
         "task": task,
         "available": disponivel or bool(chunks),
         "terms": salient_terms(task),
+        "registro": registros,
         "literal": literais,
         "semantic": semanticos,
         "stale": _stale(),
@@ -182,7 +269,8 @@ def _linha(hit: dict) -> str:
 
 def render(dados: dict) -> str:
     """Bloco de prior-art. String vazia quando não ha o que dizer."""
-    achados = dados.get("literal", []) + dados.get("semantic", [])
+    achados = (dados.get("registro", []) + dados.get("literal", [])
+               + dados.get("semantic", []))
     if not dados.get("available") or not achados:
         return ""
     linhas = [

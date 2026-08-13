@@ -136,3 +136,85 @@ def test_main_sempre_sai_zero(tmp_path: Path, monkeypatch, capsys) -> None:
 
     assert pa.main() == 0
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# Camada de REGISTRO — absorvida de neo4j-labs/llm-graph-builder (2026-08-13)
+# ---------------------------------------------------------------------------
+
+
+def _arsenal(tmp_path, tools=(), dispensados=()):
+    d = tmp_path / "arsenal"
+    d.mkdir(parents=True, exist_ok=True)
+    linhas = ["schema_version = 1", 'updated = "2026-08-13"', ""]
+    for t in tools:
+        linhas.append("[[tools]]")
+        linhas += [f'{k} = "{v}"' for k, v in t.items()]
+        linhas.append("")
+    (d / "tools.toml").write_text("\n".join(linhas), encoding="utf-8")
+    blocos = []
+    for t in dispensados:
+        blocos.append("[[dispensados]]")
+        blocos += [f'{k} = "{v}"' for k, v in t.items()]
+        blocos.append("")
+    (d / "dispensados.toml").write_text("\n".join(blocos), encoding="utf-8")
+    return tmp_path
+
+
+def test_registro_acha_ferramenta_adotada(tmp_path):
+    """A pergunta que devolvia silencio. `graphify` estava adotado ha um dia e
+    prior-art nao o achava: a camada literal descarta termo citado em muitas
+    paginas (52 chunks) e a semantica o fazia competir por cosseno com 673."""
+    raiz = _arsenal(tmp_path, tools=[
+        {"id": "graphify", "decisao": "adotado", "por_que": "grafo de qualquer repo"}])
+    hits = pa.registry_hits("graphify ja foi assimilado?", root=raiz)
+    assert [h["terms"][0] for h in hits] == ["graphify"]
+    assert "adotado" in hits[0]["section"]
+
+
+def test_registro_acha_dispensada_com_o_motivo(tmp_path):
+    """Relitigar o que ja foi recusado e o outro lado da mesma falha."""
+    raiz = _arsenal(tmp_path, dispensados=[
+        {"id": "firecrawl", "motivo": "sobrepoe claude-in-chrome", "decidido_em": "2026-08-12"}])
+    hits = pa.registry_hits("quero instalar o firecrawl para scraping", root=raiz)
+    assert len(hits) == 1
+    assert "dispensada" in hits[0]["title"]
+    assert "claude-in-chrome" in hits[0]["snippet"]
+
+
+def test_registro_casa_por_nome_inteiro_nao_por_substring(tmp_path):
+    """`graph` nao pode casar com `graphify`: prior-art que dispara em substring
+    vira ruido em toda tarefa, e ruido treina a ignorar o aviso."""
+    raiz = _arsenal(tmp_path, tools=[{"id": "graphify", "decisao": "adotado", "por_que": "x"}])
+    assert pa.registry_hits("preciso de um graph novo", root=raiz) == []
+    assert pa.registry_hits("usar graphify aqui", root=raiz) != []
+
+
+def test_registro_sem_arsenal_devolve_vazio_sem_levantar(tmp_path):
+    """Contrato herdado: prior-art e passo de contexto, nunca derruba o pipeline."""
+    assert pa.registry_hits("qualquer coisa", root=tmp_path / "nao-existe") == []
+
+
+def test_registro_com_toml_quebrado_nao_levanta(tmp_path):
+    d = tmp_path / "arsenal"
+    d.mkdir(parents=True)
+    (d / "tools.toml").write_text("isto ][ nao e toml", encoding="utf-8")
+    assert pa.registry_hits("graphify", root=tmp_path) == []
+
+
+def test_registro_vem_antes_dos_outros_no_render(tmp_path):
+    """Registro e resposta autoritativa e exata. Depois dos vizinhos tematicos,
+    o hit certo competiria por posicao com quem so tangencia o assunto."""
+    dados = {
+        "task": "t", "available": True, "terms": [],
+        "registro": [{"id": "arsenal/x", "title": "x — ja registrada no arsenal",
+                      "section": "decisao: adotado", "type": "arsenal", "layer": "registro",
+                      "terms": ["x"], "confident": True, "wikilink": "[[arsenal/00 Arsenal]]",
+                      "path": "", "snippet": "motivo"}],
+        "literal": [{"id": "outra", "title": "outra", "section": "", "type": "decision",
+                     "layer": "literal", "terms": ["y"], "confident": True,
+                     "wikilink": "[[outra]]", "path": "", "snippet": "s"}],
+        "semantic": [], "stale": False,
+    }
+    saida = pa.render(dados)
+    assert saida.index("arsenal/00 Arsenal") < saida.index("[[outra]]")
