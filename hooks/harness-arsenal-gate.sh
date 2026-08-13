@@ -75,15 +75,31 @@ fi
 
 # So interessa `claude plugin install|enable`. `disable`, `uninstall`, `list` e
 # `marketplace` passam direto: tirar coisa nunca precisa de permissao.
-echo "$COMMAND" | grep -qE 'claude\s+plugin\s+(install|enable)\b' || exit 0
-
-# Alvo: primeira palavra depois de install/enable que nao comeca com '-'.
-# `nome@marketplace` vira `nome` — o registry usa nome curto porque e o que
-# `claude plugin disable` aceita no rollback.
+#
+# E so interessa quando o comando INVOCA, nao quando ele MENCIONA. A primeira
+# versao casava a string em qualquer posicao, e em 2026-08-13 ela bloqueou a
+# propria sessao que a testava: um `printf '{"command":"claude plugin install
+# x"}'` — que so montava um payload — foi barrado como se fosse instalacao.
+# Escrever documentacao com o comando dentro, ou grepar log atras dele, teria o
+# mesmo destino. Guard que dispara em texto sobre a acao, e nao na acao, gasta a
+# paciencia de quem o usa ate virar `--no-verify`.
+#
+# O extrator quebra o comando em segmentos (`;`, `&&`, `||`, `|`, nova linha) e
+# so olha os que COMECAM com `claude` (aceitando prefixo de env `VAR=x`). O
+# segmento do printf comeca com `printf`, entao nao conta.
 TOOL=$(echo "$COMMAND" | python -c "
 import re, sys
-m = re.search(r'claude\s+plugin\s+(?:install|enable)\s+((?:-\S+\s+)*)(\S+)', sys.stdin.read())
-print((m.group(2).split('@')[0] if m else '').strip('\"' + chr(39)))
+texto = sys.stdin.read()
+alvo = ''
+for seg in re.split(r'&&|\|\||[;|\n]', texto):
+    s = seg.strip()
+    while re.match(r'^[A-Za-z_][A-Za-z0-9_]*=\S*\s+', s):   # VAR=valor antes do comando
+        s = s.split(None, 1)[1] if ' ' in s else ''
+    m = re.match(r'^claude\s+plugin\s+(?:install|enable)\s+((?:-\S+\s+)*)(\S+)', s)
+    if m:
+        alvo = m.group(2).split('@')[0].strip('\"' + chr(39))
+        break
+print(alvo)
 " 2>/dev/null || echo "")
 TOOL="${TOOL%$'\r'}"
 
