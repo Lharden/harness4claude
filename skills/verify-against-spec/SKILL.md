@@ -77,6 +77,16 @@ Para cada REQ-### extraído, procurar nos arquivos de código (via `grep -r "REQ
 
 Para cada AC-### procurar em `tests/` por um `test_*` cujo nome, docstring ou comentário referencie o AC. Rodar o teste isoladamente para confirmar que passa. Registrar mapeamento AC→test_file:test_function.
 
+**Teste que passa não prova nada sozinho — prove que ele sabe falhar.** Um teste que passaria de qualquer jeito é indistinguível de um teste correto enquanto o código estiver certo, e some no dia em que o código quebrar. Para todo teste novo de AC ou de regressão, o ciclo completo:
+
+```
+escrever → rodar (passa) → REVERTER a correção → rodar (TEM que falhar) → restaurar → rodar (passa)
+```
+
+Se ele passa com a correção revertida, ele não testa a correção. Registre no report que o red-green foi verificado, não só que o teste passa.
+
+É a mesma ideia que o `health-check.sh` já aplica a hooks — o meta-teste troca o hook por `INERT_HOOK` e exige que o health-check reprove. Aqui ela vale para o teste em vez do detector: em ambos, o que se prova é que a coisa **detecta ausência**, não que ela roda.
+
 **Passo 6 — Verificar boundaries via hookify**
 
 Rodar `hookify list` e conferir que as regras ALWAYS/NEVER declaradas na spec estão configuradas como hooks ativos. Para regras ASK, inspecionar se o código contém branches condicionais que delegam ao usuário. Casos não cobertos por hookify viram warnings inspecionáveis manualmente.
@@ -84,6 +94,21 @@ Rodar `hookify list` e conferir que as regras ALWAYS/NEVER declaradas na spec es
 **Passo 7 — Verificar success criteria**
 
 Para cada métrica declarada (ex: "latência < 100ms", "coverage > 80%"), executar o comando de medição correspondente e comparar com o threshold. Registrar valor real e delta vs. spec.
+
+**Passo 7b — Se algum artefato veio de subagente, conferir o diff**
+
+Relatório de subagente é afirmação, não evidência. Um agente que diz "implementei X e os testes passam" pode ter tocado outro arquivo, tocado nenhum, ou passado por um caminho diferente do que descreve — e nada disso aparece no texto que ele devolve.
+
+Antes de contar qualquer entrega de subagente como verificada:
+
+```bash
+git status --short          # o que realmente mudou no disco
+git diff                    # e o que exatamente foi escrito
+```
+
+Confira que os arquivos alterados são os que o relatório diz, e que a mudança faz o que ele afirma. Divergência entre relatório e diff é gap, e entra no report como tal.
+
+O princípio já valia ("não tome relatório de agente pelo valor de face"); o que faltava era a ação que o torna conferível.
 
 **Passo 8 — Gerar report e retornar status**
 

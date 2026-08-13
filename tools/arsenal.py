@@ -225,6 +225,22 @@ def _referencia_existe(alvo: str, root: Path | None = None) -> bool:
     return Path(caminho).expanduser().exists()
 
 
+def _alvos_de_absorcao(item: dict) -> list[str]:
+    """`absorvido_em` como string OU lista.
+
+    Virou lista em 2026-08-13: a assimilação do superpowers extraiu TRÊS peças
+    para três destinos diferentes (o output style, e dois passos da skill de
+    verificação). Um campo de destino único forçaria escolher qual registrar, e
+    as outras duas absorções sumiriam do registro sem deixar rastro.
+    """
+    bruto = item.get("absorvido_em")
+    if isinstance(bruto, str):
+        return [bruto.strip()] if bruto.strip() else []
+    if isinstance(bruto, list):
+        return [str(a).strip() for a in bruto if str(a).strip()]
+    return []
+
+
 def validate_registry(registry: dict, dispensados: dict[str, dict],
                       root: Path | None = None) -> list[str]:
     """Contrato do registry. Lista de erros legíveis — vazia quando válido."""
@@ -293,8 +309,14 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
                         f"{rotulo}: decisao='absorvido' exige '{campo}' — sem dizer o que veio e "
                         "onde encaixou, 'absorvido' é só um jeito educado de dizer 'não usei'"
                     )
-            alvo = str(item.get("absorvido_em", "")).strip()
-            if alvo and not _referencia_existe(alvo, root):
+        # A verificação de destino roda em QUALQUER decisão, não só em 'absorvido'.
+        # Absorção é ortogonal à adoção: descoberto em 2026-08-13, quando a
+        # assimilação do superpowers — que já era `adotado` — extraiu três peças
+        # para artefatos nossos. O schema forçava as duas coisas a serem
+        # exclusivas, e não são: dá para usar a ferramenta E ter reimplementado
+        # um pedaço dela melhor.
+        for alvo in _alvos_de_absorcao(item):
+            if not _referencia_existe(alvo, root):
                 erros.append(
                     f"{rotulo}: absorvido_em aponta para '{alvo}', que não existe — "
                     "afirmação de absorção tem que ser verificável"
@@ -683,15 +705,22 @@ def render_pagina(registry: dict) -> str:
         for t in itens:
             linhas.append(f"### {t['id']}  ·  `{t.get('kind')}`")
             linhas.append("")
-            if chave == "absorvido":
-                linhas.append(f"**O que veio.** {_prosa(t.get('o_que_veio'))}")
+            # Vale para QUALQUER decisão, não só 'absorvido': o superpowers segue
+            # adotado e teve três peças extraídas para artefatos nossos.
+            if t.get("o_que_veio"):
+                linhas.append(f"**O que veio.** {_prosa(t['o_que_veio'])}")
                 if t.get("o_que_ficou_de_fora"):
                     linhas.append("")
                     linhas.append(f"**O que ficou de fora.** {_prosa(t['o_que_ficou_de_fora'])}")
-                linhas.append("")
-                linhas.append(f"**Onde encaixou.** `{t.get('absorvido_em')}`")
+                alvos = _alvos_de_absorcao(t)
+                if alvos:
+                    linhas.append("")
+                    linhas.append("**Onde encaixou.** " + ", ".join(f"`{a}`" for a in alvos))
             linhas.append("")
             linhas.append(_prosa(t.get("por_que")))
+            if t.get("ponto_cego"):
+                linhas.append("")
+                linhas.append(f"**Ponto cego da medição.** {_prosa(t['ponto_cego'])}")
             if t.get("quando_nao_usar"):
                 linhas.append("")
                 linhas.append(f"**Quando não usar.** {_prosa(t['quando_nao_usar'])}")

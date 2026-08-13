@@ -113,6 +113,22 @@ class TestContratoDoRegistry:
             absorvido_em="caminho/que/nao/existe.py:F"), {})
         assert any("verificavel" in e.replace("á", "a").replace("í", "i") for e in erros)
 
+    def test_absorcao_e_ortogonal_a_adocao(self, ars):
+        """superpowers segue `adotado` E teve tres pecas absorvidas. O schema
+        forcava as duas coisas a serem exclusivas, e nao sao: da para usar a
+        ferramenta E ter reimplementado um pedaco dela melhor."""
+        assert ars.validate_registry(_registry(
+            decisao="adotado", o_que_veio="o criterio de reconhecimento",
+            absorvido_em=["skills/verify-against-spec/SKILL.md"]), {}) == []
+
+    def test_absorvido_em_aceita_lista_e_confere_cada_alvo(self, ars):
+        """Tres pecas foram para tres destinos. Campo unico obrigaria escolher um
+        e as outras duas sumiriam do registro."""
+        erros = ars.validate_registry(_registry(
+            decisao="adotado", o_que_veio="x",
+            absorvido_em=["skills/verify-against-spec/SKILL.md", "nao/existe.md"]), {})
+        assert len(erros) == 1 and "nao/existe.md" in erros[0]
+
     def test_absorvido_com_destino_real_passa(self, ars):
         assert ars.validate_registry(_registry(
             decisao="absorvido", o_que_veio="comprimir removendo filler",
