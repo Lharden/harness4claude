@@ -71,7 +71,19 @@ Se `clarifications` for não-vazia, ABORTAR com status `FAIL` e mensagem orienta
 
 **Passo 4 — Verificar cada REQ com evidência**
 
-Para cada REQ-### extraído, procurar nos arquivos de código (via `grep -r "REQ-###"` ou análise semântica de docstrings) referências explícitas. Registrar: encontrado (arquivo:linha) ou órfão.
+Para cada REQ-### extraído, procurar nos arquivos de código (via `grep -r "REQ-###"` ou análise semântica de docstrings) referências explícitas. Registrar **um de três** estados — nunca dois:
+
+| estado | significa |
+|---|---|
+| `COBERTO` | achei a evidência: `arquivo:linha` |
+| `ORFAO` | procurei e **não existe** |
+| `NAO_OBSERVADO` | **não consegui verificar** — ferramenta faltando, ambiente indisponível, saída ilegível |
+
+**`NAO_OBSERVADO` não é `ORFAO`, e tratá-los como um só faz o report mentir nos dois sentidos**: reprova o que funciona mas não deu para conferir, e esconde que a própria verificação ficou incompleta. Quem lê "1 REQ órfão" vai atrás do código; quem lê "1 REQ não observado" vai atrás do ambiente. São trabalhos diferentes.
+
+Todo `NAO_OBSERVADO` carrega **por que** não deu para observar. Sem isso ele vira um jeito educado de dizer "pulei".
+
+*Absorvido de QoderAI/better-harness (2026-08-13), cujo modelo de evidência declara: comportamento não observado NUNCA é pontuado.*
 
 **Passo 5 — Verificar cada AC com teste correspondente**
 
@@ -113,6 +125,12 @@ O princípio já valia ("não tome relatório de agente pelo valor de face"); o 
 **Passo 8 — Gerar report e retornar status**
 
 Escrever `docs/specs/{feature-slug}-verification.md` no formato da seção "Report Format" abaixo. Retornar ao `harness-workflow` um dos 3 status: `VERIFY_STATUS=PASS` (tudo verde), `PARTIAL` (P1 verde, P2/P3 com warnings) ou `FAIL` (qualquer P1 órfão, clarifications pendentes, success criteria não atingido).
+
+**`NAO_OBSERVADO` nunca vira PASS silencioso, e nunca vira FAIL por omissão.** A regra:
+
+- Qualquer P1 em `NAO_OBSERVADO` -> **`PARTIAL`**, nunca `PASS`. Não observar um requisito crítico não é aprová-lo.
+- `NAO_OBSERVADO` sozinho **não produz `FAIL`** — `FAIL` afirma que algo está errado, e aqui não se sabe.
+- O report abre com a **contagem de não observados e o porquê de cada um**. Verificação que não diz o que deixou de ver entrega confiança que não mediu — que é a forma mais cara de erro deste pipeline.
 
 ## Fail-fast em [NEEDS CLARIFICATION]
 
