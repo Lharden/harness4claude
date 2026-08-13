@@ -1137,6 +1137,26 @@ def command_gc(aplicar: bool, agora: float) -> dict:
                         "rotulo": f"{plugin.name}/{versao.name}", "bytes": _tamanho(versao),
                     })
 
+    # Trava 4, descoberta rodando o gc de verdade em 2026-08-13: `plugin-root`
+    # aponta para uma árvore de cache, e apagar essa árvore o deixa apontando
+    # para o vazio. O health-check pegou depois — "toda skill que o usa como
+    # prefixo falha" — mas depois é tarde, e o gc sabia disso antes de apagar.
+    try:
+        raiz_plugin = (Path(os.environ.get("HARNESS_DIR") or Path.home() / ".claude" / "harness")
+                       / "plugin-root").read_text(encoding="utf-8").strip()
+    except OSError:
+        raiz_plugin = ""
+    if raiz_plugin:
+        alvo_plugin = os.path.normcase(os.path.abspath(raiz_plugin))
+        antes = len(alvos)
+        alvos = [a for a in alvos
+                 if not alvo_plugin.startswith(os.path.normcase(os.path.abspath(a["caminho"])))]
+        if len(alvos) < antes:
+            avisos.append(
+                f"preservado: {raiz_plugin} é o plugin-root em uso. Apagá-lo faria toda "
+                "skill que o usa como prefixo falhar."
+            )
+
     # Trava 1, aplicada no último instante possível: nada fora do cache é apagado,
     # não importa como entrou na lista.
     raiz = os.path.normcase(os.path.abspath(CACHE_DIR))

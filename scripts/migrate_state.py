@@ -119,6 +119,39 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
     ]
     accuracy: float | None = (len(agreed) / len(classified)) if classified else None
 
+    # --- Canario que nao depende de ninguem lembrar de nada -----------------
+    #
+    # `agreed` so existe se alguem rodar confirm_classification.py, e essa e a
+    # razao de a metrica estar zerada. A instrucao existe na skill desde a
+    # auditoria de 2026-07-28, com aviso em negrito, e mesmo assim 27 tasks novas
+    # acumularam agreed=null. Metrica que depende de um passo lembravel deriva
+    # para zero — e o mesmo modo de falha da operacao `ingest`, que nunca rodou.
+    #
+    # Entao existe um segundo numero, computado do que o sistema JA coleta
+    # sozinho: o nivel sugerido pelo regex contra `actual_level`, que
+    # record_signal deriva da contagem de arquivos tocados. Ninguem precisa
+    # lembrar de nada para ele existir.
+    #
+    # ELE NAO E ACURACIA, e o nome do campo diz isso. `actual_level` e proxy por
+    # contagem de arquivos (0-1=L0, 2-3=L1, 4+=L2): uma tarefa pode ser L2 de
+    # verdade tocando 2 arquivos. Medido em 2026-08-13 dava 41%, e ler isso como
+    # "o regex acerta 41%" seria teatro de metrica.
+    #
+    # Para o que ele serve: canario. A pergunta B5 e "mudar o roster piorou a
+    # classificacao?", e para detectar DESLOCAMENTO a consistencia da medida
+    # importa mais que o valor absoluto dela. 41% -> 25% diz algo mesmo que 41%
+    # nao seja acuracia.
+    #
+    # Inclui tasks abandonadas de proposito: elas foram classificadas e tocaram
+    # arquivos, e exclui-las deixaria o canario com 1 amostra de 27.
+    observados = [
+        (str(t.get("classification") or "").split("-")[0], t.get("actual_level"))
+        for t in tasks
+    ]
+    observados = [(s, o) for s, o in observados if s and o]
+    casam = sum(1 for s, o in observados if s == o)
+    proxy: float | None = (casam / len(observados)) if observados else None
+
     sdd_usage = dict(SDD_USAGE_DEFAULT)
     sdd_usage.update(prev.get("sdd_usage", {}))
 
@@ -131,10 +164,22 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
         "avg_files_per_task": (files_total / total) if total else 0,
         "sdd_usage": sdd_usage,
         "classify": {
+            # Metrica semantica: exige confirm_classification.py. Fica null
+            # enquanto ninguem confirmar, e o campo abaixo diz quantas faltam —
+            # zero silencioso vira lacuna com numero.
             "total_classified": len(classified),
             "avg_classify_accuracy": accuracy,
             "regex_vs_semantic_agreement": accuracy,
             "human_override_count": len(overrides),
+            "sem_confirmacao": len(tasks) - len(classified),
+            # Canario: sempre computavel, e NAO e acuracia. Ver o comentario
+            # longo acima antes de citar este numero em qualquer lugar.
+            "proxy_regex_vs_observado": proxy,
+            "proxy_amostras": len(observados),
+            "proxy_nota": (
+                "actual_level e derivado da contagem de arquivos, nao e verdade "
+                "fundamental. Serve para detectar deslocamento, nao para afirmar acuracia."
+            ),
         },
     }
 

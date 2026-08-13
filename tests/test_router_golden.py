@@ -63,19 +63,73 @@ def test_golden_top3_hit_rate(disjuntor_isolado):
     index, vecs = sr.load_index()
     skills = index["skills"]
     known = {s["id"] for s in skills}
-    hits, details = 0, []
+    hits, details, degradados = 0, [], []
     for case in data["positives"]:
         expect = [e for e in case["expect_any"] if e in known]
         assert expect, f"nenhum id esperado existe no indice: {case['expect_any']}"
         # Zera o disjuntor por pergunta: um embed lento nao pode derrubar as seguintes.
         sr.write_breaker({"failures": 0, "opened_at": 0.0, "last_msg": "", "last_msg_ts": 0.0})
         top = [h["id"] for h in sr.route(case["prompt"], skills, vecs)]
+        # A Camada B registra falha no disjuntor quando o embed estoura o timeout
+        # (skill_router.py, "layer B degraded"). Como o disjuntor foi zerado logo
+        # acima, failures>0 aqui significa: ESTA pergunta rodou sem a Camada B.
+        if (sr.read_breaker().get("failures") or 0) > 0:
+            degradados.append(case["prompt"][:40])
         ok = any(e in top for e in expect)
         hits += ok
         details.append(f"{'OK ' if ok else 'MISS'} {case['prompt'][:50]} -> {top}")
     rate = hits / len(data["positives"])
     print("\n".join(details))
+
+    # Medicao contaminada nao passa NEM reprova.
+    #
+    # Este teste chama o Ollama uma vez por pergunta com EMBED_TIMEOUT=3.0. Numa
+    # suite de seis minutos com outros testes de integracao, o Ollama fica
+    # disputado, o embed estoura e a Camada B degrada — o hit rate cai para o
+    # valor da Camada A sozinha, sem que o router tenha piorado em nada.
+    #
+    # O sintoma custou tres diagnosticos errados em 2026-08-13: indice stale,
+    # depois alvos dispensados (esse era real e foi corrigido), depois nada.
+    # Passava isolado e falhava na suite, e reprovar nas duas situacoes treinava
+    # a ler a falha como ruido — que e exatamente como um gate morre.
+    #
+    # Reprovar aqui afirmaria "o router piorou" sem poder distinguir isso de "a
+    # maquina estava ocupada". Skip diz a verdade: nao deu para medir.
+    if degradados:
+        pytest.skip(
+            f"medicao contaminada: a Camada B degradou em {len(degradados)} de "
+            f"{len(data['positives'])} perguntas (embed estourou o timeout). "
+            f"hit rate observado {rate:.0%}, mas ele mede carga da maquina, nao "
+            f"acuracia do router. Rode isolado: pytest {os.path.basename(__file__)}"
+        )
     assert rate >= 0.80, f"top-3 hit rate {rate:.0%} < 80%"
+
+
+@pytest.mark.integration
+@needs_stack
+def test_golden_detecta_contaminacao_em_vez_de_reprovar(disjuntor_isolado, monkeypatch):
+    """Red-green do skip: com a Camada B degradada, o teste NAO pode reprovar.
+
+    Sem este caso, a decisao de pular seria invisivel — e a proxima vez que a
+    suite ficasse pesada, alguem leria a falha como "o router piorou" e sairia
+    atras do bug errado. Foi o que aconteceu tres vezes em 2026-08-13.
+
+    Simula degradacao direto no sinal que o teste le, porque contencao real de
+    Ollama nao se reproduz sob demanda: derrubar a porta faz o `needs_stack`
+    pular antes, e ai o caminho novo nao roda.
+    """
+    real = sr.read_breaker
+    monkeypatch.setattr(sr, "read_breaker",
+                        lambda *a, **k: {"failures": 1, "opened_at": 0.0,
+                                         "last_msg": "", "last_msg_ts": 0.0})
+    # `Skipped` herda de BaseException, nao de Exception: pytest.raises(Exception)
+    # nao o captura e o skip vaza, fazendo ESTE teste pular em silencio — o
+    # sintoma exato que ele existe para impedir.
+    with pytest.raises(pytest.skip.Exception) as exc:
+        test_golden_top3_hit_rate(disjuntor_isolado)
+    monkeypatch.setattr(sr, "read_breaker", real)
+    assert "contaminada" in str(exc.value)
+    assert "carga da maquina" in str(exc.value)
 
 
 def test_golden_alvos_estao_habilitados():

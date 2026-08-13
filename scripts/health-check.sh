@@ -266,6 +266,30 @@ if command -v node >/dev/null 2>&1; then
 else
     warn "node ausente — validacao de Workflows pulada"
 fi
+
+# Canario da classificacao. Numero que ninguem le e numero que nao existe: a
+# metrica semantica ficou null por semanas porque nada a reportava. Aqui ela
+# aparece toda vez, junto com quantas tasks estao sem confirmacao.
+CLASSIFY_LINHA="$(python - "$HARNESS_DIR/signals.json" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    c = json.load(open(sys.argv[1], encoding="utf-8"))["aggregates"]["classify"]
+except Exception:
+    raise SystemExit(0)
+sem = c.get("sem_confirmacao")
+proxy, n = c.get("proxy_regex_vs_observado"), c.get("proxy_amostras") or 0
+partes = []
+if c.get("avg_classify_accuracy") is None:
+    partes.append(f"acuracia semantica: null ({sem} task(s) sem confirmacao)"
+                  if sem else "acuracia semantica: null (sem tasks)")
+else:
+    partes.append(f"acuracia semantica: {c['avg_classify_accuracy']:.0%}")
+partes.append(f"canario (proxy, nao e acuracia): {proxy:.0%} em {n}" if proxy is not None
+              else "canario: sem amostra")
+print(" | ".join(partes))
+PY
+)"
+[ -n "$CLASSIFY_LINHA" ] && echo "[INFO]   classify -> $CLASSIFY_LINHA"
 echo ""
 
 echo "--- Orphaned artifacts ---"

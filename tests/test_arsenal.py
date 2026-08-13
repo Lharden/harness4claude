@@ -740,6 +740,24 @@ class TestGc:
         assert not d.exists(), f"read-only bloqueou a remocao: {res['errors']}"
         assert res["ready"] is True
 
+    def test_plugin_root_em_uso_e_preservado(self, ars, cache, tmp_path, monkeypatch):
+        """Descoberto rodando o gc de verdade em 2026-08-13: plugin-root aponta
+        para uma arvore de CACHE, e apagar essa arvore o deixa apontando para o
+        vazio. O health-check pegou depois — "toda skill que o usa como prefixo
+        falha" — mas depois e tarde, e o gc sabia disso antes de apagar."""
+        harness = tmp_path / "harness"
+        harness.mkdir()
+        antiga = self._cria(cache, "mkt/harness4claude/3.6.0")
+        (harness / "plugin-root").write_text(str(antiga), encoding="utf-8")
+        monkeypatch.setenv("HARNESS_DIR", str(harness))
+        manifesto = tmp_path / "installed.json"
+        manifesto.write_text(json.dumps({"plugins": {"h@mkt": [
+            {"installPath": str(self._cria(cache, "mkt/harness4claude/3.7.0"))}]}}), encoding="utf-8")
+        monkeypatch.setattr(sys.modules["build_skills_index"], "INSTALLED_JSON", str(manifesto))
+        res = ars.command_gc(True, agora=1_000_000_000)
+        assert antiga.exists(), "apagou o plugin-root em uso"
+        assert any("plugin-root" in w for w in res["warnings"])
+
     def test_nada_fora_do_cache_e_tocado(self, ars, cache, tmp_path):
         """Trava aplicada no ultimo instante: nao importa como o alvo entrou na
         lista, se resolve para fora do cache ele e descartado."""

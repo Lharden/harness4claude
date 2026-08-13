@@ -80,7 +80,11 @@
               "description": "Fracao de tasks onde regex suggested == semantica final (agreed)"
             },
             "regex_vs_semantic_agreement": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-            "human_override_count": {"type": "integer", "minimum": 0, "description": "Tasks onde humano corrigiu (regex E semantica erraram)"}
+            "human_override_count": {"type": "integer", "minimum": 0, "description": "Tasks onde humano corrigiu (regex E semantica erraram)"},
+            "sem_confirmacao": {"type": "integer", "minimum": 0, "description": "Tasks sem confirmacao semantica. Torna a lacuna visivel em vez de deixar accuracy null sem explicacao."},
+            "proxy_regex_vs_observado": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "CANARIO, NAO ACURACIA. Fracao de tasks em que o nivel do regex bate com actual_level, que record_signal deriva da contagem de arquivos. Sempre computavel, sem depender de ninguem rodar confirm_classification. Serve para detectar DESLOCAMENTO quando o roster muda; nao afirma acuracia, porque actual_level e proxy."},
+            "proxy_amostras": {"type": "integer", "minimum": 0, "description": "Denominador do proxy. Inclui tasks abandonadas de proposito: elas foram classificadas e tocaram arquivos."},
+            "proxy_nota": {"type": "string", "description": "O limite do proxy viaja junto com o numero, para nao se perder dele."}
           }
         }
       }

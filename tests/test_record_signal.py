@@ -151,3 +151,82 @@ def test_main_expect_task_mismatch_aborts(rec, tmp_path, monkeypatch):
     assert rec.main() == 2
     assert not (tmp_path / "signals.json").exists(), \
         "mismatch de task_id não pode gravar signal (task fantasma)"
+
+
+# ---------------------------------------------------------------------------
+# Canario da classificacao (B5) — o numero que nao depende de ninguem lembrar
+# ---------------------------------------------------------------------------
+
+
+def _agg(rec, tasks):
+    import migrate_state
+    return migrate_state.recompute_aggregates(tasks, {})["classify"]
+
+
+def _task(tid, classificacao, observado, agreed=None, abandonada=False):
+    t = {
+        "task_id": tid,
+        "classification": classificacao,
+        "actual_level": observado,
+        "classification_meta": {"suggested": classificacao, "agreed": agreed},
+    }
+    if abandonada:
+        t["abandoned_at"] = "2026-08-13T00:00:00Z"
+    return t
+
+
+def test_proxy_existe_sem_nenhuma_confirmacao(rec):
+    """O ponto inteiro do canario. `agreed` exige que alguem rode
+    confirm_classification.py, e foi por isso que a metrica ficou zerada: a
+    instrucao existe na skill desde a auditoria de 2026-07-28 e mesmo assim 27
+    tasks novas acumularam agreed=null. Metrica que depende de passo lembravel
+    deriva para zero."""
+    c = _agg(rec, [_task("t-1", "L2-feature", "L2"), _task("t-2", "L1-bug", "L0")])
+    assert c["avg_classify_accuracy"] is None      # semantica segue null, corretamente
+    assert c["proxy_regex_vs_observado"] == 0.5    # canario responde mesmo assim
+    assert c["proxy_amostras"] == 2
+
+
+def test_proxy_conta_tasks_abandonadas(rec):
+    """26 das 27 tasks reais estavam abandonadas por TTL. Exclui-las deixaria o
+    canario com 1 amostra — inutil justamente quando ele precisa servir."""
+    c = _agg(rec, [_task("t-1", "L2-feature", "L2", abandonada=True),
+                   _task("t-2", "L2-feature", "L2", abandonada=True)])
+    assert c["proxy_amostras"] == 2 and c["proxy_regex_vs_observado"] == 1.0
+
+
+def test_proxy_e_none_sem_dado_em_vez_de_zero(rec):
+    """Zero significaria "o regex erra sempre". Ausencia de dado nao e erro."""
+    c = _agg(rec, [])
+    assert c["proxy_regex_vs_observado"] is None and c["proxy_amostras"] == 0
+
+
+def test_task_sem_actual_level_nao_entra_no_denominador(rec):
+    c = _agg(rec, [_task("t-1", "L2-feature", None), _task("t-2", "L1-bug", "L1")])
+    assert c["proxy_amostras"] == 1 and c["proxy_regex_vs_observado"] == 1.0
+
+
+def test_sem_confirmacao_torna_a_lacuna_visivel(rec):
+    """accuracy=null sozinho nao diz se ninguem confirmou ou se nao ha tasks."""
+    c = _agg(rec, [_task("t-1", "L2-feature", "L2"),
+                   _task("t-2", "L1-bug", "L1", agreed=True)])
+    assert c["sem_confirmacao"] == 1
+    assert c["total_classified"] == 1
+    assert c["avg_classify_accuracy"] == 1.0
+
+
+def test_proxy_carrega_o_proprio_limite(rec):
+    """O numero e o limite dele viajam juntos. Separar e como o proxy vira
+    "acuracia do classificador" na primeira vez que alguem cita so o valor."""
+    c = _agg(rec, [_task("t-1", "L2-feature", "L2")])
+    assert "proxy" in c["proxy_nota"] or "arquivos" in c["proxy_nota"]
+    assert "acuracia" in c["proxy_nota"].lower()
+
+
+def test_semantica_e_proxy_nao_se_misturam(rec):
+    """Sao numeros diferentes medindo coisas diferentes, e podem discordar."""
+    tasks = [_task("t-1", "L2-feature", "L0", agreed=True),   # semantica concorda
+             _task("t-2", "L2-feature", "L0", agreed=True)]   # observado discorda
+    c = _agg(rec, tasks)
+    assert c["avg_classify_accuracy"] == 1.0
+    assert c["proxy_regex_vs_observado"] == 0.0
