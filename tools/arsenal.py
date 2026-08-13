@@ -52,6 +52,7 @@ import os
 import re
 import struct
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -883,6 +884,154 @@ def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: b
     }
 
 
+CACHE_DIR = Path.home() / ".claude" / "plugins" / "cache"
+TEMP_PREFIXOS = ("temp_git_", "temp_subdir_")
+# Instalação em voo cria temp_* e depois o move. Apagar um diretório recém-criado
+# quebraria o install que está acontecendo agora, e o sintoma apareceria longe da
+# causa. Uma hora é folga larga para qualquer clone terminar.
+IDADE_MINIMA_S = 3600
+
+
+def _tamanho(caminho: Path) -> int:
+    total = 0
+    for raiz, _, arquivos in os.walk(caminho):
+        for nome in arquivos:
+            try:
+                total += os.path.getsize(os.path.join(raiz, nome))
+            except OSError:
+                pass
+    return total
+
+
+def command_gc(aplicar: bool, agora: float) -> dict:
+    """Lixo do cache de plugins: sobras de clone e versões que ninguém carrega.
+
+    Medido em 2026-08-12: 33 diretórios temp_*. Em 2026-08-13, 61 — está
+    acumulando sozinho, e nada no sistema reclamava.
+
+    Três travas, porque isto apaga:
+
+    1. Só age DENTRO de ~/.claude/plugins/cache. Qualquer alvo que resolva para
+       fora é descartado, não importa como chegou na lista.
+    2. Se `installed_plugins.json` não puder ser lido ou vier vazio, RECUSA
+       apagar versão nenhuma. Sem o manifesto, toda versão parece órfã — e o
+       resultado seria apagar exatamente os plugins instalados. Manifesto
+       ilegível é motivo para parar, não para assumir.
+    3. Só apaga o que tem mais de uma hora. Instalação em voo cria temp_* e
+       depois move.
+    """
+    avisos: list[str] = []
+    alvos: list[dict] = []
+
+    if not CACHE_DIR.is_dir():
+        return {"comando": "gc", "ready": True, "errors": [],
+                "warnings": [f"cache ausente: {CACHE_DIR}"], "resumo": {}, "alvos": []}
+
+    for filho in sorted(CACHE_DIR.iterdir()):
+        if filho.is_dir() and filho.name.startswith(TEMP_PREFIXOS):
+            try:
+                idade = agora - filho.stat().st_mtime
+            except OSError:
+                continue
+            if idade < IDADE_MINIMA_S:
+                avisos.append(f"{filho.name} tem menos de 1h — pode ser instalação em voo, preservado")
+                continue
+            alvos.append({"tipo": "temp", "caminho": str(filho), "bytes": _tamanho(filho)})
+
+    instalados = bsi._load_json(bsi.INSTALLED_JSON, None)
+    ativos: set[str] = set()
+    if isinstance(instalados, dict):
+        for entradas in (instalados.get("plugins") or {}).values():
+            for entrada in entradas or []:
+                caminho = entrada.get("installPath")
+                if caminho:
+                    ativos.add(os.path.normcase(os.path.abspath(caminho)))
+
+    if not ativos:
+        # Trava 2. Sem manifesto, "órfão" perde o significado.
+        avisos.append(
+            "installed_plugins.json ilegível ou vazio — nenhuma versão será tocada. "
+            "Sem o manifesto toda versão em cache parece órfã, e apagar por essa leitura "
+            "removeria justamente os plugins instalados."
+        )
+    else:
+        for mercado in sorted(CACHE_DIR.iterdir()):
+            if not mercado.is_dir() or mercado.name.startswith(TEMP_PREFIXOS):
+                continue
+            for plugin in sorted(mercado.iterdir()):
+                if not plugin.is_dir():
+                    continue
+                for versao in sorted(plugin.iterdir()):
+                    if not versao.is_dir():
+                        continue
+                    if os.path.normcase(os.path.abspath(versao)) in ativos:
+                        continue
+                    try:
+                        if agora - versao.stat().st_mtime < IDADE_MINIMA_S:
+                            continue
+                    except OSError:
+                        continue
+                    alvos.append({
+                        "tipo": "versao_orfa", "caminho": str(versao),
+                        "rotulo": f"{plugin.name}/{versao.name}", "bytes": _tamanho(versao),
+                    })
+
+    # Trava 1, aplicada no último instante possível: nada fora do cache é apagado,
+    # não importa como entrou na lista.
+    raiz = os.path.normcase(os.path.abspath(CACHE_DIR))
+    seguros, recusados = [], []
+    for alvo in alvos:
+        real = os.path.normcase(os.path.abspath(alvo["caminho"]))
+        (seguros if real.startswith(raiz + os.sep) else recusados).append(alvo)
+    if recusados:
+        avisos.append(f"{len(recusados)} alvo(s) resolveram para fora do cache e foram descartados")
+
+    apagados, falhas = 0, []
+    if aplicar:
+        import shutil
+        import stat
+
+        def _destrava(func, caminho, _exc):
+            """Retira o bit de somente-leitura e tenta de novo.
+
+            O git grava objeto de pack como read-only por desenho, e no Windows
+            `rmtree` não desvincula arquivo sem bit de escrita: a primeira
+            execução real, em 2026-08-13, apagou 18 de 79 alvos e devolveu
+            WinError 5 nos 61 diretórios que vieram de clone. Sem este handler o
+            `gc` limpa só o que não é repositório — que é justamente o pedaço
+            pequeno.
+            """
+            try:
+                os.chmod(caminho, stat.S_IWRITE)
+                func(caminho)
+            except OSError:
+                raise
+
+        for alvo in seguros:
+            try:
+                shutil.rmtree(alvo["caminho"], onerror=_destrava)
+                apagados += 1
+            except OSError as exc:
+                falhas.append(f"{alvo['caminho']}: {exc}")
+
+    bytes_total = sum(a["bytes"] for a in seguros)
+    return {
+        "comando": "gc",
+        "ready": not falhas,
+        "errors": falhas,
+        "warnings": avisos,
+        "resumo": {
+            "alvos": len(seguros),
+            "temp": sum(1 for a in seguros if a["tipo"] == "temp"),
+            "versoes_orfas": sum(1 for a in seguros if a["tipo"] == "versao_orfa"),
+            "mb": round(bytes_total / 1024 / 1024, 1),
+            "aplicado": aplicar,
+            "apagados": apagados,
+        },
+        "alvos": sorted(seguros, key=lambda a: -a["bytes"])[:40],
+    }
+
+
 def command_gate(root: Path, alvo: str) -> dict:
     """A única barreira dura do sistema: instalar exige decisão prévia e orçamento.
 
@@ -1193,6 +1342,9 @@ def main() -> int:
     construir.add_argument("--write", action="store_true", help="grava; sem isso imprime")
     orc = sub.add_parser("budget", parents=[comum], help="Custo do roster contra o teto.")
     orc.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
+    lixo = sub.add_parser("gc", parents=[comum],
+                          help="Lixo do cache de plugins. Sem --apply, só lista.")
+    lixo.add_argument("--apply", action="store_true", help="apaga de verdade")
     portao = sub.add_parser("gate", parents=[comum],
                             help="Pode instalar? Exit 1 = bloqueado, com o motivo.")
     portao.add_argument("--tool", required=True, help="id do plugin (nome curto)")
@@ -1215,6 +1367,8 @@ def main() -> int:
         res = command_reconcile(root)
     elif args.comando == "build":
         res = command_build(root, args.write)
+    elif args.comando == "gc":
+        res = command_gc(args.apply, time.time())
     elif args.comando == "gate":
         res = command_gate(root, args.tool)
     elif args.comando == "candidates":

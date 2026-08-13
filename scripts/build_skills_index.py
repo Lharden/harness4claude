@@ -91,6 +91,62 @@ def manifest_name(install_path):
     return None
 
 
+def manifest_skill_dirs(install_path):
+    """Diretorios de skill DECLARADOS pelo manifesto, ou None se ele nao declara.
+
+    `skills/` e convencao, nao contrato. O manifesto pode apontar para outro
+    lugar, e quando aponta, e ele que vale — o Claude Code carrega dali.
+
+    Medido em 2026-08-13: o mlflow declara 11 caminhos na RAIZ do installPath
+    ("./agent-evaluation", "./analyze-mlflow-trace", ...) e nao tem pasta
+    `skills/` nenhuma. O scan hardcodava `<root>/skills` e devolvia ZERO skills
+    para ele — enquanto o roster real injetava as 9 habilitadas. Mesma classe do
+    bug do prefixo: o codigo assumiu a convencao em vez de ler o manifesto.
+
+    Aceita string (um diretorio que contem varias skills) ou lista de caminhos
+    (cada um uma skill, ou um diretorio-pai). Quem chama resolve os dois casos.
+    """
+    for rel in ((".claude-plugin", "plugin.json"), ("plugin.json",)):
+        cand = os.path.join(install_path, *rel)
+        if os.path.isfile(cand):
+            declarado = (_load_json(cand, {}) or {}).get("skills")
+            if isinstance(declarado, str):
+                return [declarado]
+            if isinstance(declarado, list) and declarado:
+                return [str(d) for d in declarado]
+            return None
+    return None
+
+
+def _skill_dirs(root):
+    """Diretorios que contem um SKILL.md, honrando o manifesto e caindo na convencao."""
+    declarados = manifest_skill_dirs(root)
+    candidatos = []
+    if declarados:
+        for rel in declarados:
+            alvo = os.path.normpath(os.path.join(root, rel.lstrip("./\\")))
+            if not os.path.isdir(alvo):
+                continue
+            if os.path.isfile(os.path.join(alvo, "SKILL.md")):
+                candidatos.append(alvo)          # o caminho E a skill
+            else:
+                candidatos.extend(               # o caminho e o pai das skills
+                    os.path.join(alvo, d) for d in sorted(os.listdir(alvo))
+                    if os.path.isfile(os.path.join(alvo, d, "SKILL.md"))
+                )
+    else:
+        conv = os.path.join(root, "skills")
+        if os.path.isdir(conv):
+            candidatos = [os.path.join(conv, d) for d in sorted(os.listdir(conv))]
+    vistos, saida = set(), []
+    for c in candidatos:                          # manifesto pode repetir caminho
+        chave = os.path.normcase(os.path.abspath(c))
+        if chave not in vistos:
+            vistos.add(chave)
+            saida.append(c)
+    return saida
+
+
 def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
                 claude_json=CLAUDE_JSON, personal_dir=PERSONAL_SKILLS_DIR):
     """Lista skills de plugins instalados (via installPath) + pessoais, sem embeddings."""
@@ -132,13 +188,10 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
             root = entry.get("installPath")
             if not root or not os.path.isdir(root):
                 continue
-            sroot = os.path.join(root, "skills")
-            if not os.path.isdir(sroot):
-                continue
             enabled = bool(enabled_map.get(pid, False))
-            for d in sorted(os.listdir(sroot)):
-                add(pid, "marketplace", enabled, os.path.join(sroot, d),
-                    prefix=manifest_name(root))
+            prefixo = manifest_name(root)
+            for skill_dir in _skill_dirs(root):
+                add(pid, "marketplace", enabled, skill_dir, prefix=prefixo)
 
     if os.path.isdir(personal_dir):
         for d in sorted(os.listdir(personal_dir)):

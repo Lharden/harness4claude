@@ -265,6 +265,41 @@ class TestAgregado:
         assert [s["id"] for s in skills] == ["graphify-windows"]
         assert skills[0]["usage_count"] == 5
 
+    def test_manifesto_pode_apontar_skills_fora_de_skills(self, ars, tmp_path, monkeypatch):
+        """`skills/` e convencao, nao contrato. O mlflow declara 11 caminhos na
+        RAIZ do installPath e nao tem pasta `skills/` nenhuma — o scan hardcodava
+        <root>/skills e devolvia ZERO para ele, enquanto o roster real injetava
+        as 9 habilitadas. O orcamento atribuia 0 tok a um plugin que custava."""
+        bsi = sys.modules["build_skills_index"]
+        raiz = tmp_path / "cache" / "mlflow"
+        (raiz / ".claude-plugin").mkdir(parents=True)
+        (raiz / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "mlflow", "skills": ["./agent-evaluation", "./fix-agent-issue"]}),
+            encoding="utf-8")
+        for nome in ("agent-evaluation", "fix-agent-issue"):
+            d = raiz / nome
+            d.mkdir()
+            (d / "SKILL.md").write_text(f"---\nname: {nome}\ndescription: d\n---\n", encoding="utf-8")
+        inst = tmp_path / "installed.json"
+        inst.write_text(json.dumps({"plugins": {"mlflow@mkt": [{"installPath": str(raiz)}]}}),
+                        encoding="utf-8")
+        cfg = tmp_path / "settings.json"
+        cfg.write_text(json.dumps({"enabledPlugins": {"mlflow@mkt": True}}), encoding="utf-8")
+        vazio = tmp_path / "vazio.json"
+        vazio.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(bsi, "INSTALLED_JSON", str(inst))
+        monkeypatch.setattr(bsi, "SETTINGS_JSON", str(cfg))
+        monkeypatch.setattr(bsi, "CLAUDE_JSON", str(vazio))
+        monkeypatch.setattr(bsi, "PERSONAL_SKILLS_DIR", str(tmp_path / "nao-existe"))
+        monkeypatch.setattr(bsi, "ALIASES_JSON", str(vazio))
+        assert sorted(s["id"] for s in ars.roster()) == [
+            "mlflow:agent-evaluation", "mlflow:fix-agent-issue"]
+
+    def test_convencao_skills_continua_valendo_sem_manifesto(self, ars, fake_claude):
+        """Quem nao declara `skills` no manifesto segue pela convencao."""
+        fake_claude({"p": {"skills": {"a": "d", "b": "d"}}})
+        assert len(ars.roster()) == 2
+
     def test_uso_de_plugin_soma_chaves_do_mesmo_plugin(self, ars, fake_claude):
         """O mesmo plugin aparece sob '@inline' (instalacao velha) e '@mkt'."""
         fake_claude({"hookify": {"skills": {"h": "d"}}},
@@ -507,6 +542,101 @@ class TestCandidates:
                             "components": {"skills": [{"name": "x"}]}}})
         res = ars.command_candidates(tmp_path, True, False, False)
         assert res["candidatos"][0]["tokens"] == 17793
+
+
+class TestGc:
+    """O `gc` APAGA, entao cada trava tem teste. Sem isso, a primeira vez que uma
+    delas quebrar sera num diretorio real que ja se foi."""
+
+    @pytest.fixture
+    def cache(self, ars, tmp_path, monkeypatch):
+        c = tmp_path / "cache"
+        c.mkdir()
+        monkeypatch.setattr(ars, "CACHE_DIR", c)
+        return c
+
+    def _cria(self, base, rel, mtime_offset=-99999):
+        d = base / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "f.bin").write_bytes(b"x" * 100)
+        import os as _os
+        t = 1_000_000_000 + mtime_offset
+        _os.utime(d, (t, t))
+        return d
+
+    def test_temp_velho_e_alvo(self, ars, cache):
+        self._cria(cache, "temp_git_abc")
+        res = ars.command_gc(False, agora=1_000_000_000)
+        assert res["resumo"]["temp"] == 1
+
+    def test_temp_recente_e_preservado(self, ars, cache):
+        """Instalacao em voo cria temp_* e depois move. Apagar quebraria o
+        install que esta acontecendo agora, e o sintoma apareceria longe da causa."""
+        self._cria(cache, "temp_git_novo", mtime_offset=-10)
+        res = ars.command_gc(False, agora=1_000_000_000)
+        assert res["resumo"]["temp"] == 0
+        assert any("em voo" in w for w in res["warnings"])
+
+    def test_versao_ativa_nunca_e_alvo(self, ars, cache, tmp_path, monkeypatch):
+        ativa = self._cria(cache, "mkt/plug/2.0")
+        self._cria(cache, "mkt/plug/1.0")
+        manifesto = tmp_path / "installed.json"
+        manifesto.write_text(json.dumps({"plugins": {"plug@mkt": [{"installPath": str(ativa)}]}}),
+                             encoding="utf-8")
+        monkeypatch.setattr(sys.modules["build_skills_index"], "INSTALLED_JSON", str(manifesto))
+        res = ars.command_gc(False, agora=1_000_000_000)
+        assert [a["rotulo"] for a in res["alvos"]] == ["plug/1.0"]
+
+    def test_manifesto_ilegivel_recusa_apagar_versao(self, ars, cache, tmp_path, monkeypatch):
+        """A trava que mais importa. Sem manifesto TODA versao parece orfa, e
+        apagar por essa leitura removeria justamente os plugins instalados."""
+        self._cria(cache, "mkt/plug/1.0")
+        self._cria(cache, "mkt/plug/2.0")
+        monkeypatch.setattr(sys.modules["build_skills_index"], "INSTALLED_JSON",
+                            str(tmp_path / "nao-existe.json"))
+        res = ars.command_gc(False, agora=1_000_000_000)
+        assert res["resumo"]["versoes_orfas"] == 0
+        assert any("ilegível" in w or "ilegivel" in w for w in res["warnings"])
+
+    def test_dry_run_nao_apaga(self, ars, cache):
+        d = self._cria(cache, "temp_git_abc")
+        ars.command_gc(False, agora=1_000_000_000)
+        assert d.exists()
+
+    def test_apply_apaga_e_conta(self, ars, cache):
+        d = self._cria(cache, "temp_git_abc")
+        res = ars.command_gc(True, agora=1_000_000_000)
+        assert not d.exists()
+        assert res["resumo"]["apagados"] == 1 and res["ready"] is True
+
+    def test_apaga_arquivo_somente_leitura(self, ars, cache):
+        """O git grava objeto de pack como read-only por desenho, e no Windows
+        rmtree nao desvincula arquivo sem bit de escrita. A primeira execucao
+        real (2026-08-13) apagou 18 de 79 e deu WinError 5 nos 61 que vinham de
+        clone — ou seja, o gc limpava so o pedaco que nao era repositorio."""
+        import os as _os
+        import stat as _stat
+        d = self._cria(cache, "temp_git_ro")
+        alvo = d / ".git" / "objects" / "pack"
+        alvo.mkdir(parents=True)
+        arquivo = alvo / "tmp_pack"
+        arquivo.write_bytes(b"y" * 50)
+        _os.chmod(arquivo, _stat.S_IREAD)
+        t = 1_000_000_000 - 99999
+        _os.utime(d, (t, t))
+        res = ars.command_gc(True, agora=1_000_000_000)
+        assert not d.exists(), f"read-only bloqueou a remocao: {res['errors']}"
+        assert res["ready"] is True
+
+    def test_nada_fora_do_cache_e_tocado(self, ars, cache, tmp_path):
+        """Trava aplicada no ultimo instante: nao importa como o alvo entrou na
+        lista, se resolve para fora do cache ele e descartado."""
+        fora = tmp_path / "importante"
+        fora.mkdir()
+        (fora / "arquivo.txt").write_text("nao apague", encoding="utf-8")
+        self._cria(cache, "temp_git_abc")
+        ars.command_gc(True, agora=1_000_000_000)
+        assert (fora / "arquivo.txt").read_text(encoding="utf-8") == "nao apague"
 
 
 def _escreve_registry(root: Path, registry: dict, dispensados: list | None = None) -> None:
