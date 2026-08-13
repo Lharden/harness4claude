@@ -78,6 +78,39 @@ def test_golden_top3_hit_rate(disjuntor_isolado):
     assert rate >= 0.80, f"top-3 hit rate {rate:.0%} < 80%"
 
 
+def test_golden_alvos_estao_habilitados():
+    """Todo alvo de `positives` tem que ser uma skill HABILITADA.
+
+    Guarda a invariante que faltava. Em 2026-08-12 a poda do arsenal desabilitou
+    21 plugins; 4 dos 15 casos do golden so podiam ser satisfeitos por skills
+    dessa lista (firecrawl x2, huggingface-skills, plugin-dev). O teto de
+    acuracia virou 73% contra um piso de 80%.
+
+    E o modo de falha foi pior que a falha: `pick` ainda deixa skill desabilitada
+    aparecer quando o cosseno folga o bastante, entao os casos passavam isolados
+    e falhavam na suite cheia. Duas sessoes foram gastas atras de "flakiness"
+    que era, na verdade, a metrica medindo uma capacidade removida de proposito.
+
+    Sem este teste, a proxima poda repete tudo. Com ele, quem dispensa uma
+    ferramenta descobre na hora que precisa arquivar os casos correspondentes.
+    """
+    with open(GOLDEN, encoding="utf-8") as f:
+        data = json.load(f)
+    index, _ = sr.load_index()
+    habilitadas = {s["id"] for s in index.get("skills", []) if s.get("enabled")}
+    if not habilitadas:
+        pytest.skip("indice ausente ou sem skills habilitadas")
+    orfaos = [
+        (c["prompt"][:60], c["expect_any"])
+        for c in data["positives"]
+        if not any(alvo in habilitadas for alvo in c["expect_any"])
+    ]
+    assert not orfaos, (
+        "casos do golden sem nenhum alvo habilitado — a metrica esta medindo "
+        f"capacidade que o sistema nao tem mais. Mova para positives_arquivados: {orfaos}"
+    )
+
+
 def test_golden_negatives_no_injection():
     sem_estado = os.path.join(os.path.dirname(GOLDEN), "no-state.json")
     for case in data_negatives():

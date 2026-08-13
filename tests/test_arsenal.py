@@ -544,6 +544,118 @@ class TestCandidates:
         assert res["candidatos"][0]["tokens"] == 17793
 
 
+class TestAuditaRollback:
+    """A5: comando de saida que apodreceu.
+
+    O perigo e especifico. `claude plugin disable` de um id que nao existe mais
+    sai com SUCESSO e nao desabilita nada: voce executa a saida, le "ok", e a
+    ferramenta continua la. Rollback que falha em silencio e pior que rollback
+    ausente, porque voce conta com ele.
+    """
+
+    def test_disable_de_plugin_instalado_passa(self, ars):
+        achados = ars.audita_rollback(
+            {"x": {"rollback": "claude plugin disable superpowers --scope user"}},
+            {"superpowers", "hookify"})
+        assert achados == []
+
+    def test_disable_de_plugin_inexistente_e_erro(self, ars):
+        """A prova de que o detector detecta. Sem este caso, zero achados no
+        registry real seria indistinguivel de detector morto."""
+        achados = ars.audita_rollback(
+            {"x": {"rollback": "claude plugin disable sumiu-daqui --scope user"}},
+            {"superpowers"})
+        assert [a["tipo"] for a in achados] == ["rollback_podre"]
+        assert achados[0]["nivel"] == "error"
+
+    def test_comentario_e_parentese_nao_confundem_o_parser(self, ars):
+        """O registry real tem "... --scope user  # QUEBRA os pipelines" e
+        "claude plugin disable harness4claude (a skill vive dentro do plugin)"."""
+        for cmd in ("claude plugin disable superpowers --scope user  # QUEBRA os pipelines L1/L2",
+                    "claude plugin disable superpowers (a skill vive dentro do plugin)"):
+            assert ars.audita_rollback({"x": {"rollback": cmd}}, {"superpowers"}) == []
+
+    def test_rm_de_caminho_existente_passa(self, ars, tmp_path):
+        alvo = tmp_path / "skill"
+        alvo.mkdir()
+        assert ars.audita_rollback({"x": {"rollback": f"rm -rf {alvo}"}}, {"p"}) == []
+
+    def test_rm_de_caminho_sumido_e_erro(self, ars, tmp_path):
+        achados = ars.audita_rollback(
+            {"x": {"rollback": f"rm -rf {tmp_path / 'nao-existe'}"}}, {"p"})
+        assert [a["tipo"] for a in achados] == ["rollback_podre"]
+
+    def test_na_com_explicacao_passa_sem_explicacao_avisa(self, ars):
+        assert ars.audita_rollback(
+            {"x": {"rollback": "n/a — é a arquitetura do vault; reverter é reescrever"}}, {"p"}) == []
+        achados = ars.audita_rollback({"x": {"rollback": "n/a"}}, {"p"})
+        assert [a["tipo"] for a in achados] == ["rollback_vazio"]
+
+    def test_forma_desconhecida_e_info_nao_erro(self, ars):
+        """Nao reconhecer NAO e o mesmo que estar quebrado. Tratar os dois como
+        erro faria o relatorio acusar toda forma nova e ensinar a ignora-lo."""
+        achados = ars.audita_rollback({"x": {"rollback": "desinstale pelo menu do /plugin"}}, {"p"})
+        assert achados[0]["nivel"] == "info"
+
+    def test_manifesto_vazio_nao_acusa_todo_mundo(self, ars):
+        """Sem installed_plugins.json legivel, TODO disable pareceria podre — e o
+        relatorio culparia o registry por um defeito do ambiente."""
+        assert ars.audita_rollback(
+            {"x": {"rollback": "claude plugin disable qualquer --scope user"}}, set()) == []
+
+
+class TestAuditaFontes:
+    """C2/C3: deriva fonte->resumo e link rot."""
+
+    def test_sem_fonte_e_info(self, ars):
+        achados = ars.audita_fontes({"x": {}}, "2026-08-13", rede=False)
+        assert [a["tipo"] for a in achados] == ["sem_fonte"]
+
+    def test_fonte_antiga_avisa(self, ars):
+        achados = ars.audita_fontes(
+            {"x": {"fonte": "skill pessoal", "capturado_em": "2020-01-01"}}, "2026-08-13", rede=False)
+        assert "fonte_antiga" in [a["tipo"] for a in achados]
+
+    def test_fonte_recente_nao_avisa_de_idade(self, ars):
+        achados = ars.audita_fontes(
+            {"x": {"fonte": "skill pessoal", "capturado_em": "2026-08-01"}}, "2026-08-13", rede=False)
+        assert "fonte_antiga" not in [a["tipo"] for a in achados]
+
+    def test_url_sem_rede_diz_que_nao_conferiu(self, ars):
+        """Nao conferir e legitimo; nao DIZER que nao conferiu e o que faz
+        ausencia de achado virar ilusao de cobertura."""
+        achados = ars.audita_fontes(
+            {"x": {"fonte": "github:obra/superpowers", "capturado_em": "2026-08-13"}},
+            "2026-08-13", rede=False)
+        assert [a["tipo"] for a in achados] == ["fonte_exige_rede"]
+
+    def test_github_em_prosa_nao_vira_url_falsa(self, ars):
+        """"github: skill i-have-adhd" nao e endereco. Fabricar uma URL a partir
+        dele produziria 404 e um achado de link rot que nao existe."""
+        achados = ars.audita_fontes(
+            {"x": {"fonte": "github: skill i-have-adhd", "capturado_em": "2026-08-13"}},
+            "2026-08-13", rede=False)
+        assert [a["tipo"] for a in achados] == ["fonte_em_prosa"]
+
+    def test_url_morta_com_rede_vira_aviso(self, ars, monkeypatch):
+        monkeypatch.setattr(ars, "_fonte_alcancavel", lambda u: (False, "HTTP 404"))
+        achados = ars.audita_fontes(
+            {"x": {"fonte": "https://exemplo.invalido/x", "capturado_em": "2026-08-13"}},
+            "2026-08-13", rede=True)
+        assert [a["tipo"] for a in achados] == ["fonte_morta"]
+
+    def test_url_viva_com_rede_nao_gera_achado(self, ars, monkeypatch):
+        monkeypatch.setattr(ars, "_fonte_alcancavel", lambda u: (True, "HTTP 200"))
+        assert ars.audita_fontes(
+            {"x": {"fonte": "https://exemplo.valido/x", "capturado_em": "2026-08-13"}},
+            "2026-08-13", rede=True) == []
+
+    def test_rede_indisponivel_nunca_levanta(self, ars):
+        """Contrato herdado do skill_router: rede caindo nao e defeito do registry."""
+        ok, detalhe = ars._fonte_alcancavel("http://127.0.0.1:9/nao-existe")
+        assert ok is False and isinstance(detalhe, str)
+
+
 class TestGc:
     """O `gc` APAGA, entao cada trava tem teste. Sem isso, a primeira vez que uma
     delas quebrar sera num diretorio real que ja se foi."""

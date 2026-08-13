@@ -544,7 +544,8 @@ def command_check(root: Path) -> dict:
     }
 
 
-def command_reconcile(root: Path) -> dict:
+def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
+                      rede: bool = False) -> dict:
     """Registry x disco x uso. Cada divergência tem nome, porque tem consequência distinta."""
     caminho = registry_path(root)
     warnings: list[str] = []
@@ -630,6 +631,13 @@ def command_reconcile(root: Path) -> dict:
                 f"dispensado em {item.get('decidido_em')} ({item.get('motivo')}), "
                 "mas está habilitado no disco",
             )
+
+    if fontes:
+        achados.extend(audita_fontes(entradas, hoje, rede))
+    if rollback:
+        instalados = {_short(k) for k in
+                      (bsi._load_json(bsi.INSTALLED_JSON, {}) or {}).get("plugins", {})}
+        achados.extend(audita_rollback(entradas, instalados))
 
     erros = [a for a in achados if a["nivel"] == "error"]
     return {
@@ -882,6 +890,159 @@ def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: b
         },
         "candidatos": sorted(novos, key=lambda n: (-(n.get("tokens") or 0), n["id"]))[:60],
     }
+
+
+MARKETPLACES_JSON = Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
+# Afirmação não reconferida em meio ano não é mentira, mas também já não é
+# evidência. O prazo é folgado de propósito: apertá-lo faria o relatório acusar
+# tudo o tempo todo, e relatório que acusa tudo não é lido.
+FONTE_ANTIGA_DIAS = 180
+REDE_TIMEOUT = 8.0
+
+
+def _classifica_fonte(fonte: str) -> tuple[str, str]:
+    """(tipo, alvo) a partir do texto livre de `fonte`.
+
+    Os tipos existentes no registry em 2026-08-13: `marketplace:`, `github:`,
+    `gist:`, `pip:` e prosa ("skill pessoal"). Só os dois primeiros são
+    conferíveis sem rede; o resto é declarado como não-conferível em vez de
+    passar calado, que é o que faz ausência de achado virar ilusão de cobertura.
+    """
+    texto = fonte.strip()
+    baixo = texto.lower()
+    if baixo.startswith(("http://", "https://")):
+        return "url", texto.split()[0]
+    if baixo.startswith("marketplace:"):
+        return "marketplace", texto.split(":", 1)[1].strip().split()[0]
+    if baixo.startswith("github:"):
+        resto = texto.split(":", 1)[1].strip()
+        # "github:owner/repo" vira URL; "github: skill i-have-adhd" é prosa.
+        alvo = resto.split()[0] if resto else ""
+        if alvo.count("/") == 1 and " " not in alvo:
+            return "url", f"https://github.com/{alvo}"
+        return "prosa", texto
+    return "prosa", texto
+
+
+def _fonte_alcancavel(url: str) -> tuple[bool, str]:
+    """GET curto. Nunca levanta — contrato herdado do skill_router."""
+    import urllib.error
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"User-Agent": "arsenal/1"})
+        with urllib.request.urlopen(req, timeout=REDE_TIMEOUT) as resp:
+            return (200 <= resp.status < 400), f"HTTP {resp.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}"
+    except Exception as exc:  # noqa: BLE001 - rede caindo não é defeito do registry
+        return False, type(exc).__name__
+
+
+def audita_fontes(entradas: dict[str, dict], hoje: str, rede: bool) -> list[dict]:
+    """C2/C3 da taxonomia: deriva fonte->resumo e link rot.
+
+    O que ele NÃO faz, e por que isso está escrito: comparar `fonte_hash`. Nenhuma
+    entrada de tools.toml carrega hash — eles vivem nas páginas de wiki/sources/,
+    que guardam o conteúdo lido no dia. Prometer comparação de hash aqui seria
+    prometer um detector que não roda.
+    """
+    mercados = set()
+    try:
+        with open(MARKETPLACES_JSON, encoding="utf-8") as handle:
+            dados = json.load(handle)
+        mercados = set(dados if isinstance(dados, list) else dados.keys())
+    except (OSError, ValueError):
+        pass
+
+    achados: list[dict] = []
+    for ident, item in sorted(entradas.items()):
+        fonte = str(item.get("fonte") or "").strip()
+        if not fonte:
+            achados.append({"tipo": "sem_fonte", "id": ident, "nivel": "info",
+                            "mensagem": "nenhuma fonte declarada — procedência não rastreável"})
+            continue
+
+        capturado = str(item.get("capturado_em") or "")
+        if capturado:
+            try:
+                idade = (date.fromisoformat(hoje) - date.fromisoformat(capturado)).days
+                if idade > FONTE_ANTIGA_DIAS:
+                    achados.append({
+                        "tipo": "fonte_antiga", "id": ident, "nivel": "warning",
+                        "mensagem": f"lida em {capturado} ({idade} dias) e nunca reconferida",
+                    })
+            except ValueError:
+                pass
+
+        tipo, alvo = _classifica_fonte(fonte)
+        if tipo == "marketplace":
+            if mercados and alvo not in mercados:
+                achados.append({
+                    "tipo": "marketplace_ausente", "id": ident, "nivel": "warning",
+                    "mensagem": f"fonte cita o marketplace '{alvo}', que não está mais registrado",
+                })
+        elif tipo == "url":
+            if not rede:
+                achados.append({"tipo": "fonte_exige_rede", "id": ident, "nivel": "info",
+                                "mensagem": f"{alvo} — não conferido (rode com --rede)"})
+            else:
+                ok, detalhe = _fonte_alcancavel(alvo)
+                if not ok:
+                    achados.append({"tipo": "fonte_morta", "id": ident, "nivel": "warning",
+                                    "mensagem": f"{alvo} não respondeu ({detalhe})"})
+        else:
+            achados.append({"tipo": "fonte_em_prosa", "id": ident, "nivel": "info",
+                            "mensagem": f"'{fonte}' não é endereço — só uma pessoa confere"})
+    return achados
+
+
+def audita_rollback(entradas: dict[str, dict], instalados: set[str]) -> list[dict]:
+    """A5 da taxonomia: comando de saída que apodreceu.
+
+    O perigo é específico: `claude plugin disable` de um id que não existe mais
+    sai com sucesso e não desabilita nada. Você executa a saída, lê "ok", e a
+    ferramenta continua lá. Rollback que falha em silêncio é pior que rollback
+    ausente, porque você conta com ele.
+    """
+    achados: list[dict] = []
+    for ident, item in sorted(entradas.items()):
+        bruto = str(item.get("rollback") or "").strip()
+        if not bruto:
+            continue
+        # Corta comentário e explicação: "... --scope user  # QUEBRA os pipelines"
+        comando = bruto.split("#", 1)[0].split("(", 1)[0].strip()
+        baixo = comando.lower()
+
+        if baixo.startswith("n/a"):
+            if len(bruto) < 8:
+                achados.append({"tipo": "rollback_vazio", "id": ident, "nivel": "warning",
+                                "mensagem": "'n/a' sem explicar por que não há volta"})
+            continue
+
+        m = re.search(r"claude\s+plugin\s+(?:disable|uninstall)\s+([^\s]+)", comando)
+        if m:
+            alvo = _short(m.group(1).strip("\"'"))
+            if instalados and alvo not in instalados:
+                achados.append({
+                    "tipo": "rollback_podre", "id": ident, "nivel": "error",
+                    "mensagem": f"desabilitaria '{alvo}', que não está instalado — "
+                                "o comando sairia com sucesso sem desfazer nada",
+                })
+            continue
+
+        m = re.search(r"\brm\b(?:\s+-\w+)*\s+(\S+)", comando)
+        if m:
+            caminho = Path(m.group(1).strip("\"'")).expanduser()
+            if not caminho.exists():
+                achados.append({
+                    "tipo": "rollback_podre", "id": ident, "nivel": "error",
+                    "mensagem": f"apagaria '{caminho}', que não existe mais",
+                })
+            continue
+
+        achados.append({"tipo": "rollback_nao_reconhecido", "id": ident, "nivel": "info",
+                        "mensagem": f"'{comando[:60]}' — forma não conferível por máquina"})
+    return achados
 
 
 CACHE_DIR = Path.home() / ".claude" / "plugins" / "cache"
@@ -1337,7 +1498,10 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="comando", required=True)
     sub.add_parser("check", parents=[comum], help="Valida o contrato do registry.")
-    sub.add_parser("reconcile", parents=[comum], help="Registry x disco x uso.")
+    rec = sub.add_parser("reconcile", parents=[comum], help="Registry x disco x uso.")
+    rec.add_argument("--fontes", action="store_true", help="confere procedência e link rot")
+    rec.add_argument("--rollback", action="store_true", help="confere se o comando de saída ainda vale")
+    rec.add_argument("--rede", action="store_true", help="com --fontes, busca as URLs de verdade")
     construir = sub.add_parser("build", parents=[comum], help="Gera a página do arsenal.")
     construir.add_argument("--write", action="store_true", help="grava; sem isso imprime")
     orc = sub.add_parser("budget", parents=[comum], help="Custo do roster contra o teto.")
@@ -1364,7 +1528,7 @@ def main() -> int:
     if args.comando == "check":
         res = command_check(root)
     elif args.comando == "reconcile":
-        res = command_reconcile(root)
+        res = command_reconcile(root, args.fontes, args.rollback, args.rede)
     elif args.comando == "build":
         res = command_build(root, args.write)
     elif args.comando == "gc":
