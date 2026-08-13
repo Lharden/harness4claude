@@ -40,7 +40,11 @@ def plugin_copy(tmp_path_factory):
     """Copia so o necessario para o health-check rodar — copiar o repo todo
     arrastaria .git, worktrees e caches, e deixaria a suite lenta."""
     dst = tmp_path_factory.mktemp("plugin")
-    for sub in ("hooks", "scripts", "skills", "schemas", ".claude-plugin"):
+    # `tools` entrou quando o arsenal-gate passou a existir: o hook chama
+    # tools/arsenal.py, e sem a pasta ele degradava para exit 0 com aviso — o
+    # comportamento honesto, mas que fazia o smoke medir a ausencia da pasta em
+    # vez do gate.
+    for sub in ("hooks", "scripts", "skills", "schemas", "tools", ".claude-plugin"):
         src = ROOT / sub
         if src.is_dir():
             shutil.copytree(src, dst / sub, dirs_exist_ok=True)
@@ -94,6 +98,26 @@ class TestSmokeDetectaSabotagem:
             assert "git-guard bloqueia destrutivo" in secao
             assert "[FAIL]   git-guard bloqueia destrutivo" in secao, (
                 f"guard desativado passou despercebido:\n{secao}"
+            )
+        finally:
+            alvo.write_text(original, encoding="utf-8")
+
+    def test_arsenal_gate_que_para_de_bloquear_reprova(self, plugin_copy):
+        """Mesma sabotagem no gate de orcamento.
+
+        Sem este teste, o smoke do arsenal-gate seria teatro: ele passaria
+        igualmente com o hook funcionando e com um `exit 0` no lugar dele. E um
+        gate que para de bloquear em silencio e pior que gate nenhum, porque o
+        roster volta a crescer sozinho enquanto voce acredita estar protegido.
+        """
+        alvo = plugin_copy / "hooks" / "harness-arsenal-gate.sh"
+        original = alvo.read_text(encoding="utf-8")
+        alvo.write_text(INERT_HOOK, encoding="utf-8")
+        try:
+            secao = _smoke_section(_run_health_check(plugin_copy).stdout)
+            assert "arsenal-gate bloqueia install sem decisao" in secao
+            assert "[FAIL]   arsenal-gate bloqueia install sem decisao" in secao, (
+                f"gate desativado passou despercebido:\n{secao}"
             )
         finally:
             alvo.write_text(original, encoding="utf-8")

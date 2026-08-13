@@ -1,7 +1,7 @@
 {
   "positives": [
     {"prompt": "crie uma apresentacao pptx no padrao SLB sobre resultados do trimestre", "expect_any": ["slb-presentations"]},
-    {"prompt": "build me a knowledge graph of this repository and its architecture", "expect_any": ["graphify-windows"]},
+    {"prompt": "build me a knowledge graph of this repository and its architecture", "expect_any": ["graphify"]},
     {"prompt": "escreva uma spec formal com user stories e acceptance criteria para o modulo de login", "expect_any": ["harness4claude:write-spec", "harness4claude:write-spec-light"]},
     {"prompt": "quero fazer um brainstorm de ideias para a nova feature de exportacao", "expect_any": ["superpowers:brainstorming"]},
     {"prompt": "rode um scan de seguranca com bandit neste codigo python antes do commit", "expect_any": ["harness4claude:security-scan-python"]},

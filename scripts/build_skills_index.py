@@ -70,6 +70,27 @@ def _load_json(path, default):
         return default
 
 
+def manifest_name(install_path):
+    """Nome do plugin como o Claude Code o expoe, lido de .claude-plugin/plugin.json.
+
+    Nao e o mesmo que a chave de installed_plugins.json. Em 2026-08-12, 2 dos 38
+    plugins habilitados divergiam: data-engineering -> "astronomer-data" e
+    sap-hana-cli -> "hana-cli". O roster e o skillUsage usam o nome do MANIFEST
+    ("astronomer-data:airflow"), entao montar o id com a chave de instalacao
+    produzia "data-engineering:airflow" — um id que nunca casa com o uso
+    registrado. usage_count lia 0 para sempre, sem erro nenhum, e o boost de uso
+    do skill-router ficava cego para esses plugins.
+
+    Devolve None quando nao ha manifest: o chamador cai na chave de instalacao.
+    """
+    for rel in ((".claude-plugin", "plugin.json"), ("plugin.json",)):
+        cand = os.path.join(install_path, *rel)
+        if os.path.isfile(cand):
+            name = (_load_json(cand, {}) or {}).get("name")
+            return str(name) if name else None
+    return None
+
+
 def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
                 claude_json=CLAUDE_JSON, personal_dir=PERSONAL_SKILLS_DIR):
     """Lista skills de plugins instalados (via installPath) + pessoais, sem embeddings."""
@@ -78,7 +99,7 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
     aliases = _load_json(ALIASES_JSON, {})
     skills = []
 
-    def add(plugin_label, source, enabled, skill_dir):
+    def add(plugin_label, source, enabled, skill_dir, prefix=None):
         md = os.path.join(skill_dir, "SKILL.md")
         if not os.path.isfile(md):
             return
@@ -89,9 +110,15 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
             return
         name = fm.get("name") or os.path.basename(skill_dir)
         desc = (fm.get("description") or "").strip()
-        short = plugin_label.split("@")[0]
+        short = prefix or plugin_label.split("@")[0]
         sid = name if source == "personal" else f"{short}:{name}"
-        u = usage.get(sid) or usage.get(name) or {}
+        # O DIRETORIO tambem entra na busca de uso. Skill pessoal cujo `name:` do
+        # frontmatter diverge do nome da pasta registra uso pela pasta: em
+        # 2026-08-12, ~/.claude/skills/graphify/ declarava `name: graphify-windows`
+        # e o skillUsage tinha 5 usos sob a chave "graphify". Sem esta linha o uso
+        # lia 0 — a mesma falha silenciosa do prefixo vindo da chave de instalacao.
+        dirname = os.path.basename(skill_dir.rstrip("/\\"))
+        u = usage.get(sid) or usage.get(name) or usage.get(dirname) or {}
         skills.append({
             "id": sid, "name": name, "plugin": plugin_label, "source": source,
             "enabled": enabled, "path": md, "description": desc,
@@ -110,7 +137,8 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
                 continue
             enabled = bool(enabled_map.get(pid, False))
             for d in sorted(os.listdir(sroot)):
-                add(pid, "marketplace", enabled, os.path.join(sroot, d))
+                add(pid, "marketplace", enabled, os.path.join(sroot, d),
+                    prefix=manifest_name(root))
 
     if os.path.isdir(personal_dir):
         for d in sorted(os.listdir(personal_dir)):
