@@ -61,14 +61,38 @@ diga em voz alta o que eles executam.
 
 ### 2. Prior-art — isto já foi decidido?
 
+Duas perguntas diferentes, e as duas precisam ser feitas.
+
+**2a. Esta ferramenta já passou por aqui?** — casamento por nome.
+
 ```bash
 python tools/wiki_prior_art.py "<descrição do que foi trazido>"
-grep -i "<nome>" "$VAULT_PATH/AI-Brain/arsenal/dispensados.toml"
 ```
 
-Se já foi dispensado, **diga qual era o motivo e pare para confirmar**. Não
+Se já foi dispensada, **diga qual era o motivo e pare para confirmar**. Não
 relitigue sozinho. Se o motivo antigo não vale mais, isso é informação nova e a
 decisão pode mudar — mas quem decide é o usuário.
+
+**2b. Já temos alguma coisa que faz isto?** — casamento por capacidade.
+
+O passo 2a casa por id: pega a **mesma** ferramenta reaparecendo e fica calado
+quando chega um **concorrente**. Em 2026-08-13 o Understand-Anything atravessou o
+funil inteiro sem que nada apontasse o `graphify`, que faz o mesmo trabalho.
+
+Então **declare** o que o candidato faz, escolhendo do vocabulário fechado em
+`AI-Brain/arsenal/tools.toml` (bloco `[[capacidades]]`), e cruze:
+
+```bash
+python tools/arsenal.py overlap --faz grafo-de-codigo,busca-semantica
+```
+
+Não é adivinhação: você declara, o comando faz interseção exata. Rótulo fora do
+vocabulário é erro, não resultado vazio. Se não existir rótulo para o que o
+candidato faz, **acrescente um em `[[capacidades]]` antes** — vocabulário aberto
+por acidente é vocabulário que não casa com nada.
+
+Achou sobreposição? Isso não veta nada. É a pergunta do passo 4 chegando mais
+cedo: *o nosso já cobre, ou o deles tem nuance que o nosso não tem?*
 
 ### 3. Decompor — nomear as peças, não a ferramenta
 
@@ -109,9 +133,12 @@ Ordem de preferência, e ela não é neutra:
 
 ### 6. Registrar
 
-Escreva a entrada em `<AI_BRAIN>/arsenal/tools.toml`. Para `absorvido`,
-`o_que_veio` e `absorvido_em` são **obrigatórios**, e o `check` confere que o
-destino existe:
+Escreva a entrada em `<AI_BRAIN>/arsenal/tools.toml`, **com o `faz_o_que` que
+você declarou no passo 2b** — sem ele a ferramenta nunca aparece no `overlap`, e
+a próxima assimilação repete o erro que esta corrigiu.
+
+Para `absorvido`, `o_que_veio` e `absorvido_em` são **obrigatórios**, e o `check`
+confere que o destino existe:
 
 ```bash
 python tools/arsenal.py check      # contrato + destino verificável

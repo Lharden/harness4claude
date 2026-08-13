@@ -89,6 +89,30 @@ KINDS = ("plugin", "skill", "mcp", "cli", "tecnica")
 
 CAMPOS_OBRIGATORIOS = ("id", "kind", "decisao", "decidido_em", "por_que", "rollback")
 
+# `faz_o_que` — capacidade DECLARADA, de vocabulário fechado.
+#
+# Nasceu de uma tentativa fracassada. Em 2026-08-13, assimilando o
+# Understand-Anything, o funil não avisou que ele duplicava o `graphify`: o
+# prior-art casa por id, então pega re-proposta da MESMA ferramenta e não pega
+# proposta de CONCORRENTE — que é o caso que mais importa.
+#
+# A tentativa foi inferir capacidade da prosa do `por_que`, por sobreposição de
+# palavras. Três iterações, medidas nos dois lados, e as três piores que a
+# anterior: `"query SQL"` casava com `"consultável por query"` do graphify —
+# mesma palavra, zero relação. O campo descreve por que DECIDIMOS, não o que a
+# ferramenta FAZ, e nenhum limiar conserta isso.
+#
+# A lição veio do llm-graph-builder, assimilado no dia anterior, e eu a violei
+# ao tentar inferir: **declare o schema, não deixe o modelo inferir.** Então a
+# capacidade passa a ser dado. Quem declara é quem tem julgamento — a skill
+# `assimilar`, ao confrontar. O código só faz interseção de conjuntos, exata.
+#
+# Vocabulário fechado, e validado contra a lista declarada no próprio registry
+# (mesmo desenho de `categories`/`kinds` do compendium.py). Sem isso a taxonomia
+# deriva: cada assimilação inventa um rótulo novo, nada casa com nada, e o campo
+# vira decoração.
+CAMPO_CAPACIDADE = "faz_o_que"
+
 # Absorver exige dizer O QUE veio e ONDE encaixou. Sem os dois, "absorvido" vira
 # um jeito educado de dizer "não usei" — e a nuance que justificou a decisão
 # some, que é justamente a parte que não se recupera depois.
@@ -226,6 +250,24 @@ def _referencia_existe(alvo: str, root: Path | None = None) -> bool:
     return Path(caminho).expanduser().exists()
 
 
+def capacidades_declaradas(registry: dict) -> set[str] | None:
+    """Ids do vocabulário `[[capacidades]]`. None quando o registry não o declara."""
+    bruto = registry.get("capacidades")
+    if bruto is None:
+        return None
+    return {str(c.get("id")) for c in bruto if isinstance(c, dict) and c.get("id")}
+
+
+def capacidades_de(item: dict) -> set[str]:
+    """`faz_o_que` de uma entrada, como conjunto. Aceita string ou lista."""
+    bruto = item.get(CAMPO_CAPACIDADE)
+    if isinstance(bruto, str):
+        return {bruto.strip()} if bruto.strip() else set()
+    if isinstance(bruto, list):
+        return {str(c).strip() for c in bruto if str(c).strip()}
+    return set()
+
+
 def _alvos_de_absorcao(item: dict) -> list[str]:
     """`absorvido_em` como string OU lista.
 
@@ -258,6 +300,12 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
     if not isinstance(ferramentas, list) or not ferramentas:
         erros.append("registry: 'tools' deve ser uma lista não vazia")
         return erros
+
+    # Vocabulário fechado de capacidades. Ausente = campo desligado, não erro:
+    # um registry que ainda não declarou capacidades nenhuma continua válido.
+    capacidades = capacidades_declaradas(registry)
+    if capacidades is not None and not capacidades:
+        erros.append("registry: 'capacidades' declarado mas vazio — remova a tabela ou preencha")
 
     vistos: dict[str, int] = {}
     for i, item in enumerate(ferramentas):
@@ -299,6 +347,15 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
             valor = item.get(campo)
             if valor is not None and not _ISO_RE.match(str(valor)):
                 erros.append(f"{rotulo}: {campo} deve ser data ISO (YYYY-MM-DD)")
+
+        # Capacidade fora do vocabulário é pior que capacidade ausente: parece
+        # declarada e não casa com nada, porque ninguém mais usou aquele rótulo.
+        if capacidades is not None:
+            for cap in sorted(capacidades_de(item) - capacidades):
+                erros.append(
+                    f"{rotulo}: {CAMPO_CAPACIDADE} usa '{cap}', que não está em [[capacidades]] — "
+                    "declare o rótulo lá ou use um dos existentes"
+                )
 
         if item.get("decisao") == "prova" and not item.get("prova_ate"):
             erros.append(f"{rotulo}: decisao='prova' exige 'prova_ate' — prova sem prazo nunca termina")
@@ -539,6 +596,14 @@ def command_check(root: Path) -> dict:
         "resumo": {
             "ferramentas": len(registry.get("tools") or []),
             "dispensados": len(dispensados),
+            # Lacuna com número, em vez de campo faltando em silêncio: entrada
+            # sem capacidade nunca aparece no `overlap`, e sem este contador a
+            # ausência de aviso pareceria ausência de sobreposição.
+            "sem_capacidade": sum(
+                1 for t in list(registry.get("tools") or []) + list(dispensados.values())
+                if not capacidades_de(t)
+            ),
+            "vocabulario": len(capacidades_declaradas(registry) or ()),
             "registry": str(caminho),
         },
     }
@@ -1213,6 +1278,74 @@ def command_gc(aplicar: bool, agora: float) -> dict:
     }
 
 
+def command_overlap(root: Path, faz: list[str]) -> dict:
+    """Quem no arsenal já faz isto? Interseção EXATA de capacidades declaradas.
+
+    A pergunta que o `registry_hits` do prior-art não responde: ele casa por id,
+    então avisa quando a MESMA ferramenta reaparece e fica calado quando um
+    CONCORRENTE é proposto. Em 2026-08-13 o Understand-Anything passou pelo funil
+    sem que nada apontasse o graphify, que faz o mesmo trabalho.
+
+    Não há inferência aqui, de propósito. As capacidades do candidato são
+    DECLARADAS por quem confronta — a skill `assimilar`, no passo 4 — e este
+    comando só cruza conjuntos. A tentativa anterior, de adivinhar capacidade a
+    partir da prosa do `por_que`, falhou três vezes seguidas porque aquele campo
+    diz por que decidimos, não o que a ferramenta faz.
+
+    Rótulo desconhecido é ERRO, não achado vazio: pedir uma capacidade que não
+    existe no vocabulário quase sempre é digitação, e devolver "nada encontrado"
+    esconderia isso como se fosse resposta.
+    """
+    caminho = registry_path(root)
+    if not caminho.is_file():
+        return {"comando": "overlap", "ready": False,
+                "errors": [f"registry ausente: {caminho}"], "warnings": [], "resumo": {}, "hits": []}
+    registry = load_registry(caminho)
+    dispensados = load_dispensados(root)
+    vocabulario = capacidades_declaradas(registry)
+
+    pedido = {c.strip() for c in faz if c.strip()}
+    if not pedido:
+        return {"comando": "overlap", "ready": False,
+                "errors": ["--faz vazio: informe ao menos uma capacidade"],
+                "warnings": [], "resumo": {}, "hits": []}
+    if vocabulario is not None:
+        desconhecidas = sorted(pedido - vocabulario)
+        if desconhecidas:
+            return {
+                "comando": "overlap", "ready": False,
+                "errors": [f"capacidade fora do vocabulário: {desconhecidas}"],
+                "warnings": [],
+                "resumo": {"vocabulario": sorted(vocabulario)},
+                "hits": [],
+            }
+
+    hits = []
+    for item, estado in ([(t, "registrada") for t in (registry.get("tools") or [])]
+                         + [(d, "dispensada") for d in dispensados.values()]):
+        comuns = pedido & capacidades_de(item)
+        if not comuns:
+            continue
+        hits.append({
+            "id": str(item.get("id")),
+            "estado": estado,
+            "decisao": item.get("decisao") or "dispensada",
+            "em_comum": sorted(comuns),
+            "faz_o_que": sorted(capacidades_de(item)),
+            "por_que": " ".join(str(item.get("por_que") or item.get("motivo") or "").split())[:200],
+        })
+    hits.sort(key=lambda h: (-len(h["em_comum"]), h["id"]))
+    return {
+        "comando": "overlap",
+        "ready": True,  # sobreposição não é defeito: é informação para decidir.
+        "errors": [],
+        "warnings": ([f"{len(hits)} ferramenta(s) já declaram essa capacidade — "
+                      "confira se a nova traz nuance que as nossas não têm"] if hits else []),
+        "resumo": {"pedido": sorted(pedido), "encontradas": len(hits)},
+        "hits": hits,
+    }
+
+
 def command_gate(root: Path, alvo: str) -> dict:
     """A única barreira dura do sistema: instalar exige decisão prévia e orçamento.
 
@@ -1529,6 +1662,10 @@ def main() -> int:
     lixo = sub.add_parser("gc", parents=[comum],
                           help="Lixo do cache de plugins. Sem --apply, só lista.")
     lixo.add_argument("--apply", action="store_true", help="apaga de verdade")
+    sobrep = sub.add_parser("overlap", parents=[comum],
+                            help="Quem já faz isto? Interseção de capacidades declaradas.")
+    sobrep.add_argument("--faz", required=True,
+                        help="capacidades do candidato, separadas por vírgula")
     portao = sub.add_parser("gate", parents=[comum],
                             help="Pode instalar? Exit 1 = bloqueado, com o motivo.")
     portao.add_argument("--tool", required=True, help="id do plugin (nome curto)")
@@ -1553,6 +1690,8 @@ def main() -> int:
         res = command_build(root, args.write)
     elif args.comando == "gc":
         res = command_gc(args.apply, time.time())
+    elif args.comando == "overlap":
+        res = command_overlap(root, args.faz.split(","))
     elif args.comando == "gate":
         res = command_gate(root, args.tool)
     elif args.comando == "candidates":

@@ -134,6 +134,30 @@ class TestContratoDoRegistry:
             decisao="absorvido", o_que_veio="comprimir removendo filler",
             absorvido_em="skills/compress-memory/compress.py:main"), {}) == []
 
+    def test_capacidade_fora_do_vocabulario_reprova(self, ars):
+        """Rotulo fora da lista e PIOR que rotulo ausente: parece declarado e nao
+        casa com nada, porque ninguem mais usou aquele nome. Taxonomia aberta
+        deriva ate o campo virar decoracao."""
+        reg = _registry(faz_o_que=["grafo-de-codigos"])   # plural: digitacao
+        reg["capacidades"] = [{"id": "grafo-de-codigo", "label": "x"}]
+        erros = ars.validate_registry(reg, {})
+        assert any("grafo-de-codigos" in e and "capacidades" in e for e in erros), erros
+
+    def test_capacidade_do_vocabulario_passa(self, ars):
+        reg = _registry(faz_o_que=["grafo-de-codigo"])
+        reg["capacidades"] = [{"id": "grafo-de-codigo", "label": "x"}]
+        assert ars.validate_registry(reg, {}) == []
+
+    def test_registry_sem_vocabulario_nao_valida_capacidade(self, ars):
+        """Registry que ainda nao declarou capacidades continua valido — o campo
+        e opcional, e ligar a validacao sozinha reprovaria todo mundo de uma vez."""
+        assert ars.validate_registry(_registry(faz_o_que=["qualquer-coisa"]), {}) == []
+
+    def test_capacidade_aceita_string_e_lista(self, ars):
+        assert ars.capacidades_de({"faz_o_que": "a"}) == {"a"}
+        assert ars.capacidades_de({"faz_o_que": ["a", "b"]}) == {"a", "b"}
+        assert ars.capacidades_de({}) == set()
+
     def test_id_nos_dois_arquivos_reprova(self, ars):
         dispensados = {"superpowers": {"motivo": "x", "decidido_em": "2026-08-12"}}
         erros = ars.validate_registry(_registry(), dispensados)
@@ -654,6 +678,91 @@ class TestAuditaFontes:
         """Contrato herdado do skill_router: rede caindo nao e defeito do registry."""
         ok, detalhe = ars._fonte_alcancavel("http://127.0.0.1:9/nao-existe")
         assert ok is False and isinstance(detalhe, str)
+
+
+class TestOverlap:
+    """`overlap` responde o que o prior-art por id nao responde: quem JA faz isto?
+
+    Em 2026-08-13 o Understand-Anything passou pelo funil sem que nada apontasse
+    o graphify, que faz o mesmo trabalho. O prior-art casa por id — pega
+    re-proposta da MESMA ferramenta, nao pega concorrente.
+
+    Nao ha inferencia aqui, de proposito: a capacidade do candidato e DECLARADA
+    por quem confronta, e o codigo so cruza conjuntos. Tentar adivinhar a partir
+    da prosa do `por_que` falhou tres vezes seguidas — aquele campo diz por que
+    DECIDIMOS, nao o que a ferramenta FAZ.
+    """
+
+    def _vault(self, tmp_path, tools, dispensados=(), vocab=("a", "b", "c")):
+        d = tmp_path / "arsenal"
+        d.mkdir(parents=True, exist_ok=True)
+        linhas = ["schema_version = 1", 'updated = "2026-08-13"', ""]
+        for v in vocab:
+            linhas += ["[[capacidades]]", f'id = "{v}"', f'label = "cap {v}"', ""]
+        for t in tools:
+            linhas.append("[[tools]]")
+            for k, val in t.items():
+                linhas.append(f"{k} = " + (json.dumps(val) if isinstance(val, list) else f'"{val}"'))
+            linhas.append("")
+        (d / "tools.toml").write_text("\n".join(linhas), encoding="utf-8")
+        blocos = []
+        for t in dispensados:
+            blocos.append("[[dispensados]]")
+            for k, val in t.items():
+                blocos.append(f"{k} = " + (json.dumps(val) if isinstance(val, list) else f'"{val}"'))
+            blocos.append("")
+        (d / "dispensados.toml").write_text("\n".join(blocos), encoding="utf-8")
+        return tmp_path
+
+    def _tool(self, ident, faz, **extra):
+        base = {"id": ident, "kind": "plugin", "decisao": "adotado",
+                "decidido_em": "2026-08-13", "por_que": "x", "rollback": "y",
+                "faz_o_que": faz}
+        base.update(extra)
+        return base
+
+    def test_acha_quem_ja_faz_o_mesmo(self, ars, tmp_path):
+        raiz = self._vault(tmp_path, [self._tool("graphify", ["a", "b"]),
+                                      self._tool("outro", ["c"])])
+        res = ars.command_overlap(raiz, ["a", "b"])
+        assert [h["id"] for h in res["hits"]] == ["graphify"]
+        assert res["hits"][0]["em_comum"] == ["a", "b"]
+
+    def test_ordena_por_tamanho_da_sobreposicao(self, ars, tmp_path):
+        raiz = self._vault(tmp_path, [self._tool("parcial", ["a"]),
+                                      self._tool("total", ["a", "b"])])
+        assert [h["id"] for h in ars.command_overlap(raiz, ["a", "b"])["hits"]] == ["total", "parcial"]
+
+    def test_dispensada_tambem_conta(self, ars, tmp_path):
+        """Nao relitigar o recusado importa tanto quanto nao duplicar o adotado."""
+        raiz = self._vault(tmp_path, [self._tool("vivo", ["c"])],
+                           dispensados=[{"id": "morto", "motivo": "m",
+                                         "decidido_em": "2026-08-13", "faz_o_que": ["a"]}])
+        hits = ars.command_overlap(raiz, ["a"])["hits"]
+        assert [(h["id"], h["estado"]) for h in hits] == [("morto", "dispensada")]
+
+    def test_capacidade_que_ninguem_declara_devolve_vazio(self, ars, tmp_path):
+        raiz = self._vault(tmp_path, [self._tool("x", ["a"])])
+        res = ars.command_overlap(raiz, ["c"])
+        assert res["hits"] == [] and res["ready"] is True
+
+    def test_rotulo_invalido_e_erro_nao_vazio(self, ars, tmp_path):
+        """Pedir capacidade inexistente quase sempre e digitacao. Devolver
+        "nada encontrado" esconderia o erro como se fosse resposta."""
+        raiz = self._vault(tmp_path, [self._tool("x", ["a"])])
+        res = ars.command_overlap(raiz, ["nao-existe"])
+        assert res["ready"] is False
+        assert "vocabul" in res["errors"][0]
+
+    def test_sobreposicao_nao_e_defeito(self, ars, tmp_path):
+        """`ready` segue True: duplicata e informacao para decidir, nao falha. Se
+        reprovasse, o comando viveria vermelho e ninguem mais o leria."""
+        raiz = self._vault(tmp_path, [self._tool("x", ["a"])])
+        assert ars.command_overlap(raiz, ["a"])["ready"] is True
+
+    def test_pedido_vazio_reprova(self, ars, tmp_path):
+        raiz = self._vault(tmp_path, [self._tool("x", ["a"])])
+        assert ars.command_overlap(raiz, [" ", ""])["ready"] is False
 
 
 class TestGc:
