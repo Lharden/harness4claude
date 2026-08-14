@@ -386,6 +386,19 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
         for campo in ("motivo", "decidido_em"):
             if not str(item.get(campo, "")).strip():
                 erros.append(f"dispensados[{ident}]: '{campo}' é obrigatório")
+        # Dispensar o pacote e absorver uma peça dele não são excludentes — foi o
+        # que aconteceu com o code-review-graph em 2026-08-13. Até então a
+        # verificação de destino só rodava sobre tools.toml, então uma afirmação
+        # de absorção aqui não era conferida por ninguém.
+        for alvo in _alvos_de_absorcao(item):
+            if not _referencia_existe(alvo, root):
+                erros.append(
+                    f"dispensados[{ident}]: absorvido_em aponta para '{alvo}', que não existe"
+                )
+        if capacidades is not None:
+            for cap in sorted(capacidades_de(item) - capacidades):
+                erros.append(f"dispensados[{ident}]: {CAMPO_CAPACIDADE} usa '{cap}', "
+                             "que não está em [[capacidades]]")
 
     return erros
 
