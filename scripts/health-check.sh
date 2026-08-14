@@ -425,6 +425,60 @@ except Exception:
 echo "         plugin.json (arvore atual): $PLUGIN_VERSION"
 echo "         instalado (Claude Code):    $INSTALLED_VERSION"
 
+# Versao igual NAO significa codigo igual.
+#
+# Descoberto em 2026-08-13, no fecho do dia: a arvore e o cache estavam ambos em
+# 3.7.0 e o bloco abaixo dizia "coerente" — enquanto o cache nao tinha tools/
+# impact.py, carregava um arsenal.py 27 KB menor e um gate que ainda bloqueava
+# por mencao. Todo trabalho feito DEPOIS de um bump, sem outro bump, roda no
+# clone e nao roda no Claude Code, e o unico sinal era nenhum.
+#
+# E a mesma licao que este bloco ja tinha aprendido uma vez com versao (era WARN
+# e escondeu 3.3.0 vs 3.2.0 por 41 dias), chegando pela porta ao lado: o
+# indicador conferia a etiqueta, nao o conteudo.
+CONTEUDO_DIVERGE="$(python - "$PLUGIN_DIR" <<'PY' 2>/dev/null || echo "?"
+import hashlib, json, os, sys
+local = sys.argv[1]
+try:
+    d = json.load(open(os.path.join(os.path.expanduser("~"), ".claude", "plugins",
+                                    "installed_plugins.json"), encoding="utf-8"))
+    caminho = next(e["installPath"] for k, v in d.get("plugins", {}).items()
+                   if k.startswith("harness4claude") for e in v if e.get("installPath"))
+except Exception:
+    print("?"); raise SystemExit(0)
+
+def impressao(raiz):
+    h = hashlib.sha256()
+    for sub in ("hooks", "scripts", "skills", "tools"):
+        base = os.path.join(raiz, sub)
+        for r, _, fs in os.walk(base):
+            if "__pycache__" in r:
+                continue
+            for f in sorted(fs):
+                p = os.path.join(r, f)
+                try:
+                    h.update(os.path.relpath(p, raiz).replace(os.sep, "/").encode())
+                    h.update(open(p, "rb").read())
+                except OSError:
+                    pass
+    return h.hexdigest()[:12]
+
+a, b = impressao(local), impressao(caminho)
+print("iguais" if a == b else f"{a} != {b}")
+PY
+)"
+if [ "$CONTEUDO_DIVERGE" = "iguais" ]; then
+    echo "[OK]     conteudo identico entre arvore local e plugin carregado"
+elif [ "$CONTEUDO_DIVERGE" = "?" ]; then
+    warn "nao foi possivel comparar o CONTEUDO entre arvore e cache"
+else
+    echo "[FAIL]   MESMA versao, CONTEUDO diferente ($CONTEUDO_DIVERGE)."
+    echo "         O Claude Code carrega codigo antigo com o numero novo. Suba a versao"
+    echo "         em .claude-plugin/plugin.json e marketplace.json, faca push, e rode"
+    echo "         /plugin update harness4claude"
+    EXIT_CODE=1
+fi
+
 if [ "$INSTALLED_VERSION" = "nao-instalado" ]; then
     warn "plugin nao consta em installed_plugins.json"
 elif [ "$PLUGIN_VERSION" != "$INSTALLED_VERSION" ]; then
