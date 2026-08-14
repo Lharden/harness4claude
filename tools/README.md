@@ -19,6 +19,7 @@ Todos operam sobre a **raiz do vault** via `--root`. Aponte para o seu vault
 | `vault_sync_doctor.py` | Valida prontidão de sync (plugins, .gitignore, git aninhado, REST) | `python -m tools.vault_sync_doctor --root "$VAULT_PATH" --check-rest` |
 | `export_plugins.py` | Gera `vault-plugins.lock.json` (lista+manifests leve, sem binários) | `python -m tools.export_plugins --root "$VAULT_PATH" --out vault-plugins.lock.json` |
 | `vault_maintenance.py` | Auditoria/manutenção conservadora das notas Markdown | `python -m tools.vault_maintenance --root "$VAULT_PATH"` |
+| `graph_lint.py` | Health check do knowledge graph: integridade referencial (erro) e caracteristica de uso (aviso) | `python tools/graph_lint.py --report` |
 | `impact.py` | Raio de impacto de mudança **não commitada**, sobre o grafo do graphify | `python tools/impact.py --report` |
 | `arsenal.py` | Registry das ferramentas **ativas**: contrato, reconciliação com o disco, orçamento de tokens do roster e colisão de gatilho | `python tools/arsenal.py budget --report` |
 

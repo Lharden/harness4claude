@@ -894,6 +894,48 @@ def _grava_vistos(root: Path, ids: set[str]) -> None:
     )
 
 
+# Ferramenta citada numa nota de sessão só conta quando vem com EVIDÊNCIA de
+# instalação ou de origem. A primeira versão pegava qualquer termo entre crases e
+# devolvia `router-embed-timeout` e `wiki-as-decision-memory` — nomes de branch do
+# git log — como se fossem candidatos a adotar. Crase marca código, não produto.
+#
+# Cada padrão abaixo é uma afirmação de que alguém foi buscar aquilo de fora.
+_PADROES_DE_FERRAMENTA = (
+    (re.compile(r"\bpip install\s+(?:-U\s+|--upgrade\s+)?([a-z][\w.-]{2,40})", re.I), "pip"),
+    (re.compile(r"\bnpm (?:i|install)\s+(?:-g\s+)?(@?[\w./-]{3,50})", re.I), "npm"),
+    (re.compile(r"\bpipx install\s+([a-z][\w.-]{2,40})", re.I), "pipx"),
+    (re.compile(r"\bcargo install\s+([a-z][\w.-]{2,40})", re.I), "cargo"),
+    (re.compile(r"\bbrew install\s+([a-z][\w.-]{2,40})", re.I), "brew"),
+    (re.compile(r"\bwinget install\s+([\w.-]{3,50})", re.I), "winget"),
+    (re.compile(r"claude plugin install\s+([\w.-]{3,50})", re.I), "plugin"),
+    (re.compile(r"github\.com/([\w.-]+/[\w.-]+)", re.I), "github"),
+    (re.compile(r"\bollama (?:pull|run)\s+([\w.:-]{3,50})", re.I), "ollama"),
+)
+
+
+def _ferramentas_citadas(texto: str) -> list[tuple[str, str]]:
+    """(id, evidência) para cada ferramenta com sinal de instalação no texto."""
+    achados: dict[str, str] = {}
+    for padrao, tipo in _PADROES_DE_FERRAMENTA:
+        for bruto in padrao.findall(texto):
+            base = str(bruto).strip().strip(".,;:'\"")
+            # Último segmento de caminho serve para repo (owner/nome) E para
+            # pacote npm com escopo (@escopo/nome). Sem isto, `@qoder-ai/x` virava
+            # string vazia no split de '@' e era descartado pelo filtro de
+            # tamanho — em silêncio, que é o pior jeito de não achar uma coisa.
+            if "/" in base:
+                base = base.split("/")[-1]
+            base = base.lstrip("@")
+            # Separadores de VERSÃO, não de escopo: `pkg@1.2`, `pkg==1.2`, `modelo:tag`.
+            for sep in ("@", "==", ":"):
+                base = base.split(sep)[0]
+            base = base.lower().removesuffix(".git")
+            if len(base) < 3 or base in {"the", "and", "com"}:
+                continue
+            achados.setdefault(base, tipo)
+    return sorted(achados.items())
+
+
 def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: bool) -> dict:
     """Funil proativo: o que apareceu e ainda não passou por decisão.
 
@@ -942,12 +984,12 @@ def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: b
                 texto = md.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for termo in set(re.findall(r"`([a-z][a-z0-9._@/-]{3,40})`", texto)):
-                base = termo.split("/")[-1].split("@")[0].lower()
-                if base in conhecidos or "." in base or len(base) < 4:
+            for base, evidencia in _ferramentas_citadas(texto):
+                if base in conhecidos:
                     continue
                 conhecidos.add(base)
-                novos.append({"id": base, "origem": "sessao", "onde": md.name})
+                novos.append({"id": base, "origem": "sessao",
+                              "onde": md.name, "evidencia": evidencia})
 
     if aceitar and novos:
         _grava_vistos(root, vistos | {n["id"] for n in novos})
@@ -1359,6 +1401,94 @@ def command_overlap(root: Path, faz: list[str]) -> dict:
     }
 
 
+STATS_JSON = Path.home() / ".claude" / "stats-cache.json"
+
+
+def superficie_mcp() -> dict:
+    """Quantos servidores MCP estão ligados e quantas tools cada um traz.
+
+    Isto é CONTAGEM, não custo, e a distinção está no nome de cada campo. O
+    schema de cada tool entra no prompt e custa tokens, mas os schemas não estão
+    em lugar nenhum que eu possa ler daqui — só os nomes. Publicar um número
+    inventado seria pior que o ponto cego, porque ponto cego declarado a gente
+    lembra, e número errado a gente cita.
+
+    O que isto entrega: a SUPERFÍCIE deixa de ser invisível. Dá para ver que há N
+    servidores e quantos deles nunca foram usados, mesmo sem saber o preço.
+    """
+    config = bsi._load_json(str(Path.home() / ".claude.json"), {}) or {}
+    servidores = config.get("mcpServers") or {}
+    uso = uso_de_plugin()
+    linhas = []
+    for nome in sorted(servidores):
+        linhas.append({"servidor": nome, "usos_do_plugin": uso.get(_short(nome), 0)})
+    return {
+        "servidores": len(servidores),
+        "detalhe": linhas,
+        "nota": ("contagem de servidores, NÃO custo em tokens. Os schemas de tool não são "
+                 "legíveis daqui; o `always_on` do catálogo cobre só plugin de marketplace."),
+    }
+
+
+def command_spend(teto: int) -> dict:
+    """O que este setup custa — o que dá para medir, e o que não dá, separados.
+
+    Três blocos, deliberadamente não somados:
+
+      roster    medido, exato, com teto e gate. É o que o arsenal controla.
+      mcp       contado, não precificado. Superfície visível, preço desconhecido.
+      execucao  gasto real de token por dia, lido do stats-cache do próprio
+                Claude Code — e com a data de cálculo junto, porque esse arquivo
+                atrasa e um número velho apresentado como atual é pior que nenhum.
+
+    Somá-los daria um total com cara de precisão que dois terços não têm. A
+    lacuna que fica declarada, e que o `quota should-run` do loopx resolve do
+    outro lado: nada aqui INTERROMPE gasto em execução — isto mede, não freia.
+    """
+    orcamento = command_budget(teto)
+    mcp = superficie_mcp()
+
+    stats = bsi._load_json(str(STATS_JSON), {}) or {}
+    diario = stats.get("dailyModelTokens") or []
+    ultimos = diario[-7:] if diario else []
+    por_dia = []
+    for entrada in ultimos:
+        total = sum(int(v or 0) for v in (entrada.get("tokensByModel") or {}).values())
+        por_dia.append({"data": entrada.get("date"), "tokens": total})
+    avisos = list(orcamento["warnings"])
+    calculado = stats.get("lastComputedDate")
+    if not diario:
+        avisos.append("sem histórico de gasto em stats-cache.json — execução não medida")
+    elif calculado:
+        try:
+            atraso = (date.today() - date.fromisoformat(str(calculado))).days
+            if atraso > 2:
+                avisos.append(f"stats-cache calculado em {calculado} ({atraso} dias atrás): "
+                              "o gasto abaixo é do que já foi consolidado, não de hoje")
+        except ValueError:
+            pass
+    avisos.append("NADA aqui interrompe gasto em execução — isto mede, não freia. "
+                  "A lacuna está registrada em arsenal/dispensados.toml sob `loopx`.")
+
+    return {
+        "comando": "spend",
+        "ready": orcamento["ready"],
+        "errors": orcamento["errors"],
+        "warnings": avisos,
+        "resumo": {
+            "roster_tokens": orcamento["resumo"]["tokens"],
+            "roster_teto": orcamento["resumo"]["teto"],
+            "mcp_servidores": mcp["servidores"],
+            "mcp_custo": "não medido",
+            "execucao_dias_com_dado": len(por_dia),
+            "execucao_calculado_em": calculado,
+        },
+        "roster": orcamento["resumo"],
+        "mcp": mcp,
+        "execucao": por_dia,
+    }
+
+
 def command_gate(root: Path, alvo: str) -> dict:
     """A única barreira dura do sistema: instalar exige decisão prévia e orçamento.
 
@@ -1672,6 +1802,9 @@ def main() -> int:
     construir.add_argument("--write", action="store_true", help="grava; sem isso imprime")
     orc = sub.add_parser("budget", parents=[comum], help="Custo do roster contra o teto.")
     orc.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
+    gasto = sub.add_parser("spend", parents=[comum],
+                           help="O que este setup custa: medido, contado e não medido.")
+    gasto.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
     lixo = sub.add_parser("gc", parents=[comum],
                           help="Lixo do cache de plugins. Sem --apply, só lista.")
     lixo.add_argument("--apply", action="store_true", help="apaga de verdade")
@@ -1701,6 +1834,8 @@ def main() -> int:
         res = command_reconcile(root, args.fontes, args.rollback, args.rede)
     elif args.comando == "build":
         res = command_build(root, args.write)
+    elif args.comando == "spend":
+        res = command_spend(args.teto)
     elif args.comando == "gc":
         res = command_gc(args.apply, time.time())
     elif args.comando == "overlap":

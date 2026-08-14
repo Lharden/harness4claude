@@ -220,6 +220,41 @@ except Exception:
 " 2>/dev/null | tr -d '\r' || true)"
 export VAULT_DIGEST
 
+# Funil proativo do arsenal. A skill `assimilar` espera gatilho do usuario; a
+# varredura de marketplace nao deveria — a fonte e local e verificavel, e ate
+# 2026-08-13 ela existia e nunca tinha sido agendada, que e o mesmo destino da
+# operacao `ingest` do vault (declarada em 2026-05, primeira execucao em 08).
+#
+# Rate-limit de 24h por marker: rodar a cada sessao gastaria I/O sem novidade, e
+# ruido diario vira linha que ninguem le. SILENCIOSO quando nao ha candidato —
+# aviso que aparece sempre deixa de ser aviso.
+ARSENAL_DIGEST=""
+_MARKER="$HARNESS_DIR/.arsenal-candidates-last"
+_NOW=$(date +%s 2>/dev/null || echo 0)
+_LAST=$(cat "$_MARKER" 2>/dev/null || echo 0)
+case "$_LAST" in ''|*[!0-9]*) _LAST=0 ;; esac
+if [ "$_NOW" -eq 0 ] || [ $((_NOW - _LAST)) -ge 86400 ]; then
+    mkdir -p "$HARNESS_DIR" 2>/dev/null || true
+    printf '%s\n' "$_NOW" > "$_MARKER" 2>/dev/null || true
+    ARSENAL_DIGEST="$(python -c "
+import json, os, subprocess, sys
+raiz = os.path.join(os.environ['PLUGIN_DIR_PY'], 'tools', 'arsenal.py')
+try:
+    r = subprocess.run([sys.executable, raiz, 'candidates'],
+                       capture_output=True, text=True, timeout=25)
+    d = json.loads(r.stdout)
+except Exception:
+    raise SystemExit(0)
+n = d.get('resumo', {}).get('novos', 0)
+if not n:
+    raise SystemExit(0)   # silencioso quando nao ha novidade
+ids = ', '.join(c['id'] for c in d.get('candidatos', [])[:5])
+print(f'ARSENAL: {n} candidato(s) ainda sem decisao ({ids}). '
+      'Rode: python tools/arsenal.py candidates --report')
+" 2>/dev/null | tr -d '\r' || true)"
+fi
+export ARSENAL_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     python -c "
@@ -236,8 +271,14 @@ json.dump({'task_id': None, 'schema_version': 3, 'classification': None,
     python -c "
 import json, os
 digest = os.environ.get('VAULT_DIGEST', '').strip()
-if digest:
-    print(json.dumps({'systemMessage': digest}))
+arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
+# Junta com chr(10) em vez de escape. Este bloco vive dentro de python -c
+# numa string de aspas duplas do bash: escape de quebra de linha vira
+# quebra real e quebra a sintaxe, e crase vira substituicao de comando.
+# Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
+partes_saida = [x for x in (digest, arsenal) if x]
+if partes_saida:
+    print(json.dumps({'systemMessage': (chr(10) * 2).join(partes_saida)}))
 " 2>/dev/null
     exit 0
 fi
@@ -268,6 +309,9 @@ partes = [
 digest = os.environ.get('VAULT_DIGEST', '').strip()
 if digest:
     partes.append(digest)
+arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
+if arsenal:
+    partes.append(arsenal)
 print(json.dumps({'systemMessage': '\n\n'.join(partes)}))
 " 2>/dev/null
     exit 0
@@ -299,6 +343,9 @@ except Exception:
 digest = os.environ.get('VAULT_DIGEST', '').strip()
 if digest:
     parts.append(digest)
+arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
+if arsenal:
+    parts.append(arsenal)
 
 if parts:
     print(json.dumps({'systemMessage': '\n\n'.join(parts)}))

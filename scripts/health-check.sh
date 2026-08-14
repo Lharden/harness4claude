@@ -290,6 +290,17 @@ print(" | ".join(partes))
 PY
 )"
 [ -n "$CLASSIFY_LINHA" ] && echo "[INFO]   classify -> $CLASSIFY_LINHA"
+
+# Grafo: so reporta quando existe um. Repo sem grafo nao e defeito.
+if [ -f "graphify-out/graph.json" ]; then
+    if python "$PLUGIN_DIR/tools/graph_lint.py" >/dev/null 2>&1; then
+        echo "[OK]     knowledge graph integro"
+    else
+        echo "[FAIL]   knowledge graph com problema de integridade — rode:"
+        echo "         python tools/graph_lint.py --report"
+        EXIT_CODE=1
+    fi
+fi
 echo ""
 
 echo "--- Orphaned artifacts ---"
@@ -448,6 +459,11 @@ except Exception:
     print("?"); raise SystemExit(0)
 
 def impressao(raiz):
+    # Fim de linha normalizado ANTES do hash. Sem isso o check acusava divergencia
+    # em 5 arquivos que normalizam para identico: a arvore local tem CRLF
+    # (Windows), o cache e checkout do git com LF. Byte diferente, conteudo igual.
+    # Guard que grita lobo na primeira execucao e guard que ninguem le na segunda —
+    # foi o defeito que este proprio bloco quase introduziu, em 2026-08-13.
     h = hashlib.sha256()
     for sub in ("hooks", "scripts", "skills", "tools"):
         base = os.path.join(raiz, sub)
@@ -458,7 +474,7 @@ def impressao(raiz):
                 p = os.path.join(r, f)
                 try:
                     h.update(os.path.relpath(p, raiz).replace(os.sep, "/").encode())
-                    h.update(open(p, "rb").read())
+                    h.update(open(p, "rb").read().replace(b"\r\n", b"\n"))
                 except OSError:
                     pass
     return h.hexdigest()[:12]

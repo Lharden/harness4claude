@@ -895,3 +895,59 @@ def _escreve_registry(root: Path, registry: dict, dispensados: list | None = Non
             blocos += [f'{k} = "{v}"' for k, v in t.items()]
             blocos.append("")
         (d / "dispensados.toml").write_text("\n".join(blocos), encoding="utf-8")
+
+
+class TestExtratorDeSessao:
+    """`candidates --sessions` so conta ferramenta com EVIDENCIA de instalacao.
+
+    A primeira versao pegava qualquer termo entre crases e devolvia
+    `router-embed-timeout` e `wiki-as-decision-memory` — nomes de branch do git
+    log — como candidatos a adotar. Crase marca codigo, nao produto.
+
+    Medido depois da correcao, sobre as notas reais: 5 de 5 achados eram
+    ferramentas de verdade (as assimiladas naquele dia), e todas ja decididas.
+    """
+
+    def test_pip_install_conta(self, ars):
+        assert ("requests", "pip") in ars._ferramentas_citadas("rodei `pip install requests` ontem")
+
+    def test_url_de_repo_conta_pelo_nome(self, ars):
+        assert ("loopx", "github") in ars._ferramentas_citadas("veja github.com/huangruiteng/loopx")
+
+    def test_nome_de_branch_entre_crases_NAO_conta(self, ars):
+        """O caso literal que a versao anterior errava."""
+        texto = "merge de `router-embed-timeout` e `wiki-as-decision-memory` para main"
+        assert ars._ferramentas_citadas(texto) == []
+
+    def test_identificador_de_codigo_entre_crases_NAO_conta(self, ars):
+        assert ars._ferramentas_citadas("chamei `detect_changes_tool` e `entity_vector`") == []
+
+    def test_versao_e_escopo_sao_removidos_do_id(self, ars):
+        achados = dict(ars._ferramentas_citadas(
+            "pip install graphifyy==0.8.38 ; npm i -g @qoder-ai/better-harness"))
+        assert "graphifyy" in achados
+        # Pacote npm com escopo: o nome e o ultimo segmento, nao a string inteira
+        # nem vazio. A primeira versao devolvia vazio e o filtro de tamanho o
+        # descartava em silencio.
+        assert "better-harness" in achados and "@qoder-ai/better-harness" not in achados
+
+    def test_sufixo_git_some(self, ars):
+        assert ("loopx", "github") in ars._ferramentas_citadas("github.com/a/loopx.git")
+
+
+class TestSpend:
+    def test_separa_medido_de_contado_de_nao_medido(self, ars, fake_claude):
+        """Somar os tres daria um total com cara de precisao que dois tercos nao
+        tem. O campo `mcp_custo` diz 'nao medido' em letras, nao em zero."""
+        fake_claude({"p": {"skills": {"s": "d"}}})
+        res = ars.command_spend(teto=10_000)
+        assert res["resumo"]["mcp_custo"] == "não medido"
+        assert isinstance(res["resumo"]["roster_tokens"], int)
+        assert "roster_tokens" in res["resumo"] and "execucao_dias_com_dado" in res["resumo"]
+
+    def test_diz_em_voz_alta_que_nao_freia(self, ars, fake_claude):
+        """Medir e freiar sao coisas diferentes, e confundi-las seria vender uma
+        garantia que nao existe."""
+        fake_claude({"p": {"skills": {"s": "d"}}})
+        res = ars.command_spend(teto=10_000)
+        assert any("não freia" in w or "nao freia" in w for w in res["warnings"])
