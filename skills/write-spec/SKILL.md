@@ -91,6 +91,12 @@ de formatação para user stories, acceptance criteria e boundaries.
 - **Exemplos concretos**: um bom `[NEEDS CLARIFICATION: qual o formato de
   autenticação — JWT, session cookie ou API key?]` é infinitamente melhor que
   um genérico `[NEEDS CLARIFICATION: auth]`.
+- **Vocabulário da spec não é herdado do código**: quando a feature mexe em algo
+  que já existe, o nome que a entidade tem hoje é uma resposta anterior ao
+  problema, não um requisito dele. Nomeie o que a coisa **é** no domínio; se o
+  termo do código diverge, isso é achado a registrar, não conflito a resolver
+  copiando o código. Restrição externa — contrato de API, schema em produção,
+  decisão Locked no `CONTEXT.md` — é o oposto: preserve literalmente.
 
 ## Saída
 

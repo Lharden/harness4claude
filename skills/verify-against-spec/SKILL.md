@@ -122,6 +122,22 @@ Confira que os arquivos alterados são os que o relatório diz, e que a mudança
 
 O princípio já valia ("não tome relatório de agente pelo valor de face"); o que faltava era a ação que o torna conferível.
 
+**Passo 7c — Conferir o escopo declarado contra o que o diff tocou**
+
+Os passos anteriores correm no sentido spec → código: cada REQ e cada AC procura sua evidência. Falta o sentido inverso — **cada arquivo alterado tinha uma norma que ninguém leu?**
+
+```bash
+python tools/design_scope.py --changed --explain
+```
+
+Três leituras da saída, e só uma é achado:
+
+- **Doc aplicável listado** — o design que governa esse código existe e foi considerado. Registrar no report.
+- **`sem_applies_to` não vazio** — design doc que não declara escopo governa caminho nenhum. Vai para o report como gap de rastreabilidade, não como falha de implementação: o requisito pode estar perfeitamente implementado e ainda assim ninguém conseguir chegar nele a partir do código.
+- **`sem_doc` não vazio** — arquivo alterado que nenhum design governa. **Não é gap.** Teste, config, script e tooling legitimamente não têm design doc, e tratar isso como achado enche o report de ruído até ninguém ler o resto.
+
+Se o diff toca código governado por um design que **contradiz** a implementação, isso é gap e entra no report — resolver significa decidir qual dos dois está defeituoso, nunca editar o doc para descrever o que o código passou a fazer.
+
 **Passo 8 — Gerar report e retornar status**
 
 Escrever `docs/specs/{feature-slug}-verification.md` no formato da seção "Report Format" abaixo. Retornar ao `harness-workflow` um dos 3 status: `VERIFY_STATUS=PASS` (tudo verde), `PARTIAL` (P1 verde, P2/P3 com warnings) ou `FAIL` (qualquer P1 órfão, clarifications pendentes, success criteria não atingido).

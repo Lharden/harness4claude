@@ -38,6 +38,32 @@ python "$CLAUDE_PLUGIN_ROOT/tools/wiki_prior_art.py" "<descricao da tarefa>"
 Nunca bloqueia: o comando sai 0 mesmo com indice ausente ou Ollama fora do ar. Se o
 bloco avisar que o indice esta desatualizado, trate os achados como incompletos.
 
+### 0b. Colocar a implementacao atual entre parenteses
+
+Quando a tarefa mexe em codigo que ja existe — refactor, mudanca de arquitetura,
+extensao de subsistema — o vocabulario desse codigo chega junto e passa por
+requisito sem ser examinado. Os nomes atuais das entidades, as fronteiras atuais
+entre modulos e a divisao atual de responsabilidade **nao sao dados do problema**.
+Sao uma resposta anterior a ele, tomada sob restricoes que podem nao valer mais.
+
+Antes de perguntar qualquer coisa, separe as duas coisas:
+
+- **Restricao genuina** — contrato externo, dado que ja existe em producao,
+  dependencia que nao da para trocar, decisao Locked anterior. Preserve.
+- **Forma herdada** — nome de classe, limite de arquivo, quem chama quem, o termo
+  que o time usa porque foi o primeiro que apareceu. Coloque entre parenteses.
+
+Formule o que o sistema precisa **significar e fazer**, e so depois volte ao codigo
+para desafiar essa formulacao. A ordem importa: modelo semantico primeiro, codigo
+como prova depois. Atrito de implementacao sozinho nao e razao para distorcer uma
+abstracao mais clara — restricao real e comportamento recem-descoberto, sim.
+
+Isso **nao** contradiz "siga os padroes existentes". Padrao idiomatico da
+linguagem e do repositorio continua valendo, e desviar dele sem motivo e defeito. O
+que fica em suspenso e outra camada: terminologia, fronteira e responsabilidade.
+
+Em tarefa que cria codigo novo, este passo nao tem trabalho a fazer — siga.
+
 ### 1. Extrair decisoes
 
 Pergunte ao usuario sobre estes eixos (apenas os relevantes ao pedido):

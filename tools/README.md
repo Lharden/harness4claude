@@ -21,6 +21,7 @@ Todos operam sobre a **raiz do vault** via `--root`. Aponte para o seu vault
 | `vault_maintenance.py` | Auditoria/manutenção conservadora das notas Markdown | `python -m tools.vault_maintenance --root "$VAULT_PATH"` |
 | `graph_lint.py` | Health check do knowledge graph: integridade referencial (erro) e caracteristica de uso (aviso) | `python tools/graph_lint.py --report` |
 | `impact.py` | Raio de impacto de mudança **não commitada**, sobre o grafo do graphify | `python tools/impact.py --report` |
+| `design_scope.py` | Qual design doc governa um caminho, via `applies_to` declarado no front matter | `python tools/design_scope.py --changed --explain` |
 | `arsenal.py` | Registry das ferramentas **ativas**: contrato, reconciliação com o disco, orçamento de tokens do roster e colisão de gatilho | `python tools/arsenal.py budget --report` |
 
 **Compêndio e arsenal são irmãos, e a diferença importa:** um verbete do compêndio
@@ -43,3 +44,12 @@ não-direcionado, então a saída é **vizinhança**, não dependência — cham
 atravessa hub (medido: com a barreira, 1 arquivo afetado; sem ela, 511) e não
 devolve "sem impacto" para arquivo que o grafo não conhece — devolve "não sei",
 que é diferente e é o ponto.
+
+**`design_scope.py` e `impact.py` respondem perguntas diferentes, e a diferença é
+a natureza do fato.** O `impact.py` pergunta *o que minha mudança afeta*, e a
+vizinhança é **medida** no grafo. O `design_scope.py` pergunta *que norma governa
+este caminho*, e o escopo é **declarado** por quem escreveu a spec. Um glob largo
+demais casa com o repositório inteiro e devolve resposta verdadeira e inútil — daí
+o `--explain`, que mostra qual padrão casou com qual alvo. Ele também não adivinha
+`applies_to`: documento sem front matter é reportado como governando nada, porque
+inferir escopo do conteúdo produziria roteamento plausível e errado.

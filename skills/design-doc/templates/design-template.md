@@ -1,3 +1,9 @@
+---
+applies_to:
+  - [glob relativo à raiz, ex: src/auth/**]
+  - [outro glob, ex: src/middleware/session.py]
+---
+
 # Design: [FEATURE NAME]
 
 **Spec Link**: [path relativo para spec.md]

@@ -59,7 +59,30 @@ Transforma uma **spec** aprovada (sem ambiguidades pendentes) em um documento de
      ```
    - Nenhum componente, entidade ou contrato deve ficar sem referência à spec.
 
-5. **Salvar e atualizar state**.
+5. **Declarar `applies_to`** — o front matter que diz quais caminhos este design governa.
+   - Formato: lista YAML de globs relativos à raiz do projeto, com `/` mesmo no Windows.
+     `*` fica dentro de um segmento; `**` atravessa diretórios.
+
+     ```yaml
+     ---
+     applies_to:
+       - src/auth/**
+       - src/middleware/session.py
+     ---
+     ```
+
+   - Os padrões identificam o código **governado** pelo documento, não todo arquivo que
+     por acaso menciona o assunto. Largos o bastante para sobreviver a um refactor comum,
+     estreitos o bastante para que casar signifique que o doc é mesmo relevante.
+   - No máximo ~10 padrões. Passando disso, consolidar em padrões mais amplos, ainda que
+     menos precisos — uma lista longa envelhece a cada movimentação de arquivo.
+   - Dois designs podem governar o mesmo caminho. Sobreposição é esperada onde as
+     preocupações se cruzam, e nesse caso ambos se aplicam.
+   - Conferir com `python tools/design_scope.py <caminho> --explain` antes de salvar: se um
+     arquivo que deveria ser governado não aparece, o glob está errado; se meio repositório
+     aparece, está largo demais.
+
+6. **Salvar e atualizar state**.
    - Gravar em `docs/specs/{feature-slug}-design.md`.
    - Atualizar `~/.claude/harness/state.json` adicionando o path ao array `artifacts_so_far` e avançando `current_step` para o próximo pipeline step (`validate-plan`).
 
@@ -75,6 +98,10 @@ O template canônico está em `templates/design-template.md` dentro desta skill.
 4. **Phases refletem user stories**. Organizar phases por ordem de prioridade das user stories (P1 → P2 → P3), não por ordem de implementação técnica. Isso garante entrega incremental de valor.
 5. **Risks honestos**. Listar riscos reais, não placeholders. Se não há risco claro, escrever "nenhum identificado" e seguir — melhor do que inventar.
 6. **Open questions vão para usuário**. Dúvidas técnicas que o agent não pode resolver sozinho (ex: escolha entre dois bancos de dados) devem ir explicitamente para a seção **Open Questions**, não ser resolvidas por chute.
+
+7. **O design é norma; o código é evidência**. Divergência entre os dois é uma contradição a resolver, não um fato a registrar — e resolver significa decidir qual dos dois está defeituoso. Refactor que não pretende mudar comportamento deve **preservar** o design. Nunca editar o documento só para racionalizar comportamento que o código adquiriu sem decisão.
+
+8. **`applies_to` mantém o design vivo depois do pipeline**. Sem ele o documento é lido uma vez, no `verify-against-spec`, e vira órfão: a próxima alteração no mesmo código não sabe que ele existe. Com ele, `python tools/design_scope.py src/auth/token.py` responde *qual norma governa este arquivo* — a direção inversa do `[traces:]`, e a única que serve para quem está prestes a editar. Atualizar os padrões quando a propriedade se move, área nova passa a ser governada, ou área velha deixa de ser.
 
 ## Saída
 
