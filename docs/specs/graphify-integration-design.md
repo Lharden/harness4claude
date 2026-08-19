@@ -1,3 +1,12 @@
+---
+applies_to:
+  - skills/graph-context/**
+  - skills/harness-workflow/SKILL.md
+  - scripts/setup-graphify.sh
+  - hooks/harness-graphify-autosetup.sh
+  - scripts/health-check.sh
+---
+
 # Design — Integração Graphify (graphify-integration)
 
 ## Arquitetura (3 camadas)

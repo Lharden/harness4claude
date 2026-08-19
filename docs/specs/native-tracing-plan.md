@@ -4,6 +4,19 @@ status: draft
 project: harness4claude
 created: 2026-07-18
 updated: 2026-08-12
+applies_to:
+  - scripts/harness_trace.py
+  - scripts/record_signal.py
+  - scripts/health-check.sh
+  - schemas/harness-trace-v1.schema.json
+  - hooks/harness-classify.sh
+  - hooks/harness-reclassify.sh
+  - hooks/harness-session-start.sh
+  - skills/harness-workflow/SKILL.md
+  - skills/harness-workflow/references/trace-format.md
+  - tests/test_harness_trace.py
+  - tests/test_trace_*.py
+  - tests/test_record_signal.py
 ---
 
 # Native tracing — plano de implementação (não executado)

@@ -1,3 +1,12 @@
+---
+applies_to:
+  - skills/graph-context/**
+  - skills/harness-workflow/SKILL.md
+  - scripts/setup-graphify.sh
+  - hooks/harness-graphify-autosetup.sh
+  - scripts/health-check.sh
+---
+
 # Spec — Integração Graphify ao Harness v3 (graphify-integration)
 
 **Status:** aprovada em modo autônomo (Discretion — ver docs/CONTEXT.md) · **Task:** t-20260611-204025 · **Data:** 2026-06-12

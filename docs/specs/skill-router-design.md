@@ -1,3 +1,21 @@
+---
+applies_to:
+  - hooks/harness-skill-router.sh
+  - hooks/skill_router.py
+  - hooks/harness-router-warmup.sh
+  - hooks/harness-skill-feedback.sh
+  - hooks/hooks.json
+  - scripts/build_skills_index.py
+  - scripts/skill_catalog.py
+  - scripts/bench_router.py
+  - scripts/migrate_state.py
+  - scripts/health-check.sh
+  - skills/skill-catalog/**
+  - tests/test_router_*.py
+  - tests/test_skill_router.py
+  - tests/test_build_skills_index.py
+---
+
 # Design — Skill Router Híbrido + Gestão de Plugins/Skills (skill-router) — harness4claude v3.3
 
 > Fase de pesquisa concluída em 2026-07-23. Decisões de direção tomadas pelo usuário:

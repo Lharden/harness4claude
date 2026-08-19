@@ -1,3 +1,12 @@
+---
+applies_to:
+  - skills/graph-context/**
+  - skills/harness-workflow/SKILL.md
+  - scripts/setup-graphify.sh
+  - hooks/harness-graphify-autosetup.sh
+  - scripts/health-check.sh
+---
+
 # Verification — graphify-integration (t-20260611-204025)
 
 **Data:** 2026-06-12 · **Modo:** autônomo (gates humanos convertidos em pendências com dono)
