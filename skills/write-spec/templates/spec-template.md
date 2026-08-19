@@ -129,6 +129,24 @@ Regras explícitas para o agente (e humanos) durante a implementação:
 
 ---
 
+## Nível de garantia
+
+O que esta feature vai poder ser **afirmada** como fazendo, quando estiver pronta.
+Boundaries restringem o comportamento do agente; esta seção restringe a frase que
+o README, o release note e o próximo agente terão direito de escrever.
+
+**Esta feature entrega:** [uma frase, no nível mais baixo que ainda é verdade —
+ex: "um registro de auditoria e rastreabilidade", não "reprodução determinística"]
+
+**E não cobre:** [o que alguém razoavelmente assumiria estar incluído e não está]
+- [Limite 1 — ex: "o inventário de ambiente é observação, não lockfile: não recria o ambiente"]
+- [Limite 2 — ex: "evidência ausente é reportada como indisponível, nunca inferida"]
+
+Cada limite aqui precisa ser um limite do que **foi construído**, não uma lista de
+features futuras — isso é roadmap, e vive em outro arquivo.
+
+---
+
 ## [NEEDS CLARIFICATION]
 
 Ambiguidades que o AI não conseguiu resolver do contexto. USUÁRIO DEVE RESPONDER antes de continuar:

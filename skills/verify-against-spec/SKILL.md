@@ -135,6 +135,7 @@ Três leituras da saída, e só uma é achado:
 - **Doc aplicável listado** — o design que governa esse código existe e foi considerado. Registrar no report.
 - **`sem_applies_to` não vazio** — design doc que não declara escopo governa caminho nenhum. Vai para o report como gap de rastreabilidade, não como falha de implementação: o requisito pode estar perfeitamente implementado e ainda assim ninguém conseguir chegar nele a partir do código.
 - **`sem_doc` não vazio** — arquivo alterado que nenhum design governa. **Não é gap.** Teste, config, script e tooling legitimamente não têm design doc, e tratar isso como achado enche o report de ruído até ninguém ler o resto.
+- **`padroes_mortos` não vazio** — `applies_to` declarado que não casa com arquivo nenhum do repositório. Gap de rastreabilidade, e o mais fácil de não ver: o doc aparece na lista de governantes e mesmo assim não roteia ninguém. Resolver é decidir entre duas coisas diferentes — spec escrita antes do código (correto, deixa como está) e caminho renomeado ou apagado desde que a spec foi escrita (declaração podre, corrige o padrão).
 
 Se o diff toca código governado por um design que **contradiz** a implementação, isso é gap e entra no report — resolver significa decidir qual dos dois está defeituoso, nunca editar o doc para descrever o que o código passou a fazer.
 
@@ -209,6 +210,19 @@ O arquivo `docs/specs/{feature-slug}-verification.md` deve seguir este layout co
 |----------------------|-----------|-----------|--------|
 | Latência por request | < 100 ms  | 73 ms     | PASS   |
 | Test coverage        | > 80%     | 87%       | PASS   |
+
+## Nível de garantia
+
+A spec declara o que a entrega poderá ser afirmada como fazendo. Aqui se confere
+o outro lado: o que foi construído sustenta essa frase, e nada no README, release
+note ou docstring afirma mais que ela.
+
+| Afirmação da spec | O que sustenta | Status |
+|---|---|---|
+| Registro de auditoria e rastreabilidade | hash por versão + evidência ausente marcada como indisponível | SUSTENTA |
+| — | README diz "reprodução garantida"; nada recria ambiente | EXCEDE |
+
+`EXCEDE` é gap, e o conserto quase nunca é código: é a frase.
 
 ## Gaps Encontrados
 

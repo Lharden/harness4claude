@@ -261,6 +261,54 @@ def test_changed_sem_git_nao_levanta(ds, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Padrao morto — applies_to que nao casa com nada no repositorio
+# ---------------------------------------------------------------------------
+
+
+def _repo(tmp_path, *arquivos: str):
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, check=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    for rel in arquivos:
+        escrever(tmp_path, rel, "x = 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    return git
+
+
+def test_applies_to_que_nao_casa_com_nada_e_aviso(ds, tmp_path):
+    """Doc COM applies_to apontando para diretorio que nao existe mais.
+
+    Pior que o doc sem applies_to, porque tem aparencia de saudavel: aparece na
+    lista de governantes e mesmo assim nao roteia ninguem. Nuance absorvida do
+    `validateModuleImpactManifest` do open-science (2026-08-19).
+    """
+    escrever(tmp_path, "docs/specs/auth-design.md", doc("src/antigo/**"))
+    _repo(tmp_path, "src/novo/a.py")
+    res = ds.command_design_scope(tmp_path, ["src/novo/a.py"])
+    assert res["resumo"]["padroes_mortos"] == 1
+    assert res["detalhe"]["padroes_mortos"][0]["pattern"] == "src/antigo/**"
+    assert res["ready"] is True   # spec adiantada tambem cai aqui: aviso, nao erro
+
+
+def test_padrao_que_casa_nao_vira_aviso(ds, tmp_path):
+    escrever(tmp_path, "docs/specs/auth-design.md", doc("src/auth/**"))
+    _repo(tmp_path, "src/auth/token.py")
+    res = ds.command_design_scope(tmp_path, ["src/auth/token.py"])
+    assert res["resumo"]["padroes_mortos"] == 0
+
+
+def test_sem_git_nao_acusa_padrao_morto(ds, tmp_path):
+    """Ausencia de listagem nao e prova de padrao morto."""
+    escrever(tmp_path, "docs/specs/a-design.md", doc("src/inexistente/**"))
+    res = ds.command_design_scope(tmp_path, ["src/a.py"])
+    assert res["resumo"]["padroes_mortos"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Contrato de saida
 # ---------------------------------------------------------------------------
 

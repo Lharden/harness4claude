@@ -162,6 +162,37 @@ class TestDegradacao:
         res = imp.command_impact(g, None, ["a.py"], 2, tmp_path)
         assert any("DEPOIS da constru" in w for w in res["warnings"])
 
+    def test_grafo_atual_declara_status(self, imp, tmp_path):
+        """Status de frescor e campo do resumo, nao aviso no meio da lista."""
+        g = _grafo(tmp_path, [_no("a", "a.py")], [], manifest={"a.py": {"mtime": 9e9}})
+        res = imp.command_impact(g, None, ["a.py"], 2, tmp_path)
+        assert res["resumo"]["grafo_status"] == "atual"
+        assert not any("CONFERIDA" in w for w in res["warnings"])
+
+    def test_grafo_velho_marca_vizinhanca_como_nao_conferida(self, imp, tmp_path):
+        """Grafo desatualizado responde, mas nao passa por medicao.
+
+        Nuance absorvida do `isCurrentGraph` do open-science (2026-08-19): o
+        estado do grafo e resposta de primeira classe, ao lado da resposta.
+        Antes disso o mesmo fato existia so como o 5o aviso de uma lista.
+        """
+        antigo_arq = tmp_path / "velho.py"
+        antigo_arq.write_text("x", encoding="utf-8")
+        g = _grafo(tmp_path, [_no("a", "a.py"), _no("b", "b.py")], [_aresta("a", "b")],
+                   manifest={"velho.py": {"mtime": 1.0}, "a.py": {"mtime": 9e9}})
+        res = imp.command_impact(g, None, ["a.py"], 2, tmp_path)
+        assert res["resumo"]["grafo_status"] == "desatualizado"
+        assert "CONFERIDA" in res["warnings"][0]
+        assert res["ready"] is True   # frescor e ressalva, nao defeito
+
+    def test_sem_manifest_o_frescor_e_desconhecido_nao_atual(self, imp, tmp_path):
+        """Ausencia de prova nao vira prova de frescor."""
+        g = _grafo(tmp_path, [_no("a", "a.py")], [])
+        (g / "manifest.json").unlink()
+        res = imp.command_impact(g, None, ["a.py"], 2, tmp_path)
+        assert res["resumo"]["grafo_status"] == "frescor-desconhecido"
+        assert "CONFERIDA" in res["warnings"][0]
+
     def test_impacto_nao_e_defeito(self, imp, tmp_path):
         """`ready` segue True mesmo com muitos afetados: e informacao para
         revisar, nao falha. Se reprovasse, viveria vermelho e ninguem leria."""

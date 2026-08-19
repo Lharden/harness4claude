@@ -95,22 +95,39 @@ def _normaliza(caminho: str) -> str:
     return caminho.replace("\\", "/").lstrip("./")
 
 
-def grafo_desatualizado(diretorio: Path, alterados: set[str], raiz: Path) -> list[str]:
-    """Arquivos que mudaram DESDE a construção do grafo e não estão no diff.
+def frescor_do_grafo(diretorio: Path, alterados: set[str], raiz: Path) -> tuple[str, str]:
+    """Estado do grafo em relação ao disco: `(status, motivo)`.
 
-    O diff é esperado estar fora do grafo — é justamente o que se quer analisar.
-    O problema é o outro: arquivo que mudou antes, entrou no commit, e o grafo
+    Arquivos que mudaram DESDE a construção do grafo e não estão no diff. O diff
+    é esperado estar fora do grafo — é justamente o que se quer analisar. O
+    problema é o outro: arquivo que mudou antes, entrou no commit, e o grafo
     nunca foi reconstruído. Aí a vizinhança descreve um código que não existe
     mais, e nada avisaria.
+
+    Devolve status em vez de aviso porque a diferença precisa aparecer no
+    `resumo`, não no meio de uma lista que ninguém lê até o fim. Mecanismo
+    conferido no `isCurrentGraph` do `module-test-impact.mjs` do open-science
+    (2026-08-19, `wiki/sources/open-science.md`): lá o grafo só entra no plano
+    quando está corrente, e o status do grafo é campo de saída de primeira
+    classe ao lado da resposta. Grafo velho respondendo com cara de medição é o
+    mesmo erro que este módulo já evita em `fora_do_grafo` — só que a causa é
+    outra e a aparência é ainda melhor, porque o arquivo ESTÁ no grafo.
+
+    Três estados, e os três são resposta:
+
+        atual                  nada mudou depois da construção.
+        desatualizado          mudou, e a vizinhança pode descrever código morto.
+        frescor-desconhecido   sem manifest.json legível — não dá para afirmar.
     """
     manifesto = Path(diretorio) / "manifest.json"
     if not manifesto.is_file():
-        return ["sem manifest.json — não dá para saber se o grafo está atualizado"]
+        return ("frescor-desconhecido",
+                "sem manifest.json — não dá para saber se o grafo está atualizado")
     try:
         with open(manifesto, encoding="utf-8") as handle:
             dados = json.load(handle)
     except (OSError, ValueError):
-        return ["manifest.json ilegível — frescor do grafo desconhecido"]
+        return ("frescor-desconhecido", "manifest.json ilegível — frescor do grafo desconhecido")
     velhos = 0
     for rel, meta in dados.items():
         if _normaliza(rel) in alterados:
@@ -122,10 +139,11 @@ def grafo_desatualizado(diretorio: Path, alterados: set[str], raiz: Path) -> lis
         except OSError:
             continue
     if velhos:
-        return [f"{velhos} arquivo(s) mudaram DEPOIS da construção do grafo e não estão "
+        return ("desatualizado",
+                f"{velhos} arquivo(s) mudaram DEPOIS da construção do grafo e não estão "
                 "neste diff — a vizinhança pode descrever código que já não existe. "
-                "Rode `graphify update .`"]
-    return []
+                "Rode `graphify update .`")
+    return ("atual", "")
 
 
 def calcula(grafo: dict, alterados: list[str], profundidade: int) -> dict:
@@ -243,7 +261,10 @@ def command_impact(diretorio: Path, ref: str | None, files: list[str] | None,
                 "warnings": avisos + ["nenhum arquivo alterado — nada a analisar"],
                 "resumo": {"alterados": 0}, "detalhe": {}}
 
-    avisos += grafo_desatualizado(diretorio, {_normaliza(a) for a in alterados}, cwd)
+    grafo_status, motivo_frescor = frescor_do_grafo(
+        diretorio, {_normaliza(a) for a in alterados}, cwd)
+    if motivo_frescor:
+        avisos.append(motivo_frescor)
     d = calcula(grafo, alterados, profundidade)
 
     if d["fora_do_grafo"]:
@@ -257,6 +278,10 @@ def command_impact(diretorio: Path, ref: str | None, files: list[str] | None,
                       "tudo a tudo e a busca parou. Impacto potencialmente amplo.")
     if d["truncou_na_profundidade"]:
         avisos.append(f"busca truncada em {profundidade} salto(s); pode haver mais além disso")
+    if grafo_status != "atual":
+        avisos.insert(0, f"VIZINHANÇA NÃO CONFERIDA (grafo {grafo_status}): a lista abaixo foi "
+                         "lida de um grafo que o disco já contradiz ou não confirma. Não é "
+                         "medição — é a última medição conhecida.")
 
     return {
         "comando": "impact",
@@ -272,6 +297,7 @@ def command_impact(diretorio: Path, ref: str | None, files: list[str] | None,
             "hubs": len(d["hubs_atingidos"]),
             "profundidade": profundidade,
             "direcionado": d["direcionado"],
+            "grafo_status": grafo_status,
         },
         "detalhe": d,
     }
