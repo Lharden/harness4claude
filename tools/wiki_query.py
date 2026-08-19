@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hooks"))
 import skill_router as sr
 
 DEFAULT_INDEX = Path.home() / ".claude" / "harness" / "wiki-index"
-OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://127.0.0.1:11434")
 EMBED_MODEL = sr.EMBED_MODEL
 
 # Mais folgado que o EMBED_TIMEOUT=1.2s do router: ali o embed roda no caminho quente

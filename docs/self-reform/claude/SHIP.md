@@ -115,7 +115,7 @@ O default é `nomic-embed-text-v2-moe` (dim 768). Trocar o modelo **invalida o �
 |---|---|---|
 | `HARNESS_DIR` | `~/.claude/harness` | raiz do estado — ver [`docs/HARNESS_DIR.md`](../../HARNESS_DIR.md) |
 | `HARNESS_EMBED_MODEL` | `nomic-embed-text-v2-moe` | modelo de embedding do router |
-| `HARNESS_OLLAMA_URL` | `http://localhost:11434` | endpoint do Ollama |
+| `HARNESS_OLLAMA_URL` | `http://127.0.0.1:11434` | endpoint do Ollama |
 | `HARNESS_SKILLS_INDEX` | `$HARNESS_DIR/skills-index` | override do índice |
 | `HARNESS_SKIP_DEPCHECK` | — | pula o `pip install` de primeira execução (uso em teste) |
 | `VAULT_PATH` / `AI_BRAIN_PATH` | — | vault do Obsidian |

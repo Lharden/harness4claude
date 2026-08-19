@@ -49,8 +49,29 @@ não encontra nada.** Ou seja, há **duas categorias de latência**, não um ún
 | MAX_OFFERS_PER_SKILL | 2 | dedupe por sessão |
 | CONNECT_TIMEOUT | 0.15s | pre-check TCP: porta morta falha aqui, sem pagar o teto de leitura |
 | EMBED_TIMEOUT | 3.0s | teto de leitura; acima disso degrada p/ Camada A |
-| HARNESS_OLLAMA_URL (env) | http://localhost:11434 | override do endpoint |
+| HARNESS_OLLAMA_URL (env) | http://127.0.0.1:11434 | override do endpoint — **IP literal, não hostname** |
 | HARNESS_SKILLS_INDEX (env) | ~/.claude/harness/skills-index | override do índice (testes) |
+
+### Por que o endpoint é IP e não `localhost`
+
+`localhost` resolve `::1` antes de `127.0.0.1`, e o Ollama escuta só em IPv4. O
+`urllib` não tem happy-eyeballs: ele espera o SYN em `::1` estourar antes de cair
+para o IPv4. Medido em 2026-08-19, Ollama no ar e modelo quente:
+
+| chamada | `localhost` | `127.0.0.1` |
+|---|---|---|
+| `ollama_reachable` | 157 ms | 16 ms |
+| `embed_query` | 2283 ms | 220 ms |
+
+São ~2,06s pagos antes de o request sair, contra um `EMBED_TIMEOUT` de 3,0s —
+sobravam 700ms para o embed inteiro. É o gerador das 88 falhas consecutivas
+(100% TimeoutError) que puseram o router atrás de `HARNESS_ROUTER=1`. Camada B
+ponta a ponta caiu de ~2,75s para ~0,60s com a troca.
+
+O `test_ollama_endpoint.py` trava isso: nenhuma fonte viva em `hooks/`,
+`scripts/` ou `tools/` pode voltar a usar hostname. O
+`test_router_reachability.py` não pegava porque monta seus sockets em
+`127.0.0.1` literal — ele exercita o relógio, nunca a resolução de nome.
 
 ## Medições desta máquina
 

@@ -22,7 +22,7 @@ IDX_DIR = os.environ.get("HARNESS_SKILLS_INDEX",
                          os.path.join(HARNESS_DIR, "skills-index"))
 ROUTER_DIR = os.path.join(HARNESS_DIR, "router")
 STATE_JSON = os.path.join(HARNESS_DIR, "state.json")
-OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://127.0.0.1:11434")
 EMBED_MODEL = os.environ.get("HARNESS_EMBED_MODEL", "nomic-embed-text-v2-moe")
 
 TOP_K = 3

@@ -371,7 +371,7 @@ else
     else
         warn "skills-index ausente — rode: python scripts/build_skills_index.py"
     fi
-    if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/tags" 2>/dev/null | grep -q "${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"; then
+    if command -v curl >/dev/null 2>&1 && curl -s -m 2 "${HARNESS_OLLAMA_URL:-http://127.0.0.1:11434}/api/tags" 2>/dev/null | grep -q "${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"; then
         echo "[OK]     Ollama + ${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"
     else
         warn "HARNESS_ROUTER=1 mas Ollama/modelo indisponivel — camada B nunca respondera"

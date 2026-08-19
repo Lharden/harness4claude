@@ -22,7 +22,7 @@ if ! "$PY" "$BUILDER" --check-stale >/dev/null 2>&1; then
   ( "$PY" "$BUILDER" >/dev/null 2>&1 && rm -f "$IDX/.stale" ) &
 fi
 if command -v curl >/dev/null 2>&1; then
-  ( curl -s -m 3 -X POST "${HARNESS_OLLAMA_URL:-http://localhost:11434}/api/embed" \
+  ( curl -s -m 3 -X POST "${HARNESS_OLLAMA_URL:-http://127.0.0.1:11434}/api/embed" \
       -H "Content-Type: application/json" \
       -d '{"model":"'"${HARNESS_EMBED_MODEL:-nomic-embed-text-v2-moe}"'","input":["warmup"],"keep_alive":"30m"}' \
       >/dev/null 2>&1 ) &

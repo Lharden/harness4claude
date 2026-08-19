@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.request
 
-HOST = "http://localhost:11434"
+HOST = "http://127.0.0.1:11434"
 ORIGIN = "app://obsidian.md"
 
 EXTRACTION_TEXT = (
