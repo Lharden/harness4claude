@@ -1,4 +1,6 @@
 ---
+status: P1 implementado · P2 não executado
+updated: 2026-08-19
 applies_to:
   - hooks/harness-skill-router.sh
   - hooks/skill_router.py
@@ -21,6 +23,24 @@ applies_to:
 > Fase de pesquisa concluída em 2026-07-23. Decisões de direção tomadas pelo usuário:
 > poda moderada · roteador híbrido (regex + embeddings locais) · ancorado no harness4claude.
 > Este doc é o deliverable da fase de descoberta; P1/P2 só começam após review deste doc.
+
+> **Estado em 2026-08-19.** P1 está no `main` e dormente: `harness-skill-router.sh`
+> e `harness-router-warmup.sh` registrados no `hooks.json`, `build_skills_index.py`,
+> breaker da camada B e os checks no `health-check.sh` — tudo atrás de
+> `HARNESS_ROUTER=1`, que não está definido em lugar nenhum. Ligar é uma linha de
+> `env` no settings, não trabalho de implementação.
+>
+> **P2 não foi executado.** Faltam `hooks/harness-skill-feedback.sh`,
+> `scripts/skill_catalog.py`, `skills/skill-catalog/SKILL.md` e o bloco
+> `aggregates.router` no `migrate_state.py` — verificado por ausência no disco e
+> no `hooks.json`. Os caminhos continuam declarados no `applies_to` de propósito:
+> o `design_scope.py` casa caminho planejado antes de ele existir, e é isso que
+> faz alguém encontrar este doc ao criar o arquivo, não depois.
+>
+> Duas derivas entre o previsto aqui e o que desceu: o benchmark virou
+> `scripts/bench_router.py` (não `bench-router.sh`) e os testes desceram achatados
+> em `tests/` (`test_router_*.py`, `test_skill_router.py`), não em `tests/router/`.
+> O `applies_to` declara o que existe.
 
 ## 1. Diagnóstico (medido em 2026-07-23)
 
