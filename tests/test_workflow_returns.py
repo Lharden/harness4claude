@@ -43,3 +43,25 @@ def test_each_workflow_has_meta():
         assert "export const meta" in content, f"{wf.name} sem 'export const meta'"
         for field in ("name:", "description:", "phases:"):
             assert field in content, f"{wf.name} meta sem campo '{field}'"
+
+
+def test_todo_fan_out_tem_censo_de_nos():
+    """Agente morto nao pode sumir em silencio.
+
+    `filter(Boolean)` descarta no morto sem avisar: num fan-out o relatorio sai
+    com cara de completo. Todo script que abre `parallel(` precisa contar os
+    retornos contra o esperado. Absorvido de graph-engineering-claude (2026-08-19).
+    """
+    for wf in WF_DIR.glob("*.js"):
+        content = wf.read_text(encoding="utf-8")
+        if "parallel(" not in content:
+            continue
+        assert "censoNos(" in content, f"{wf.name} abre fan-out sem censo de nos"
+
+
+def test_verify_nao_aprova_com_cobertura_incompleta():
+    """`pass: true` nunca sai de um review em que uma dimensao morreu."""
+    content = (WF_DIR / "wf-verify-multimodel.js").read_text(encoding="utf-8")
+    assert "nos_mortos" in content
+    assert "nosMortos.length === 0" in content, "pass nao esta amarrado ao censo"
+    assert "pass: true," not in content, "ainda existe pass:true incondicional"

@@ -77,6 +77,18 @@ const DIMENSIONS = [
   },
 ]
 
+// Censo de nos — `filter(Boolean)` descarta agente morto SEM AVISAR, e num
+// fan-out o relatorio continua com cara de completo. Numa fase de verificacao
+// isso e a pior falha possivel: silenciosa e com a forma de uma boa noticia.
+// Conte contra o esperado ANTES de filtrar, e nomeie quem morreu.
+function censoNos(rotulo, rotulos, obtidos) {
+  const mortos = rotulos.filter((_, i) => !obtidos[i])
+  if (mortos.length) {
+    log(`ATENCAO: ${rotulo} — ${mortos.length} de ${rotulos.length} nos nao retornaram nada: ${mortos.join(', ')}`)
+  }
+  return { vivos: obtidos.filter(Boolean), mortos, esperado: rotulos.length }
+}
+
 phase('Review')
 const reviews = await parallel(
   DIMENSIONS.map((d) => () =>
@@ -84,10 +96,12 @@ const reviews = await parallel(
   ),
 )
 
+const censoReview = censoNos('Review', DIMENSIONS.map((d) => d.key), reviews)
+
 // Consolida + deduplica por (file, title) aproximado
 const seen = new Set()
 const findings = []
-for (const r of reviews.filter(Boolean)) {
+for (const r of censoReview.vivos) {
   for (const f of r.findings || []) {
     const key = `${f.file}::${(f.title || '').toLowerCase().slice(0, 40)}`
     if (seen.has(key)) continue
@@ -95,10 +109,19 @@ for (const r of reviews.filter(Boolean)) {
     findings.push(f)
   }
 }
-log(`Review: ${findings.length} findings unicos de ${DIMENSIONS.length} dimensoes`)
+log(`Review: ${findings.length} findings unicos de ${censoReview.vivos.length}/${DIMENSIONS.length} dimensoes`)
 
 if (findings.length === 0) {
-  return { pass: true, critical_count: 0, findings: [], summary: 'Nenhum finding nas 5 dimensoes.' }
+  const completo = censoReview.mortos.length === 0
+  return {
+    pass: completo,
+    critical_count: 0,
+    findings: [],
+    nos_mortos: censoReview.mortos,
+    summary: completo
+      ? `Nenhum finding nas ${DIMENSIONS.length} dimensoes.`
+      : `Nenhum finding, MAS ${censoReview.mortos.length} de ${DIMENSIONS.length} dimensoes nao retornaram (${censoReview.mortos.join(', ')}) — cobertura incompleta, nao aprovado.`,
+  }
 }
 
 phase('Adjudicate')
@@ -113,16 +136,21 @@ const adjudicated = await parallel(
   ),
 )
 
-const confirmed = adjudicated
-  .filter(Boolean)
-  .filter((f) => f.verdict && f.verdict.is_real && f.verdict.confidence >= 0.5)
+const censoAdj = censoNos('Adjudicate', findings.map((f) => f.title), adjudicated)
+const confirmed = censoAdj.vivos.filter(
+  (f) => f.verdict && f.verdict.is_real && f.verdict.confidence >= 0.5,
+)
 
 const criticals = confirmed.filter((f) => f.severity === 'critical' || f.severity === 'high')
 log(`Adjudicate: ${confirmed.length} confirmados, ${criticals.length} criticos/altos`)
 
+// Finding nao julgado NAO e finding liberado: no morto bloqueia a aprovacao.
+const nosMortos = [...censoReview.mortos, ...censoAdj.mortos]
+
 return {
-  pass: criticals.length === 0,
+  pass: criticals.length === 0 && nosMortos.length === 0,
   critical_count: criticals.length,
+  nos_mortos: nosMortos,
   findings: confirmed.map((f) => ({
     title: f.title,
     severity: f.severity,
@@ -131,5 +159,7 @@ return {
     rationale: f.rationale,
     confidence: f.verdict.confidence,
   })),
-  summary: `${confirmed.length} findings confirmados (${criticals.length} bloqueantes) de ${findings.length} brutos.`,
+  summary:
+    `${confirmed.length} findings confirmados (${criticals.length} bloqueantes) de ${findings.length} brutos.` +
+    (nosMortos.length ? ` COBERTURA INCOMPLETA: ${nosMortos.length} no(s) sem retorno — ${nosMortos.join(', ')}.` : ''),
 }

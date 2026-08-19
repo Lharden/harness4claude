@@ -38,6 +38,17 @@ const ANGLES = [
   { key: 'risks', cat: 'risks', prompt: `Identifique RISCOS para ${question}. ${target}\nCodigo fragil, alto acoplamento, ausencia de testes, side-effects, armadilhas de plataforma. Seja concreto.` },
 ]
 
+// Censo de nos — `filter(Boolean)` descarta agente morto SEM AVISAR. Um scan de
+// contexto que perde o angulo "risks" devolve um mapa que parece completo e nao
+// tem riscos. Conte contra o esperado ANTES de filtrar, e nomeie quem morreu.
+function censoNos(rotulo, rotulos, obtidos) {
+  const mortos = rotulos.filter((_, i) => !obtidos[i])
+  if (mortos.length) {
+    log(`ATENCAO: ${rotulo} — ${mortos.length} de ${rotulos.length} nos nao retornaram nada: ${mortos.join(', ')}`)
+  }
+  return { vivos: obtidos.filter(Boolean), mortos, esperado: rotulos.length }
+}
+
 phase('Scan')
 const results = await parallel(
   ANGLES.map((a) => () =>
@@ -45,8 +56,10 @@ const results = await parallel(
   ),
 )
 
+const censo = censoNos('Scan', ANGLES.map((a) => a.key), results)
+
 const out = { files: [], patterns: [], constraints: [], risks: [] }
-for (const r of results.filter(Boolean)) {
+for (const r of censo.vivos) {
   for (const it of r.items) {
     const entry = { label: it.label, detail: it.detail, path: it.path ?? null }
     if (r.cat === 'files') out.files.push(entry)
@@ -55,5 +68,12 @@ for (const r of results.filter(Boolean)) {
     else out.constraints.push(entry)
   }
 }
-log(`Context scan: ${out.files.length} entradas, ${out.patterns.length} padroes, ${out.constraints.length} constraints, ${out.risks.length} riscos`)
+log(
+  `Context scan: ${out.files.length} entradas, ${out.patterns.length} padroes, ` +
+    `${out.constraints.length} constraints, ${out.risks.length} riscos ` +
+    `(${censo.vivos.length}/${censo.esperado} angulos)`,
+)
+
+// Cobertura vai no retorno: quem consome precisa saber que o mapa tem buraco.
+out.cobertura = { esperado: censo.esperado, vivos: censo.vivos.length, angulos_mortos: censo.mortos }
 return out

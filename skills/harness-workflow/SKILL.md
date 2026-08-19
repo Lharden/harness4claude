@@ -107,10 +107,42 @@ Workflow({
 ```
 
 Retorna JSON. Workflows disponíveis (validar com `node scripts/workflows/validate_workflows.cjs`):
-- `wf-verify-multimodel.js` → `{ pass, critical_count, findings[], summary }` (5 dimensões em paralelo + adjudicação adversarial que refuta falsos-positivos).
-- `wf-context-scan.js` → `{ files[], patterns[], constraints[], risks[] }` (exploração paralela do codebase).
+- `wf-verify-multimodel.js` → `{ pass, critical_count, findings[], nos_mortos[], summary }` (5 dimensões em paralelo + adjudicação adversarial que refuta falsos-positivos). `nos_mortos` não-vazio força `pass: false`: finding não julgado não é finding liberado.
+- `wf-context-scan.js` → `{ files[], patterns[], constraints[], risks[], cobertura }` (exploração paralela do codebase). `cobertura.angulos_mortos` nomeia o que faltou no mapa.
 
 > Workflows exigem opt-in do usuário; **esta skill instruir a chamada já é o opt-in válido**. Não bloqueiam interação — toda decisão humana ocorre em gate ENTRE Workflows.
+
+### Regras de fan-out
+
+Três regras antes de abrir qualquer Workflow. Custam uma linha cada e evitam as
+falhas que não avisam.
+
+**1. Teste da aresta falsa — decide se há grafo.** Percorra o trabalho passo a
+passo e pergunte em cada um: *este passo precisa do resultado do anterior?* Se
+sim, a aresta é real, mantenha a ordem. Se não, não há aresta — a espera é
+desperdício e os dois jobs rodam juntos. **Se você não encontrar dois jobs sem
+aresta entre eles, não abra Workflow.** É um loop, e loop está certo: a
+coordenação seria puro overhead. O mesmo vale quando o usuário quer aprovar cada
+passo, quando o trabalho é exploratório, ou quando a tarefa é pequena e isolada.
+
+**2. Censo de nós — conte antes de filtrar.** `filter(Boolean)` descarta agente
+morto em silêncio. Numa cadeia, um nó morto para tudo e é óbvio; num fan-out, um
+nó morto entre duzentos entra num relatório com cara de completo. Compare o
+número de retornos com o número esperado, nomeie quem morreu, e **não deixe
+`pass: true` sair de cobertura incompleta** — "nada encontrado" e "ninguém
+procurou" são resultados diferentes. Implementado como `censoNos` em
+`scripts/workflows/wf-verify-multimodel.js` e `wf-context-scan.js`.
+
+**3. Fan-in em camadas — antes que a síntese estoure.** Fan-out largo cujo merge
+lê todas as saídas de uma vez estoura o contexto antes de sintetizar qualquer
+coisa. Quebre em lotes, resuma cada lote, sintetize os resumos: o nó final lê 25
+resumos, não mil saídas brutas.
+
+```javascript
+const lotes = chunk(resultados, 40)
+const resumos = await parallel(lotes.map((l) => () => agent('resuma este lote', { input: l })))
+return agent('escreva a resposta a partir dos resumos', { input: resumos })
+```
 
 ### Gates (decisões humanas via AskUserQuestion)
 
