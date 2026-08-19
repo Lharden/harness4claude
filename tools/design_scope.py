@@ -37,8 +37,11 @@ mentir com cara de resposta:
 Arquivo alterado que nenhum doc governa **não é aviso**. Teste, config e script
 legitimamente não têm design doc, e transformar isso em alerta faria o relatório
 viver vermelho até ninguém mais ler. Ele aparece em `detalhe.sem_doc`, para quem
-foi procurar. O aviso real é o outro: **design doc sem `applies_to` governa
-nada** — é exatamente o órfão que este mecanismo existe para matar.
+foi procurar. Os avisos reais são os outros dois, e os dois são órfão de spec:
+**design doc sem `applies_to` governa nada**, e **`applies_to` que não casa com
+arquivo nenhum do repositório** — este segundo é o pior dos dois, porque tem
+aparência de saudável (o front matter está lá, o doc aparece na lista de
+governantes) e mesmo assim não roteia ninguém.
 
 Contrato de saída herdado do `wiki_lint`: JSON no stdout, booleano `ready`, exit 1
 quando há erro de front matter. Exit 2 é erro de uso ou ambiente, nunca achado.
@@ -187,6 +190,36 @@ def _git(raiz: Path, args: list[str]) -> list[str]:
     return [p.replace("\\", "/") for p in r.stdout.split("\0") if p]
 
 
+def padroes_mortos(raiz: Path, governantes: list[dict]) -> list[dict]:
+    """Padrões declarados que não casam com arquivo nenhum do repositório.
+
+    O órfão que este módulo já matava era o doc SEM `applies_to`. Falta o outro,
+    e ele é pior porque tem aparência de saudável: doc COM `applies_to` apontando
+    para um diretório renomeado ou apagado. O front matter está lá, o lint passa,
+    o relatório mostra o doc na lista de governantes — e ele não governa nada.
+
+    A validação de caminho existente veio do `validateModuleImpactManifest` do
+    open-science (2026-08-19, `wiki/sources/open-science.md`), onde declarar um
+    `ownerPath` inexistente reprova o manifesto. Aqui não reprova: `applies_to`
+    pode legitimamente apontar para arquivo que ainda vai nascer, e transformar
+    isso em erro obrigaria a escrever a spec depois do código, invertendo o SDD.
+    Vira aviso, com o padrão nomeado — quem lê decide se é spec adiantada ou
+    declaração podre.
+
+    Sem git, não devolve nada: ausência de listagem não é prova de padrão morto.
+    """
+    arquivos = _git(raiz, ["ls-files", "-z", "--"])
+    if not arquivos:
+        return []
+    mortos: list[dict] = []
+    for g in governantes:
+        for pattern in g["patterns"]:
+            rx = glob_para_regex(pattern)
+            if not any(rx.match(a) for a in arquivos):
+                mortos.append({"doc": g["doc"], "pattern": pattern})
+    return mortos
+
+
 def alvos_alterados(raiz: Path) -> list[str]:
     """Não staged + staged + não rastreado. Um arquivo prestes a existir conta."""
     return sorted({
@@ -252,6 +285,12 @@ def command_design_scope(raiz: Path, entradas: list[str], *, changed: bool = Fal
                "caminho nenhum e nada vai rotear para eles")
         (erros if estrito else avisos).append(msg)
 
+    mortos = padroes_mortos(raiz, governantes)
+    if mortos:
+        avisos.append(f"{len(mortos)} padrão(ões) `applies_to` não casam com arquivo nenhum "
+                      "do repositório — spec adiantada ou declaração podre. Veja "
+                      "`detalhe.padroes_mortos`")
+
     if todos:
         matches = [{"doc": g["doc"], "matches": []} for g in governantes]
         alvos: list[str] = []
@@ -278,11 +317,13 @@ def command_design_scope(raiz: Path, entradas: list[str], *, changed: bool = Fal
             "docs_aplicaveis": len(matches),
             "alvos_governados": len(casados),
             "alvos_sem_doc": len(sem_doc),
+            "padroes_mortos": len(mortos),
         },
         "detalhe": {
             "matches": matches,
             "sem_applies_to": sem_applies,
             "sem_doc": sem_doc,
+            "padroes_mortos": mortos,
         },
     }
 

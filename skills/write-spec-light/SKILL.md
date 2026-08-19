@@ -47,6 +47,7 @@ A spec light deve ser enxuta por design. Se algo precisa de mais detalhe, é sin
 - **Enxuta por design**: se você precisar de mais de 80 linhas, está usando a skill errada — escale para `write-spec`.
 - **Review humano < 2 minutos**: cada seção deve caber em uma tela; sem subseções profundas, sem prosa longa.
 - **Clarifications obrigatórias**: qualquer ambiguidade vira `[NEEDS CLARIFICATION]` explícito. Nunca chute, nunca omita.
+- **ENTREGA cabe em uma linha**: mesmo no L1, a spec fixa o teto da afirmação — o nível mais baixo que ainda é verdade, e o que não está incluído. No L2 isso é seção própria (`write-spec`); aqui é uma linha dentro de Boundaries, porque o custo humano de dois minutos é o limite.
 - **AC ainda Given/When/Then**: mesmo na versão light, acceptance criteria mantêm o formato testável. É o que permite a fase TDD funcionar depois.
 
 ## Diferenças vs write-spec completa

@@ -48,7 +48,10 @@ Invoque esta skill quando:
 4. **Boundaries** explícitos no formato **ALWAYS** (sempre faz), **NEVER**
    (jamais faz) e **ASK** (pergunta antes de fazer) — delimitam o escopo da
    feature com clareza.
-5. **Artefato reutilizável**: a spec serve de insumo direto para `design-doc`
+5. **Nível de garantia** declarado: o que a feature pronta poderá ser
+   **afirmada** como fazendo, e o que alguém razoavelmente assumiria incluído e
+   não está.
+6. **Artefato reutilizável**: a spec serve de insumo direto para `design-doc`
    (arquitetura) e `tdd` (testes), fechando o ciclo Spec-Driven Development.
 
 ## Workflow
@@ -91,6 +94,13 @@ de formatação para user stories, acceptance criteria e boundaries.
 - **Exemplos concretos**: um bom `[NEEDS CLARIFICATION: qual o formato de
   autenticação — JWT, session cookie ou API key?]` é infinitamente melhor que
   um genérico `[NEEDS CLARIFICATION: auth]`.
+- **Teto da afirmação se fixa antes do código**: a spec diz o nível mais baixo
+  que ainda é verdade sobre a entrega, e o que ele não cobre. Sem isso o limite
+  só aparece no docstring de quem implementou — tarde, e apenas para quem abre o
+  arquivo. Mecanismo conferido no `Provenance Guarantee Level` do PRD do
+  open-science (2026-08-19, `wiki/sources/open-science.md`), onde a própria spec
+  rebaixa a palavra "proveniência" para "auditoria e rastreabilidade" e instrui
+  produto e revisor a descrever a versão assim.
 - **Vocabulário da spec não é herdado do código**: quando a feature mexe em algo
   que já existe, o nome que a entidade tem hoje é uma resposta anterior ao
   problema, não um requisito dele. Nomeie o que a coisa **é** no domínio; se o

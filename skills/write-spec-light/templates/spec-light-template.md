@@ -37,6 +37,7 @@
 - **ALWAYS**: [regra inviolável]
 - **NEVER**: [anti-pattern]
 - **ASK**: [quando perguntar]
+- **ENTREGA**: [o nível mais baixo que ainda é verdade sobre o que fica pronto] — **não cobre**: [o que alguém assumiria incluído e não está]
 
 ---
 
