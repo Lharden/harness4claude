@@ -7,6 +7,7 @@ AI_BRAIN_PATH.
 """
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -63,10 +64,36 @@ def test_stamp_frontmatter_prefixa_quando_ausente() -> None:
     assert "source: a.md" in saida
 
 
-def test_stamp_frontmatter_respeita_texto_que_ja_tem() -> None:
-    original = "---\ntype: spec\n---\n\ncorpo"
+def test_stamp_frontmatter_nao_reescreve_campo_que_ja_existe() -> None:
+    """Valor declarado na origem manda — o carimbo completa, nunca sobrescreve."""
+    original = "---\ntype: design\nupdated: 2026-01-01\n---\n\ncorpo"
 
-    assert vs.stamp_frontmatter(original, "spec", source="a.md", today="2026-08-11") == original
+    saida = vs.stamp_frontmatter(original, "spec", source="a.md", today="2026-08-11")
+
+    assert re.search(r"^type: design$", saida, re.M), "type da origem preservado"
+    assert re.search(r"^updated: 2026-01-01$", saida, re.M), "updated da origem preservado"
+    assert "type: spec" not in saida
+    assert "updated: 2026-08-11" not in saida
+
+
+def test_stamp_frontmatter_completa_bloco_incompleto() -> None:
+    """Frontmatter parcial nao e frontmatter valido.
+
+    Regressao real (2026-08-19): as specs ganharam `applies_to` na origem, o bloco passou
+    a comecar com `---`, e o carimbo desistiu inteiro. Quatro paginas chegaram ao vault
+    sem `type` nem `updated` — invisiveis para o Dataview e erro de lint. Presenca de
+    bloco nao e presenca de contrato.
+    """
+    original = "---\napplies_to:\n  - src/**\n---\n\ncorpo"
+
+    saida = vs.stamp_frontmatter(original, "spec", source="a.md", today="2026-08-11")
+
+    assert "applies_to:" in saida, "campo da origem preservado"
+    assert "  - src/**" in saida, "valor multilinha preservado"
+    assert re.search(r"^type: spec$", saida, re.M)
+    assert re.search(r"^updated: 2026-08-11$", saida, re.M)
+    assert saida.rstrip().endswith("corpo")
+    assert saida.count("---") == 2, "um unico bloco, nao dois empilhados"
 
 
 def _projeto(tmp_path: Path, *, spec: str | None = None, context: str | None = None) -> Path:

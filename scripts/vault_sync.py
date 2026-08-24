@@ -64,10 +64,14 @@ def newer(src: Path, dst: Path) -> bool:
     return not dst.exists() or src.stat().st_mtime > dst.stat().st_mtime
 
 
+# BOM e espaco a esquerda toleram arquivo salvo pelo Obsidian no Windows.
+_FRONTMATTER_RE = re.compile(r"\A﻿?[ \t\r\n]*---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.S)
+
+
 def stamp_frontmatter(
     text: str, page_type: str, *, source: str, today: str, project: str | None = None
 ) -> str:
-    """Prefixa frontmatter Obsidian quando o texto nao tem — corpo intacto.
+    """Completa o frontmatter Obsidian do texto — corpo e campos existentes intactos.
 
     Artefatos crus do harness (specs, CONTEXT) nascem sem frontmatter; sem carimbo
     eles chegam ao vault como paginas invalidas pelo schema do AI-Brain/CLAUDE.md.
@@ -77,21 +81,42 @@ def stamp_frontmatter(
     chega ao vault sem nenhuma pista de a que projeto pertence — e foi por isso que 16
     delas ficaram orfas, sem in-link de lugar nenhum. Quem sabe a origem e o sync, no
     momento da copia; depois a informacao se perde.
+
+    **Bloco parcial e completado, nao pulado.** A versao anterior desistia inteira ao ver
+    um `---` na primeira linha, tratando "tem bloco" como "tem contrato". Em 2026-08-19 as
+    specs ganharam `applies_to` na origem (roteamento do design_scope), o bloco passou a
+    existir, e quatro paginas chegaram ao vault sem `type` nem `updated`: invisiveis para o
+    Dataview e erro no `wiki_lint`. O mesmo defeito que o `missing_fields` do lint existe
+    para pegar, do outro lado do cano.
+
+    Campo ja declarado na origem **manda** — o carimbo so acrescenta o que falta.
     """
-    if text.lstrip("﻿ \t\r\n").startswith("---"):
+    campos: list[tuple[str, str]] = [
+        ("type", page_type),
+        ("created", today),
+        ("updated", today),
+        ("status", "active"),
+        ("tags", f"[{page_type}, harness]"),
+    ]
+    if project:
+        campos.append(("project", project))
+    campos.append(("source", source))
+
+    bloco = _FRONTMATTER_RE.match(text)
+    if not bloco:
+        linhas = "".join(f"{k}: {v}\n" for k, v in campos)
+        return f"---\n{linhas}---\n\n" + text
+
+    existente = bloco.group(1)
+    faltando = [
+        (k, v)
+        for k, v in campos
+        if not re.search(rf"^{re.escape(k)}:\s*\S", existente, re.M)
+    ]
+    if not faltando:
         return text
-    projeto = f"project: {project}\n" if project else ""
-    return (
-        "---\n"
-        f"type: {page_type}\n"
-        f"created: {today}\n"
-        f"updated: {today}\n"
-        "status: active\n"
-        f"tags: [{page_type}, harness]\n"
-        f"{projeto}"
-        f"source: {source}\n"
-        "---\n\n"
-    ) + text
+    adicao = "".join(f"{k}: {v}\n" for k, v in faltando)
+    return f"---\n{existente}\n{adicao}---\n" + text[bloco.end() :]
 
 
 def mirror(
