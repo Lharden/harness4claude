@@ -242,4 +242,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # `tools/` e sys.path[0] quando o arquivo roda como script; em modo importado
+    # este bloco nao executa, e o stdout do chamador fica intacto.
+    from console import usar_utf8
+
+    usar_utf8()
     main()
