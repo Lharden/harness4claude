@@ -35,11 +35,49 @@ Atuar como **adversário construtivo** que questiona:
 
 ## Workflow
 
+### Passo 0: Gerar o conjunto adversarial em contexto limpo
+
+> **Por que não formular as perguntas aqui.** Nesta altura do pipeline a janela
+> atual é a mesma que escreveu a spec — ela carrega o brainstorming, o CONTEXT.md
+> e o raciocínio que justificou cada decisão. Grelhar a própria spec com esse
+> material na frente produz concordância, não adversário: é a auto-preferência
+> operando exatamente na fase que existe para não tê-la. O adversário só vale se
+> a janela dele for nova e o insumo dele for a spec sozinha.
+
+Resolva o caminho do plugin e chame o Workflow:
+
+```bash
+cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root"
+```
+
+```
+Workflow({
+  scriptPath: "<PLUGIN_ROOT>/scripts/workflows/wf-grill.js",
+  args: { spec_path: "docs/specs/<slug>-spec.md", context_path: "docs/CONTEXT.md" }
+})
+```
+
+Retorna `{ perguntas[], bloqueantes, lentes_mortas[], cobertura, summary }`.
+Cinco lentes independentes: ambiguidade, boundary ausente, suposição não
+declarada, edge case, dependência não dita.
+
+**`lentes_mortas` não-vazio não é detalhe**: "nenhuma pergunta nesta lente" e
+"ninguém olhou por esta lente" são resultados diferentes. Diga ao usuário qual
+lente calou antes de apresentar o conjunto, e ofereça nova rodada só dessa lente.
+
+Se o Workflow não estiver disponível ou o usuário recusar, siga direto para o
+passo 2 e formule as perguntas inline — registrando que o conjunto veio da mesma
+janela que escreveu a spec.
+
 ### Passo 1: Ler spec atual
 
 Ler `docs/specs/{feature-slug}-spec.md` e `docs/CONTEXT.md` (se existir).
 
 ### Passo 2: Formular 5-10 perguntas adversariais
+
+Com o retorno do passo 0 na mão, este passo é **curadoria, não geração**:
+escolher as que valem a pergunta, cortar as que a spec já responde, e ordenar.
+Formular do zero só no caminho de fallback.
 
 Cada pergunta deve ser:
 - **Específica** (não "e se der erro?" — sim "o que acontece se o webhook timeout em 30s com payload de 10MB?")
