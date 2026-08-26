@@ -48,6 +48,15 @@
 
 ---
 
+## Suposições
+
+Cada pergunta acima, depois de respondida, vira uma linha aqui. Uma linha, e o
+`justifica:` não pode ficar vazio.
+
+- **ASSUMPTION-001**: [a condição que se assume verdadeira] · [AAAA-MM-DD] · [usuário|inferência] · justifica: REQ-001, AC-002
+
+---
+
 ## Success Criteria
 
 - [ ] Todos os AC passando

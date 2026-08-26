@@ -157,6 +157,32 @@ Ambiguidades que o AI não conseguiu resolver do contexto. USUÁRIO DEVE RESPOND
 
 ---
 
+## Suposições
+
+Toda `CLARIF-n` respondida vira uma linha aqui, **e a `CLARIF-n` original fica**
+riscada em vez de apagada. O requisito guarda o que fazer; esta seção guarda
+**por que ele está correto** — e é o que permite descobrir o que cai quando a
+condição deixa de valer.
+
+Formato — uma linha, quatro campos:
+
+`ASSUMPTION-001 · <a condição que se assume verdadeira> · decidido AAAA-MM-DD por <usuário|inferência> · justifica: REQ-004, AC-2`
+
+- **ASSUMPTION-001**: o payload do webhook nunca passa de 1 MB · decidido 2026-08-26 por usuário · justifica: REQ-004, REQ-011, AC-2
+- **ASSUMPTION-002**: o serviço de auth já está migrado para v2 em produção · decidido 2026-08-26 por inferência · justifica: REQ-007
+
+Regras:
+
+- **`justifica:` não pode ser vazio.** Suposição que não sustenta nenhum requisito
+  não é suposição — é observação, e observação vai para `## Context`.
+- **`por inferência` é dívida, não decisão.** Marca a suposição que ninguém
+  confirmou; `grill-me` ataca essas primeiro.
+- Suposição derrubada depois **não se apaga**: vira
+  `~~ASSUMPTION-002~~ FALSA em AAAA-MM-DD` com uma linha do que a substituiu.
+  Apagar é como o raio de impacto some.
+
+---
+
 ## Success Criteria
 
 Como saberemos que a feature está completa e funcionando:
@@ -168,6 +194,7 @@ Como saberemos que a feature está completa e funcionando:
 - [ ] Performance dentro de REQ-NF1
 - [ ] Documentação atualizada (README, CLAUDE.md se aplicável)
 - [ ] Todos os `[NEEDS CLARIFICATION]` resolvidos
+- [ ] Toda `CLARIF-n` resolvida virou uma `ASSUMPTION-nnn` com `justifica:` não-vazio
 
 ---
 
@@ -183,6 +210,8 @@ Como saberemos que a feature está completa e funcionando:
   "priorities": ["P1", "P2", "P3"],
   "requirement_count": 0,
   "user_story_count": 0,
-  "needs_clarification_count": 0
+  "needs_clarification_count": 0,
+  "assumption_count": 0,
+  "assumptions_by_inference": 0
 }
 ```

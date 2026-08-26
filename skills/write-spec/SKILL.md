@@ -51,7 +51,11 @@ Invoque esta skill quando:
 5. **Nível de garantia** declarado: o que a feature pronta poderá ser
    **afirmada** como fazendo, e o que alguém razoavelmente assumiria incluído e
    não está.
-6. **Artefato reutilizável**: a spec serve de insumo direto para `design-doc`
+6. **Suposições registradas**: toda `[NEEDS CLARIFICATION]` resolvida vira uma
+   `ASSUMPTION-nnn` na seção `## Suposições`, amarrada aos requisitos que ela
+   sustenta. O requisito guarda **o que** fazer; a suposição guarda **por que
+   ele está correto**.
+7. **Artefato reutilizável**: a spec serve de insumo direto para `design-doc`
    (arquitetura) e `tdd` (testes), fechando o ciclo Spec-Driven Development.
 
 ## Workflow
@@ -66,6 +70,15 @@ Invoque esta skill quando:
 4. **Resolver ambiguidades**: itere com o usuário até que todos os
    `[NEEDS CLARIFICATION]` sejam respondidos ou deliberadamente adiados
    (marcar como "ASK later" na seção boundaries).
+4b. **Coagular cada resposta em `ASSUMPTION-nnn`**: a resposta do usuário não
+   pode se dissolver no texto do requisito. Para cada `CLARIF-n` respondida,
+   escreva uma linha em `## Suposições` com a condição assumida, a data, quem
+   decidiu (`usuário` ou `inferência`) e a lista dos REQ/AC que ela sustenta. A
+   `CLARIF-n` original fica riscada, não some.
+
+   Também vira `ASSUMPTION-nnn` toda condição que você assumiu **sem perguntar**
+   para conseguir escrever um requisito — marcada `por inferência`. Essas são as
+   perigosas: ninguém as confirmou e elas parecem requisito.
 5. **Salvar**: grave o arquivo final em `docs/specs/{feature-slug}-spec.md`
    (crie o diretório se não existir).
 6. **Retornar path**: devolva o caminho absoluto do arquivo salvo para que o
@@ -101,6 +114,15 @@ de formatação para user stories, acceptance criteria e boundaries.
   open-science (2026-08-19, `wiki/sources/open-science.md`), onde a própria spec
   rebaixa a palavra "proveniência" para "auditoria e rastreabilidade" e instrui
   produto e revisor a descrever a versão assim.
+- **Resposta do usuário é decisão, e decisão não evapora**: a spec registra o
+  requisito e esquece a condição que o tornou correto. Quando essa condição muda
+  meses depois, o requisito continua lá, com cara de válido, e ninguém sabe
+  quais outros dependiam da mesma premissa. `ASSUMPTION-nnn` com `justifica:`
+  é o que transforma "a suposição caiu" numa lista de requisitos afetados em vez
+  de uma releitura da spec inteira. Mesma família do buraco `human_approvals` em
+  `wiki/decisions/estado-duravel-do-pipeline.md` — aprovação humana que o estado
+  descarta assim que é dada. Absorvido de @0xWast3 (2026-08-26): a auditoria
+  checa contra a **suposição**, não contra o objetivo.
 - **Vocabulário da spec não é herdado do código**: quando a feature mexe em algo
   que já existe, o nome que a entidade tem hoje é uma resposta anterior ao
   problema, não um requisito dele. Nomeie o que a coisa **é** no domínio; se o

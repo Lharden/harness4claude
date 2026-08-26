@@ -31,8 +31,9 @@ Ativar esta skill quando:
 
 ## Objetivo
 
-Ao final desta skill, cada um destes 5 pontos deve estar verificado com evidência:
+Ao final desta skill, cada um destes 6 pontos deve estar verificado com evidência:
 
+0. **Suposições que ainda valem** — cada `ASSUMPTION-nnn` da spec é conferida contra a realidade de hoje. Os pontos 1–5 perguntam *o requisito foi cumprido?*; este pergunta *o requisito ainda está correto?*. Requisito bem implementado sobre premissa caída passa nos outros cinco e continua errado.
 1. **REQs com implementação observável** — todo REQ-### referenciado na spec aponta para arquivos e funções reais.
 2. **ACs com testes correspondentes** — cada acceptance criterion (Given/When/Then) tem pelo menos um teste que o exercita.
 3. **User stories implementadas** — P1 é obrigatório (100% coverage); P2/P3 geram warnings se incompletas mas não bloqueiam.
@@ -62,6 +63,9 @@ def parse_spec(spec_path: Path) -> dict:
         "boundaries": re.findall(r"^- (ALWAYS|NEVER|ASK):\s*(.+)$", text, re.M),
         "success": re.findall(r"^- Success:\s*(.+)$", text, re.M),
         "clarifications": re.findall(r"\[NEEDS CLARIFICATION\]", text),
+        "assumptions": re.findall(
+            r"\*\*ASSUMPTION-(\d+)\*\*:\s*(.+?)\s*·.*?justifica:\s*(.+)$", text, re.M
+        ),
     }
 ```
 
@@ -84,6 +88,63 @@ Para cada REQ-### extraído, procurar nos arquivos de código (via `grep -r "REQ
 Todo `NAO_OBSERVADO` carrega **por que** não deu para observar. Sem isso ele vira um jeito educado de dizer "pulei".
 
 *Absorvido de QoderAI/better-harness (2026-08-13), cujo modelo de evidência declara: comportamento não observado NUNCA é pontuado.*
+
+**Passo 4b — Auditar cada `ASSUMPTION-nnn` contra a realidade atual**
+
+Os passos 4 e 5 checam a implementação contra o **objetivo**: o REQ foi cumprido?
+Este passo checa contra a **suposição**: o REQ ainda está correto?
+
+São perguntas diferentes e falham em momentos diferentes. Código que cumpre um
+requisito construído sobre uma premissa que deixou de valer passa nos passos 4 e
+5 sem um arranhão — e está errado.
+
+Para cada `ASSUMPTION-nnn` extraída no passo 2, um de três estados:
+
+| estado | significa |
+|---|---|
+| `VALE` | conferi e a condição continua verdadeira — com a evidência: `arquivo:linha`, saída de comando, versão |
+| `FALSA` | conferi e a condição **não** vale mais |
+| `NAO_OBSERVADO` | não consegui conferir, e **por quê** |
+
+Mesma disciplina de três estados do passo 4: "não deu para conferir" nunca é
+"está tudo bem". Suposição `por inferência` que fica `NAO_OBSERVADO` é o pior
+caso — ninguém confirmou quando foi escrita e ninguém confirmou agora.
+
+**Passo 4c — Raio de impacto de suposição falsa**
+
+Toda `ASSUMPTION-nnn` marcada `FALSA` dispara o cálculo do que estava em cima
+dela. O campo `justifica:` já dá a primeira camada (os REQ/AC diretos); o grafo
+dá o resto:
+
+```bash
+# 1. arquivos que implementam os REQ justificados pela suposição
+grep -rn "REQ-004\|REQ-011" --include='*.py' --include='*.js' .
+
+# 2. raio real desses arquivos, via grafo
+python tools/impact.py --files <arquivos do passo 1> --report
+```
+
+`impact.py` já faz blast radius — a única novidade é a **entrada ser uma
+suposição em vez de um diff**.
+
+O report lista os REQ, AC, testes e arquivos que dependiam da premissa
+derrubada, e o veredito é `FAIL` com esse raio anexado.
+
+**Não re-execute nada automaticamente.** O relatório diz o que está em risco;
+quem decide o que refazer é o usuário. Re-execução automática sobre suposição
+quebrada é como se perde um dia de trabalho em silêncio.
+
+Suposição já riscada (`~~ASSUMPTION-nnn~~ FALSA em …`) é histórico: não entra na
+auditoria de novo, e não some do arquivo. É o que impede alguém de reintroduzir
+a mesma premissa daqui a três meses.
+
+Se a spec não tem seção `## Suposições` (spec antiga, anterior a 2026-08-26),
+registre `NAO_OBSERVADO` para o passo inteiro com o motivo "spec sem ledger de
+suposições" — não invente as suposições retroativamente.
+
+*Absorvido de @0xWast3 (2026-08-26): o nó de auditoria checa a saída contra a
+suposição que a justificou, não contra o objetivo. Irmão do buraco
+`human_approvals` em `wiki/decisions/estado-duravel-do-pipeline.md`.*
 
 **Passo 5 — Verificar cada AC com teste correspondente**
 
@@ -182,6 +243,26 @@ O arquivo `docs/specs/{feature-slug}-verification.md` deve seguir este layout co
 | REQ-01 | Validar input do usuário     | src/validator.py:42             | PASS   |
 | REQ-02 | Persistir em SQLite          | src/db.py:18                    | PASS   |
 | REQ-03 | Log estruturado              | —                               | FAIL   |
+
+## Suposições
+
+| ASSUMPTION | Condição                          | Justifica       | Evidência                    | Estado         |
+|------------|-----------------------------------|-----------------|------------------------------|----------------|
+| A-001      | payload nunca passa de 1 MB       | REQ-04, AC-02   | src/upload.py:31 (cap 1 MB)  | VALE           |
+| A-002      | auth v2 já migrado em produção    | REQ-07          | —                            | NAO_OBSERVADO  |
+
+Estado `FALSA` obriga o bloco abaixo; sem ele o report não é conclusivo.
+
+### Raio de ASSUMPTION-002 (FALSA)
+
+Saída de `python tools/impact.py --files src/auth.py --report`:
+
+| Afetado          | Tipo    | Como chegou                       |
+|------------------|---------|-----------------------------------|
+| REQ-07           | direto  | campo `justifica:` da suposição   |
+| tests/test_auth.py | grafo | importa src/auth.py               |
+
+Decisão de refazer é do usuário — este report não re-executa nada.
 
 ## ACs Coverage
 

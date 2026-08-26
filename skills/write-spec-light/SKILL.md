@@ -31,6 +31,9 @@ Produzir uma spec light de **~50 linhas** revisável em 2 minutos, contendo apen
 3. **Acceptance Criteria** em 2–5 itens no formato Given/When/Then (AC-001…AC-005)
 4. **[NEEDS CLARIFICATION]** sempre que houver ambiguidade — nunca assuma silenciosamente
 5. **Boundaries mínimas**: in-scope (1–3 bullets) e out-of-scope (1–3 bullets)
+6. **Suposições** (`ASSUMPTION-nnn`): uma linha por clarification respondida,
+   amarrada aos REQ/AC que ela sustenta. Mesmo em L1 — é uma linha por pergunta,
+   e é o que permite saber o que cai quando a condição muda
 
 A spec light deve ser enxuta por design. Se algo precisa de mais detalhe, é sinal para escalar para `write-spec` completa.
 
@@ -39,6 +42,7 @@ A spec light deve ser enxuta por design. Se algo precisa de mais detalhe, é sin
 1. **Ler contexto mínimo** — carregue `docs/CONTEXT.md` (se existir) e o prompt do usuário. NÃO explore o codebase além do estritamente necessário; a spec light assume que o contexto L1 cabe em poucos arquivos.
 2. **Gerar spec light** — escreva objetivo, requisitos, ACs, clarifications e boundaries seguindo o template acima. Alvo: ~50 linhas, máximo 80.
 3. **Apresentar rapidamente** — mostre a spec ao usuário em um único bloco. Pergunte apenas sobre os `[NEEDS CLARIFICATION]` marcados; não abra discussões paralelas.
+3b. **Coagular cada resposta em `ASSUMPTION-nnn`** — a resposta do usuário vira uma linha em `## Suposições`, com `justifica:` apontando os REQ/AC que ela sustenta. Condição que você assumiu sem perguntar entra igual, marcada `inferência`.
 4. **Salvar** em `docs/specs/{feature-slug}-spec-light.md` usando slug kebab-case derivado do objetivo.
 5. **Retornar ao harness-workflow** — sinalize conclusão do passo de spec e deixe o orquestrador avançar para o próximo estágio do pipeline L1 (tipicamente write-plan ou tdd direto).
 
