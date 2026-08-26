@@ -258,8 +258,16 @@ check "signals.schema.json"      "test -f '$PLUGIN_DIR/schemas/signals.schema.js
 check "migrate_state.py"         "test -f '$PLUGIN_DIR/scripts/migrate_state.py'"
 check "record_signal.py"         "test -f '$PLUGIN_DIR/scripts/record_signal.py'"
 check "vault_sync.py"            "test -f '$PLUGIN_DIR/scripts/vault_sync.py'"
-check "wf-verify-multimodel.js"  "test -f '$PLUGIN_DIR/scripts/workflows/wf-verify-multimodel.js'"
-check "wf-context-scan.js"       "test -f '$PLUGIN_DIR/scripts/workflows/wf-context-scan.js'"
+# Lista fixa nao acompanha Workflow novo. Em 2026-08-26 o `wf-grill.js` entrou e
+# o health-check seguiu dizendo "All checks passed" sem nunca ter olhado para ele
+# — verde que nao cobre o que da a entender. Conta o que existe e exige o que e
+# load-bearing pelo nome; o resto entra sozinho.
+WF_DIR="$PLUGIN_DIR/scripts/workflows"
+for wf in wf-verify-multimodel.js wf-context-scan.js wf-grill.js; do
+    check "$wf" "test -f '$WF_DIR/$wf'"
+done
+WF_ENCONTRADOS="$(find "$WF_DIR" -maxdepth 1 -name 'wf-*.js' 2>/dev/null | wc -l | tr -d ' ')"
+echo "[INFO]   Workflows presentes: $WF_ENCONTRADOS (todos validados abaixo)"
 check "signals.version == 3"     "python -c \"import json,sys; d=json.load(open(sys.argv[1],encoding='utf-8')); sys.exit(0 if d.get('version')==3 else 1)\" \"$HARNESS_DIR/signals.json\""
 if command -v node >/dev/null 2>&1; then
     check "Workflows validam (node)" "node '$PLUGIN_DIR/scripts/workflows/validate_workflows.cjs'"
