@@ -59,6 +59,50 @@ def test_todo_fan_out_tem_censo_de_nos():
         assert "censoNos(" in content, f"{wf.name} abre fan-out sem censo de nos"
 
 
+def _prompt_de_refutacao(content: str) -> list[str]:
+    """Devolve o texto do argumento-prompt de cada `agent()` que manda refutar.
+
+    O prompt e uma concatenacao de template literals entre `agent(` e o objeto de
+    opcoes que comeca em `{ label:`. Recortar ate ali isola o que o refutador le,
+    sem varrer o resto do arquivo (onde `rationale` aparece legitimamente, no
+    retorno para o humano).
+    """
+    trechos = []
+    inicio = 0
+    while True:
+        i = content.find("REFUT", inicio)
+        if i == -1:
+            return trechos
+        abre = content.rfind("agent(", 0, i)
+        fecha = content.find("{ label:", i)
+        if abre == -1:
+            abre = max(0, i - 400)
+        if fecha == -1:
+            fecha = min(len(content), i + 1200)
+        trechos.append(content[abre:fecha])
+        inicio = i + 5
+
+
+def test_adjudicador_nao_recebe_rationale():
+    """A aresta do refutador carrega a alegacao, nunca o raciocinio de quem a fez.
+
+    O no adversarial so vale porque a janela dele e nova. Injetar a justificativa
+    do produtor recorrela as duas pontas e devolve o vies de confirmacao que o
+    fan-out existe para eliminar. Absorvido de @mstockton (2026-08-26); mesma
+    familia do censo de nos — defeito que o fan-out introduz e cujo retorno
+    continua parecendo completo.
+    """
+    for wf in WF_DIR.glob("*.js"):
+        content = wf.read_text(encoding="utf-8")
+        for trecho in _prompt_de_refutacao(content):
+            assert "rationale" not in trecho, (
+                f"{wf.name}: prompt de refutacao interpola o rationale do produtor"
+            )
+            assert "ustificativa" not in trecho, (
+                f"{wf.name}: prompt de refutacao entrega a justificativa do produtor"
+            )
+
+
 def test_verify_nao_aprova_com_cobertura_incompleta():
     """`pass: true` nunca sai de um review em que uma dimensao morreu."""
     content = (WF_DIR / "wf-verify-multimodel.js").read_text(encoding="utf-8")

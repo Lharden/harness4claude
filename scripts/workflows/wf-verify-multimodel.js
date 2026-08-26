@@ -124,13 +124,20 @@ if (findings.length === 0) {
   }
 }
 
+// Aresta descontaminada — o adjudicador recebe a ALEGACAO, nunca o raciocinio de quem
+// a levantou. Este no so vale porque a janela dele e nova: verificacao adversarial
+// funciona por contexto descorrelacionado. Passar `f.rationale` recorrela as duas pontas
+// e devolve o vies de confirmacao que o fan-out foi aberto para eliminar — o refutador
+// ancora na narrativa antes de abrir o arquivo. `rationale` segue no retorno, para o
+// humano ler; so nao entra neste prompt.
 phase('Adjudicate')
 const adjudicated = await parallel(
   findings.map((f) => () =>
     agent(
-      `Tente REFUTAR este finding de review. Se nao conseguir refutar com evidencia, ele e real.\n\n` +
-        `Finding: ${f.title}\nArquivo: ${f.file}${f.line ? `:${f.line}` : ''}\nSeveridade alegada: ${f.severity}\nJustificativa: ${f.rationale}\n\n` +
-        `Leia o codigo real e decida. Default para is_real=true apenas se a evidencia sustentar.`,
+      `Tente REFUTAR esta alegacao de review. Se nao conseguir refutar com evidencia, ela e real.\n\n` +
+        `Alegacao: ${f.title}\nArquivo: ${f.file}${f.line ? `:${f.line}` : ''}\nSeveridade alegada: ${f.severity}\n\n` +
+        `Voce NAO recebe o raciocinio de quem levantou a alegacao — isso e proposital. ` +
+        `Leia o codigo real e julgue por ele. Default para is_real=true apenas se a evidencia sustentar.`,
       { label: `adjudicate:${f.file}`, phase: 'Adjudicate', schema: VERDICT_SCHEMA },
     ).then((v) => ({ ...f, verdict: v })),
   ),

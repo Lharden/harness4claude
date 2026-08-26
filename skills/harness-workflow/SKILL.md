@@ -79,7 +79,7 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 | `brainstorming` | skill | `Skill(skill="superpowers:brainstorming")` |
 | (contexto, L2) | skill | `Skill(skill="graph-context")` — knowledge graph (graphify) primeiro; fallback `wf-context-scan` |
 | `write-spec` / `write-spec-light` | skill | `Skill(skill="write-spec[-light]")` |
-| `grill-me` | skill (humano-no-loop) | `Skill(skill="grill-me")` — adversarial, sem limite |
+| `grill-me` | skill + **Workflow** | `Skill(skill="grill-me")` — o passo 0 dela chama `wf-grill` para gerar o conjunto adversarial em contexto limpo; o loop com o humano segue na skill, sem limite |
 | `design-doc` | skill | `Skill(skill="design-doc")` |
 | `validate-plan` | skill | `Skill(skill="validate-plan")` |
 | `tdd` | skill | `Skill(skill="superpowers:test-driven-development")` |
@@ -109,12 +109,13 @@ Workflow({
 Retorna JSON. Workflows disponíveis (validar com `node scripts/workflows/validate_workflows.cjs`):
 - `wf-verify-multimodel.js` → `{ pass, critical_count, findings[], nos_mortos[], summary }` (5 dimensões em paralelo + adjudicação adversarial que refuta falsos-positivos). `nos_mortos` não-vazio força `pass: false`: finding não julgado não é finding liberado.
 - `wf-context-scan.js` → `{ files[], patterns[], constraints[], risks[], cobertura }` (exploração paralela do codebase). `cobertura.angulos_mortos` nomeia o que faltou no mapa.
+- `wf-grill.js` → `{ perguntas[], bloqueantes, lentes_mortas[], cobertura, summary }` (5 lentes adversariais sobre a spec, em janelas novas). Recebe **só** `spec_path` e `context_path` — nunca a conversa que produziu a spec. `lentes_mortas` não-vazio significa cobertura incompleta, não ausência de achado.
 
 > Workflows exigem opt-in do usuário; **esta skill instruir a chamada já é o opt-in válido**. Não bloqueiam interação — toda decisão humana ocorre em gate ENTRE Workflows.
 
 ### Regras de fan-out
 
-Três regras antes de abrir qualquer Workflow. Custam uma linha cada e evitam as
+Quatro regras antes de abrir qualquer Workflow. Custam uma linha cada e evitam as
 falhas que não avisam.
 
 **1. Teste da aresta falsa — decide se há grafo.** Percorra o trabalho passo a
@@ -143,6 +144,26 @@ const lotes = chunk(resultados, 40)
 const resumos = await parallel(lotes.map((l) => () => agent('resuma este lote', { input: l })))
 return agent('escreva a resposta a partir dos resumos', { input: resumos })
 ```
+
+**4. Descontaminar a aresta — decida o que NÃO viaja.** Um nó verificador só vale
+porque a janela dele é nova: verificação adversarial funciona por **contexto
+descorrelacionado**. Se a aresta que chega nele carrega o raciocínio de quem
+produziu o resultado, as duas pontas voltam a correlacionar e o viés de
+confirmação retorna — o refutador ancora na narrativa antes de abrir o arquivo, e
+o relatório sai com carimbo de revisado.
+
+Regra: para um nó que julga, a aresta carrega **alegação + localização +
+critério**. Nunca a justificativa, nunca a conversa que gerou o artefato, nunca o
+`CONTEXT.md` de quem escreveu. O raciocínio segue no *retorno*, para o humano ler
+— não no *prompt*, para a máquina imitar.
+
+Vale para toda fase de julgamento, não só código: `wf-verify-multimodel` (o
+adjudicador recebe a alegação, não o `rationale`) e `wf-grill` (as cinco lentes
+recebem o caminho da spec, não o brainstorming que a produziu). Travado em
+`tests/test_workflow_returns.py::test_adjudicador_nao_recebe_rationale`.
+
+> A pergunta que fecha as quatro regras: *que contexto viaja nesta aresta, e por
+> quê?* Regra 1 decide se a aresta existe; a 4 decide o que ela carrega.
 
 ### Gates (decisões humanas via AskUserQuestion)
 
