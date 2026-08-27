@@ -1,5 +1,5 @@
 {
-  "description": "Harness v3 SDD — Pipeline orchestrator with L0/L1/L2 classification, git guardrails, state snapshots, and auto-reclassification.",
+  "description": "Harness v3 SDD — Pipeline orchestrator with L0/L1/L2 classification, git guardrails, state snapshots, and auto-reclassification. Branch Keeper: sensor passivo de ramificacao e deriva com parking reversivel.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -19,6 +19,16 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-skill-router.sh\"",
             "timeout": 5000,
             "statusMessage": "Skill router..."
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-branch-sensor.sh\"",
+            "timeout": 8000,
+            "statusMessage": "Branch Keeper: sensor de ramo..."
           }
         ]
       }
@@ -95,6 +105,18 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-router-warmup.sh\"",
             "timeout": 5000,
             "statusMessage": "Router warmup..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-branch-sensor.sh\"",
+            "timeout": 8000,
+            "statusMessage": "Branch Keeper: sensor de ramo..."
           }
         ]
       }

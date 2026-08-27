@@ -141,8 +141,8 @@ def test_sync_permanece_idempotente(tmp_path: Path) -> None:
     primeira = vs.sync(vault, tmp_path / "harness", cwd)
     segunda = vs.sync(vault, tmp_path / "harness", cwd)
 
-    assert primeira == {"sessions": 0, "specs": 1, "decisions": 1, "inbox": 0}
-    assert segunda == {"sessions": 0, "specs": 0, "decisions": 0, "inbox": 0}
+    assert primeira == {"sessions": 0, "specs": 1, "decisions": 1, "inbox": 0, "branches": 0}
+    assert segunda == {"sessions": 0, "specs": 0, "decisions": 0, "inbox": 0, "branches": 0}
 
 
 def test_projeto_sem_context_nao_cria_decisions(tmp_path: Path) -> None:
@@ -153,3 +153,31 @@ def test_projeto_sem_context_nao_cria_decisions(tmp_path: Path) -> None:
 
     assert counts["decisions"] == 0
     assert not (vault / "wiki" / "decisions").exists()
+
+
+def test_semente_de_ramo_vai_para_o_vault(tmp_path: Path) -> None:
+    """A semente e o unico registro de por que um ramo existe.
+
+    Ela nasce no bucket do harness, que e volatil. Sem o espelho no vault, um
+    ramo que voce lembra vagamente daqui a dois meses so existiria como um uuid
+    perdido no /resume — nao como algo que a busca encontra pelo tema.
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(os.environ["HARNESS_PLUGIN_ROOT"]) / "scripts"))
+    import harness_paths
+
+    cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo")
+    harness = tmp_path / "harness"
+    destino = harness_paths.state_dir(root=harness, cwd=cwd) / "branches"
+    destino.mkdir(parents=True, exist_ok=True)
+    (destino / "sensor-de-deriva.seed.md").write_text(
+        "# Sensor de Deriva\n\ncorpo da semente", encoding="utf-8"
+    )
+
+    counts = vs.sync(tmp_path / "ai-brain", harness, cwd)
+
+    espelho = tmp_path / "ai-brain" / "wiki" / "branches" / "sensor-de-deriva.seed.md"
+    assert counts["branches"] == 1
+    assert espelho.is_file()
+    assert espelho.read_text(encoding="utf-8").startswith("---\ntype: branch\n")

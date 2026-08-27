@@ -40,6 +40,16 @@
 - Pipeline ativo expira apos `HARNESS_PIPELINE_TTL_H` horas (default 24) e e registrado como abandonado
 - `HARNESS_ROUTER=1` liga o skill-router semantico (desligado por padrao; exige Ollama)
 
+## Branch Keeper (ramificacao passiva)
+- Sensor em `UserPromptSubmit` + `Stop`: camada A (regex PT/EN) + camada B (embedding vs ancora da sessao). Ramo exige A **e** B; sem Ollama, A sozinha oferece marcada como degradada
+- `HARNESS v3 BRANCH SIGNAL` no systemMessage -> invocar `Skill(skill="branch-out")` ANTES de responder ao conteudo
+- **Ramo** = ideia com vida propria -> oferece abrir sessao nova (`wt` + PS7, `claude --session-id <uuid>`) com prompt-semente. **Deriva** = conversa escorregando -> uma frase, nunca janela
+- Autocheck: se eu mesmo abrir assunto paralelo, ofereco ramo sem esperar o hook. O sensor e rede, nao substituto
+- Tema ramificado fica **parkeado** no pai (`<harness-parked>` a cada turno): nao desenvolver la; `/branch recall <slug>` desfaz
+- "Agora nao" **parkeia**, nunca descarta. So descarte explicito apaga
+- Estado: `~/.claude/harness/projects/<slug>/branches.json` + sementes/launchers em `branches/`. Telemetria no bloco `branch` de `signals.json`
+- Config: `HARNESS_BRANCH=0` desliga; `HARNESS_BRANCH_HOST=none` nao abre janela; `MAX_OFFERS=2`, `MAX_OPEN=3`, `FLOOR=0.55`, `DRIFT_FLOOR=0.35`, `DRIFT_SAMPLE=2` (camada B so roda com marcador ou na amostragem — embed em todo prompt custaria ~1s)
+
 ## Obsidian (vault-bridge)
 - Vault root via `env.VAULT_PATH`; sub-vault de espelhamento = `<VAULT_PATH>/AI-Brain` (ou `AI_BRAIN_PATH`)
 - MCP servers `obsidian-fs` (mcpvault) e `obsidian` (REST https) em `~/.claude.json`; segredo do REST via `${OBSIDIAN_API_KEY}`
