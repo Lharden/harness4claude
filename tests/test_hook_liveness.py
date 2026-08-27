@@ -188,6 +188,13 @@ class TestHooksGravamHeartbeat:
         ("harness-reclassify.sh", "PostToolUse", {"tool_input": {"file_path": "/tmp/x.py"}}),
         ("harness-precompact.sh", "PreCompact", {}),
         ("harness-session-start.sh", "SessionStart", {}),
+        # Branch Keeper roda no mesmo wrapper para dois eventos. Ambos entram:
+        # cobrir so um deixaria o outro livre para morrer em silencio.
+        (
+            "harness-branch-sensor.sh",
+            "Stop",
+            {"hook_event_name": "Stop", "transcript_path": "/nao/existe.jsonl"},
+        ),
     ]
 
     @pytest.mark.parametrize("hook,event,payload", CASOS, ids=[c[1] for c in CASOS])

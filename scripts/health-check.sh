@@ -79,6 +79,7 @@ check "harness-git-guard.sh"     "test -f '$HOOKS_DIR/harness-git-guard.sh'"
 check "harness-precompact.sh"    "test -f '$HOOKS_DIR/harness-precompact.sh'"
 check "harness-reclassify.sh"    "test -f '$HOOKS_DIR/harness-reclassify.sh'"
 check "harness-session-start.sh" "test -f '$HOOKS_DIR/harness-session-start.sh'"
+check "harness-branch-sensor.sh" "test -f '$HOOKS_DIR/harness-branch-sensor.sh'"
 echo ""
 
 # ===========================================================================
@@ -135,6 +136,15 @@ else
         0 "HARNESS v3 CLASSIFIED"
 
     smoke "classify ignora prompt vazio" harness-classify.sh '{}' 0
+
+    # Branch Keeper: um sensor presente e inerte e indistinguivel de "nao havia
+    # ramo" — a falha mais silenciosa deste subsistema. O smoke prova as duas
+    # pontas: a ancora nasce no primeiro turno, e a tangente seguinte dispara.
+    smoke "branch-sensor fixa ancora no 1o turno" harness-branch-sensor.sh         "{\"prompt\":\"vamos construir o indexador de traces\",\"cwd\":\"$SMOKE_CWD_JSON\",\"session_id\":\"smoke-1\"}" 0
+
+    smoke "branch-sensor detecta tangente" harness-branch-sensor.sh         "{\"prompt\":\"e se a gente tambem cadastrasse receitas de bolo no aplicativo?\",\"cwd\":\"$SMOKE_CWD_JSON\",\"session_id\":\"smoke-1\"}"         0 "BRANCH SIGNAL"
+
+    smoke "branch-sensor ignora payload vazio" harness-branch-sensor.sh '{}' 0
 
     smoke "git-guard bloqueia destrutivo" harness-git-guard.sh \
         '{"tool_input":{"command":"git re'"$(printf 'set --ha')"'rd HEAD~1"}}' 2
@@ -247,6 +257,7 @@ if [ -d "$SKILLS_DIR/write-spec" ]; then
     check "write-spec-light skill"    "test -f '$SKILLS_DIR/write-spec-light/SKILL.md'"
     check "design-doc skill"          "test -f '$SKILLS_DIR/design-doc/SKILL.md'"
     check "verify-against-spec skill" "test -f '$SKILLS_DIR/verify-against-spec/SKILL.md'"
+    check "branch-out skill"          "test -f '$SKILLS_DIR/branch-out/SKILL.md'"
 else
     warn "SDD skills not yet installed (Phase 2-5 pending)"
 fi
@@ -258,6 +269,9 @@ check "signals.schema.json"      "test -f '$PLUGIN_DIR/schemas/signals.schema.js
 check "migrate_state.py"         "test -f '$PLUGIN_DIR/scripts/migrate_state.py'"
 check "record_signal.py"         "test -f '$PLUGIN_DIR/scripts/record_signal.py'"
 check "vault_sync.py"            "test -f '$PLUGIN_DIR/scripts/vault_sync.py'"
+check "branch_state.py"          "test -f '$PLUGIN_DIR/scripts/branch_state.py'"
+check "branch_seed.py"           "test -f '$PLUGIN_DIR/scripts/branch_seed.py'"
+check "branch_sensor.py"         "test -f '$PLUGIN_DIR/scripts/branch_sensor.py'"
 # Lista fixa nao acompanha Workflow novo. Em 2026-08-26 o `wf-grill.js` entrou e
 # o health-check seguiu dizendo "All checks passed" sem nunca ter olhado para ele
 # — verde que nao cobre o que da a entender. Conta o que existe e exige o que e

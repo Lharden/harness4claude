@@ -221,6 +221,26 @@ def context_docs(cwd: Path) -> list[Path]:
     return [context] if context.is_file() else []
 
 
+def branch_seeds(harness_dir: Path, cwd: Path) -> list[Path]:
+    """Sementes de ramo deste projeto (vazio se nao houver nenhuma).
+
+    A semente e o unico registro legivel de por que um ramo existe. Ela vive no
+    bucket do harness, que e volatil por natureza; espelhar no vault e o que
+    permite reencontrar um ramo meses depois pela busca, sem depender de a
+    sessao ainda existir.
+    """
+    try:
+        import sys as _sys
+
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import harness_paths
+
+        d = harness_paths.state_dir(root=harness_dir, cwd=cwd) / "branches"
+    except Exception:
+        return []
+    return glob_md(d, "*.seed.md")
+
+
 def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
     """Executa o espelhamento. Retorna contagens por destino."""
     slug = project_slug(cwd)
@@ -240,12 +260,19 @@ def sync(vault: Path, harness_dir: Path, cwd: Path) -> dict[str, int]:
             project=slug,
         ),
         "inbox": mirror(remember_today(cwd), vault / "raw" / "inbox"),
+        "branches": mirror(
+            branch_seeds(harness_dir, cwd),
+            vault / "wiki" / "branches",
+            page_type="branch",
+            project=slug,
+        ),
     }
     if any(counts.values()):
         append_log(
             vault,
             f"autosync: sessions:{counts['sessions']} specs:{counts['specs']} "
-            f"decisions:{counts['decisions']} inbox:{counts['inbox']}",
+            f"decisions:{counts['decisions']} inbox:{counts['inbox']} "
+            f"branches:{counts['branches']}",
         )
     return counts
 
