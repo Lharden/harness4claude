@@ -202,6 +202,8 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
   projects, and its records are keyed by `task_id`, so there is no contamination
 - An active pipeline expires after `HARNESS_PIPELINE_TTL_H` hours (default 24) and is
   recorded as abandoned, so a forgotten task cannot block classification indefinitely
+- Each `PostToolUse` edit advances the transactional code revision, so evidence
+  collected before the edit cannot satisfy completion
 - Skills communicate via `signals.json` rather than direct invocation, enabling loose coupling
 - The orchestrator (`harness-workflow`) is the only skill that reads classification tags directly
 

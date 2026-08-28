@@ -315,6 +315,54 @@ class HarnessDatabase:
             ).fetchone()
         return self.task(str(row["task_id"])) if row else None
 
+    def expire_stale_task(
+        self,
+        scope_id: str,
+        *,
+        ttl_seconds: float,
+        now: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Abandon the scoped non-terminal task after its pipeline TTL."""
+        current_time = time.time() if now is None else float(now)
+        ttl = max(float(ttl_seconds), 0.001)
+        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+        expired_task_id: str | None = None
+        with self._write() as connection:
+            row = connection.execute(
+                f"SELECT * FROM tasks WHERE scope_id = ? AND status IN ({placeholders}) "
+                "ORDER BY started_at DESC LIMIT 1",
+                (scope_id, *ACTIVE_STATUSES),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                started = datetime.fromisoformat(str(row["started_at"]))
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                expired = current_time - started.timestamp() > ttl
+            except (TypeError, ValueError, OverflowError):
+                expired = True
+            if not expired:
+                return None
+            expired_task_id = str(row["task_id"])
+            occurred_at = datetime.fromtimestamp(current_time, timezone.utc).isoformat()
+            connection.execute(
+                "UPDATE tasks SET status = 'abandoned', verified = 0, revision = revision + 1, "
+                "updated_at = ? WHERE task_id = ?",
+                (occurred_at, expired_task_id),
+            )
+            connection.execute(
+                "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                "VALUES (?, ?, 'pipeline-expired', ?, ?)",
+                (
+                    expired_task_id,
+                    scope_id,
+                    json.dumps({"ttl_seconds": ttl}, sort_keys=True),
+                    occurred_at,
+                ),
+            )
+        return self.task(expired_task_id)
+
     def acquire_lease(
         self,
         scope_id: str,

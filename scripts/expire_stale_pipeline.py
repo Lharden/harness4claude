@@ -32,6 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from record_signal import build_task, record  # type: ignore[import-not-found]
+from transactional_state import HarnessDatabase  # type: ignore[import-not-found]
 
 DEFAULT_TTL_HOURS = 24
 
@@ -150,6 +151,19 @@ def expire(
         )
         record(signals_dir, task)
     except Exception:
+        pass
+
+    try:
+        scope_id = str(state.get("scope_id") or "legacy")
+        current = now or datetime.now(timezone.utc)
+        HarnessDatabase(harness_dir).expire_stale_task(
+            scope_id,
+            ttl_seconds=ttl_hours * 3600,
+            now=current.timestamp(),
+        )
+    except Exception:
+        # Legacy installations may not have a transactional task yet. The
+        # JSON projection still needs to recover, so expiry remains fail-open.
         pass
 
     _atomic_write_json(state_path, dict(IDLE_STATE))

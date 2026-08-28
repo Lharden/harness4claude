@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -134,6 +135,28 @@ class TestExpire:
         assert depois["status"] == "idle"
         assert depois["task_id"] is None
         assert depois["pipeline"] == []
+
+    def test_pipeline_velho_abandona_tambem_o_estado_transacional(self, exp, harness_dir):
+        velho = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        db = exp.HarnessDatabase(harness_dir)
+        db.start_task(
+            scope_id="legacy", legacy_level="L1-feature", tier="L1", kind="feature",
+            pipeline=["write-spec-light", "tdd", "verify-against-spec"], prompt="build",
+            task_id="t-20260724-170615",
+        )
+        with sqlite3.connect(harness_dir / "harness.db") as connection:
+            connection.execute(
+                "UPDATE tasks SET started_at = ? WHERE task_id = ?",
+                (velho, "t-20260724-170615"),
+            )
+        state = _state(started_at=velho)
+        state["scope_id"] = "legacy"
+        _write(harness_dir, state)
+
+        assert exp.expire(harness_dir, 24) == "t-20260724-170615"
+
+        assert db.task("t-20260724-170615")["status"] == "abandoned"
+        assert db.current_task("legacy") is None
 
     def test_contador_zerado_no_expire(self, exp, harness_dir):
         """O contador global inflava a reclassificacao da task seguinte."""

@@ -54,6 +54,8 @@ def main(argv=None) -> int:
     evidence.add_argument("--command-text"); evidence.add_argument("--exit-code", type=int)
     evidence.add_argument("--tests-collected", type=int); evidence.add_argument("--tests-passed", type=int)
     evidence.add_argument("--output-hash")
+    touch = sub.add_parser("touch")
+    touch.add_argument("--task", required=True); touch.add_argument("--path", required=True)
     gate = sub.add_parser("gate")
     gate.add_argument("--task", required=True); gate.add_argument("--type", required=True)
     gate.add_argument("--decision", choices=["approve"], required=True)
@@ -80,6 +82,8 @@ def main(argv=None) -> int:
             task = db.record_evidence(args.task, evidence_type=args.type, command=args.command_text,
                                       exit_code=args.exit_code, tests_collected=args.tests_collected,
                                       tests_passed=args.tests_passed, output_hash=args.output_hash)
+        elif args.command == "touch":
+            task = db.touch_file(args.task, args.path)
         elif args.command == "gate":
             task = db.resolve_gate(args.task, args.type, args.decision, expected_revision=args.expect_revision)
         else:

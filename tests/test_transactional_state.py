@@ -3,6 +3,7 @@ import os
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,48 @@ def test_state_cli_creates_database_and_projection(tmp_path: Path):
     assert projection["task_id"] == "t-cli"
     assert projection["current_step"] == "write-spec-light"
     assert (tmp_path / "harness.db").exists()
+
+
+def test_stale_task_ttl_abandons_pipeline_and_releases_scope(tmp_path: Path):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="session|repo|worktree", legacy_level="L1-feature", tier="L1", kind="feature",
+        pipeline=["write-spec-light", "tdd", "verify-against-spec"], prompt="build",
+    )
+    started = datetime.fromisoformat(task["started_at"]).timestamp()
+
+    assert db.expire_stale_task("session|repo|worktree", ttl_seconds=3600, now=started + 3599) is None
+    expired = db.expire_stale_task("session|repo|worktree", ttl_seconds=3600, now=started + 3601)
+
+    assert expired is not None
+    assert expired["status"] == "abandoned"
+    assert db.current_task("session|repo|worktree") is None
+
+
+def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
+    cli = str(ROOT / "scripts" / "state_cli.py")
+    base = [sys.executable, cli, "--home", str(tmp_path)]
+    init = subprocess.run(
+        base + ["init", "--scope", "s", "--task", "t-touch", "--classification", "L1-bug"],
+        capture_output=True, text=True, check=False,
+    )
+    assert init.returncode == 0, init.stderr
+    evidence = subprocess.run(
+        base + [
+            "evidence", "--task", "t-touch", "--type", "test", "--command-text", "pytest",
+            "--exit-code", "0", "--tests-collected", "2", "--tests-passed", "2",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert evidence.returncode == 0, evidence.stderr
+
+    touched = subprocess.run(
+        base + ["touch", "--task", "t-touch", "--path", "src/app.py"],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert touched.returncode == 0, touched.stderr
+    projection = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert projection["verified"] is False
+    assert projection["status"] == "active"
+    assert projection["code_revision"] == 1

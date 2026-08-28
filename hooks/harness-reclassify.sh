@@ -100,16 +100,40 @@ file_path = os.environ['HARNESS_FILE_PATH']
 state_task_id = ''
 state_class = ''
 state_status = ''
-meta_agreed = None
+state = {}
 try:
     with open(state_file, encoding='utf-8') as f:
         state = json.load(f)
     state_task_id = state.get('task_id') or ''
     state_class = state.get('classification') or ''
     state_status = state.get('status') or ''
-    meta_agreed = (state.get('classification_meta') or {}).get('agreed')
 except Exception:
     pass
+
+# Every edit advances the transactional code revision. This invalidates any
+# verification evidence recorded before the edit, even when the same file is
+# modified more than once.
+transaction_db = None
+if state_task_id:
+    try:
+        from transactional_state import HarnessDatabase
+        transaction_db = HarnessDatabase(harness_dir)
+        transactional = transaction_db.touch_file(state_task_id, file_path)
+        state.update({
+            'status': transactional['status'],
+            'current_step': transactional['phase'],
+            'revision': transactional['revision'],
+            'code_revision': transactional['code_revision'],
+            'owner_epoch': transactional['owner_epoch'],
+            'verified': transactional['verified'],
+            'pending_gate': transactional['pending_gate'],
+            'scope_id': transactional['scope_id'],
+        })
+        state_status = transactional['status']
+        with open(state_file, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        transaction_db = None
 
 # Read/update counter
 try:
@@ -131,13 +155,13 @@ with open(counter_file, 'w', encoding='utf-8') as f:
 # Reclassify if L0 and 3+ files.
 # Travas (PostToolUse jamais cria task nova — task_id é sempre preservado):
 # - status=active: pipeline em andamento é intocável
-# - agreed=True: classificação confirmada semanticamente está travada
-if (counter['count'] >= 3 and state_class.startswith('L0')
-        and state_status != 'active' and meta_agreed is not True):
+# - confirmação semântica/humana explícita trava a classificação
+from reclassification_policy import should_promote
+if should_promote(state, counter['count']):
     try:
         with open(state_file, encoding='utf-8') as f:
             state = json.load(f)
-        new_class = state_class.replace('L0', 'L1')
+        new_class = 'L1-feature'
         state['classification'] = new_class
         state['status'] = 'active'
         state['pipeline'] = ['write-spec-light', 'tdd', 'verify-against-spec']
@@ -152,6 +176,24 @@ if (counter['count'] >= 3 and state_class.startswith('L0')
         meta['source'] = 'regex'
         meta['agreed'] = None
         state['classification_meta'] = meta
+        if transaction_db is not None and state_task_id:
+            transactional = transaction_db.reclassify(
+                state_task_id,
+                legacy_level=new_class,
+                tier='L1',
+                kind='feature',
+                pipeline=state['pipeline'],
+            )
+            state.update({
+                'status': transactional['status'],
+                'current_step': transactional['phase'],
+                'revision': transactional['revision'],
+                'code_revision': transactional['code_revision'],
+                'owner_epoch': transactional['owner_epoch'],
+                'verified': transactional['verified'],
+                'pending_gate': transactional['pending_gate'],
+                'scope_id': transactional['scope_id'],
+            })
         with open(state_file, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
     except Exception:

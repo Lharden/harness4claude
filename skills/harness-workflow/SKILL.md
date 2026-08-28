@@ -21,7 +21,7 @@ metadata:
 autoridade para revisão CAS, gates, artefatos e evidência fresca. Resolva o bucket
 com `python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>"`.
 
-Toda transição usa `scripts/state_cli.py`: `artifact`, `transition`, `evidence` e
+Toda transição usa `scripts/state_cli.py`: `artifact`, `transition`, `touch`, `evidence` e
 `complete`. Teste com exit 0 e zero casos coletados não verifica. Mudança posterior
 de código invalida evidência anterior. Gates `approve-spec`, `approve-plan`,
 `answer-clarifications`, `branch-open` e `escalation` exigem decisão humana explícita.

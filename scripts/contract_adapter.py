@@ -72,11 +72,18 @@ def build_capability_report(root: str | Path | None = None) -> dict[str, Any]:
             "evidence": records if valid else ["missing conformance evidence"],
         }
     lock_valid = verify_lock(contract)
+    canonical_pipelines = json.dumps(
+        contract["pipelines"].get("pipelines") or {},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return {
         "contract_version": contract["capabilities"]["contract_version"],
         "adapter": "harness4claude",
         "capabilities": capabilities,
         "snapshot_lock_valid": lock_valid,
+        "pipeline_fingerprint": hashlib.sha256(canonical_pipelines.encode("utf-8")).hexdigest(),
         "conformant": lock_valid and all(item["status"] == "equivalent" for item in capabilities.values()),
     }
 
