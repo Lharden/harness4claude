@@ -67,6 +67,34 @@ if [[ -z "$COMMAND" ]]; then
   exit 0
 fi
 
+# Parser compartilhado com Harness4Contract: separa invocacoes reais de texto
+# citado e inspeciona cada segmento de uma cadeia shell.
+POLICY_JSON=$(python "$(dirname "${BASH_SOURCE[0]}")/../scripts/command_policy.py" \
+  --command "$COMMAND" 2>/dev/null || printf '{"action":"unknown","reason":"parser failure"}')
+POLICY_ACTION=$(printf '%s' "$POLICY_JSON" | python -c "import json,sys; print(json.load(sys.stdin).get('action','unknown'))" 2>/dev/null || echo unknown)
+POLICY_REASON=$(printf '%s' "$POLICY_JSON" | python -c "import json,sys; print(json.load(sys.stdin).get('reason',''))" 2>/dev/null || echo "")
+case "$POLICY_ACTION" in
+  deny)
+    printf '{"decision":"block","reason":"BLOCKED: %s"}\n' "$POLICY_REASON" >&2
+    exit 2
+    ;;
+  require_approval)
+    printf '{"decision":"block","reason":"APPROVAL REQUIRED: %s"}\n' "$POLICY_REASON" >&2
+    exit 2
+    ;;
+  warn)
+    printf '## Harness Warning: %s. Confirme com o usuario antes de prosseguir.\n' "$POLICY_REASON"
+    exit 0
+    ;;
+  allow)
+    exit 0
+    ;;
+  *)
+    echo "## Harness Warning: command-policy nao conseguiu analisar o comando; trate como nao observado."
+    exit 0
+    ;;
+esac
+
 # --- HARD BLOCK (exit 2) ---
 
 # git push --force / --force-with-lease

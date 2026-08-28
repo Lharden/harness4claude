@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness4contract.local/schemas/branch-record.schema.json",
+  "type": "object",
+  "required": ["branch_id", "parent_session_id", "slug", "topic", "status", "created_at"],
+  "properties": {
+    "branch_id": {"type": "string"},
+    "parent_session_id": {"type": "string"},
+    "child_session_id": {"type": ["string", "null"]},
+    "slug": {"type": "string"},
+    "topic": {"type": "string"},
+    "status": {"enum": ["pending", "open", "closed", "recalled"]},
+    "worktree": {"type": ["string", "null"]},
+    "seed_path": {"type": ["string", "null"]},
+    "conclusion": {"type": ["string", "null"]},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

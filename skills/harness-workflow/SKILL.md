@@ -14,6 +14,24 @@ metadata:
 
 > **Precedência:** CLAUDE.md SEMPRE tem prioridade sobre esta skill.
 
+## Harness4Contract v1
+
+`contract/` é a superfície canônica compartilhada com Harness4Codex. O
+`state.json` é uma projeção legível; `harness.db`, no bucket da sessão, é a
+autoridade para revisão CAS, gates, artefatos e evidência fresca. Resolva o bucket
+com `python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>"`.
+
+Toda transição usa `scripts/state_cli.py`: `artifact`, `transition`, `evidence` e
+`complete`. Teste com exit 0 e zero casos coletados não verifica. Mudança posterior
+de código invalida evidência anterior. Gates `approve-spec`, `approve-plan`,
+`answer-clarifications`, `branch-open` e `escalation` exigem decisão humana explícita.
+
+Antes de propagar qualquer artefato, aplique uma vez `DROP / CONSTRAIN / RETAIN`:
+DROP retira direção editorial rejeitada do trabalho e da memória temática; auditoria
+indispensável guarda apenas id, localização e destino DROP. CONSTRAIN mantém
+predicados persistentes de segurança, conformidade, privacidade e formato na
+fronteira. RETAIN mantém limite científico local à alegação e à evidência.
+
 ## Quando ativar
 
 Ative quando o contexto contiver `<harness-classification>` com `level: L1` ou `level: L2`.
@@ -36,10 +54,10 @@ Para L0, NÃO ative — execute direto sem pipeline.
    - Se o usuário corrigir explicitamente depois → rode de novo com `--source human_override`.
    - **Não edite `classification_meta` à mão.** Esse era o protocolo anterior e ele não era cumprido: a auditoria de 2026-07-28 encontrou `agreed = null` em 100% das tasks e `avg_classify_accuracy = null` desde sempre, porque `recompute_aggregates` só conta tasks com `agreed is not None`. Sem este passo a métrica de accuracy é matematicamente incapaz de sair de zero.
 3. **Anunciar** — exiba: "Harness v3: {level}-{type} → {pipeline}" (sinalize se houve correção semântica).
-4. **Atualizar state.json** — marcar `current_step` conforme progride no pipeline.
+4. **Atualizar estado** — registre artefato e avance com `state_cli.py`, sempre passando a revisão esperada; o helper sincroniza `state.json`.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
-6. **Flexibilidade** — pular etapas se justificar (ex.: spec já existe, bug óbvio).
-7. **DONE** — marcar `status: done` e registrar a task executando:
+6. **Obrigações** — uma fase existente pode reutilizar artefato válido, mas a transição e sua evidência continuam registradas.
+7. **DONE** — grave evidência fresca, execute `state_cli.py ... complete`, então registre a task:
    ```bash
    ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
    python "$PR/scripts/record_signal.py" --completed --steps "step1,step2,..." \
@@ -58,10 +76,14 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 | **L1-feature** | write-spec-light → tdd → verify-against-spec |
 | **L1-bug** | systematic-debugging → tdd → verify |
 | **L1-refactor** | write-spec-light → tdd → verify-against-spec |
-| **L2-feature** | discuss → brainstorming → write-spec → grill-me → design-doc → validate-plan → tdd → verify-against-spec |
-| **L2-bug** | systematic-debugging → grill-me → tdd → verify |
-| **L2-refactor** | discuss → write-spec → grill-me → design-doc → validate-plan → tdd → verify-against-spec |
-| **L2-architecture** | discuss → brainstorming → write-spec → grill-me → design-doc → validate-plan → tdd → verify-against-spec |
+| **L1-review** | code-review → verify |
+| **L1-docs** | source-selection → documentation → verify |
+| **L2-feature** | discuss → brainstorming → graph-context → write-spec → grill-me → approve-spec → design-doc → validate-plan → approve-plan → tdd → verify-multimodel |
+| **L2-bug** | systematic-debugging → graph-context → grill-me → tdd → verify |
+| **L2-refactor** | discuss → graph-context → write-spec → grill-me → approve-spec → design-doc → validate-plan → approve-plan → tdd → verify-multimodel |
+| **L2-architecture** | discuss → brainstorming → graph-context → write-spec → grill-me → approve-spec → design-doc → validate-plan → approve-plan → tdd → verify-multimodel |
+| **L2-review** | graph-context → code-review → verify-multimodel |
+| **L2-docs** | source-selection → graph-context → documentation → verify-against-spec |
 
 > **Zero skills fantasma:** removidos `triage-issue`, `request-refactor-plan`, `improve-codebase-architecture`, `prd-to-plan`, `write-a-prd`, `execucao`. Cada fase mapeia a um mecanismo real.
 > **autoresearch (acelerador opcional, não obrigatório):** em bugs, `tdd`/`verify` podem usar `autoresearch:debug`/`autoresearch:fix` (loops com guard pytest); em L2 com auth/dados/API, rodar `autoresearch:security`; em L2-architecture, `autoresearch:predict` para pré-análise. Se o plugin estiver indisponível, seguir sem ele (degradação graceful).
@@ -77,13 +99,14 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 | (classificação) | inline | confirmar via `scripts/confirm_classification.py` (Protocolo, passo 2) |
 | `discuss` | skill | `Skill(skill="discuss")` → `docs/CONTEXT.md` |
 | `brainstorming` | skill | `Skill(skill="superpowers:brainstorming")` |
-| (contexto, L2) | skill | `Skill(skill="graph-context")` — knowledge graph (graphify) primeiro; fallback `wf-context-scan` |
+| `graph-context` | skill | `Skill(skill="graph-context")` — knowledge graph (graphify) primeiro; fallback `wf-context-scan` |
 | `write-spec` / `write-spec-light` | skill | `Skill(skill="write-spec[-light]")` |
 | `grill-me` | skill + **Workflow** | `Skill(skill="grill-me")` — o passo 0 dela chama `wf-grill` para gerar o conjunto adversarial em contexto limpo; o loop com o humano segue na skill, sem limite |
 | `design-doc` | skill | `Skill(skill="design-doc")` |
 | `validate-plan` | skill | `Skill(skill="validate-plan")` |
 | `tdd` | skill | `Skill(skill="superpowers:test-driven-development")` |
-| `verify-against-spec` (L2) | **Workflow** | `wf-verify-multimodel` (review multi-perspectiva + adversarial) |
+| `approve-spec` / `approve-plan` | gate humano | gravar gate, obter decisão explícita e resolver antes de avançar |
+| `verify-multimodel` | **Workflow** | `wf-verify-multimodel` (review multi-perspectiva + adversarial) |
 | `verify-against-spec` (L1) | skill | `Skill(skill="verify-against-spec")` (Workflow opcional) |
 | `verify` (bug) | skill | `Skill(skill="superpowers:verification-before-completion")` |
 

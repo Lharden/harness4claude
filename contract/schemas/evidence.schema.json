@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness4contract.local/schemas/evidence.schema.json",
+  "type": "object",
+  "required": ["task_id", "scope_id", "phase", "evidence_type", "started_at", "finished_at"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "scope_id": {"type": "string"},
+    "phase": {"type": "string"},
+    "evidence_type": {"type": "string"},
+    "tool": {"type": ["string", "null"]},
+    "command": {"type": ["string", "null"]},
+    "exit_code": {"type": ["integer", "null"]},
+    "output_hash": {"type": ["string", "null"]},
+    "tests_collected": {"type": ["integer", "null"], "minimum": 0},
+    "tests_passed": {"type": ["integer", "null"], "minimum": 0},
+    "repository_head": {"type": ["string", "null"]},
+    "working_tree_hash": {"type": ["string", "null"]},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"}
+  },
+  "additionalProperties": true
+}
+

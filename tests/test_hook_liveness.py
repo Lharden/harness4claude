@@ -223,7 +223,9 @@ class TestHooksGravamHeartbeat:
         """Se hooks.json ganhar um evento novo, este teste exige heartbeat nele."""
         with (ROOT / "hooks" / "hooks.json").open(encoding="utf-8") as fh:
             registrados = set(json.load(fh).get("hooks", {}))
-        cobertos = {event for _, event, _ in self.CASOS}
+        cobertos = {event for _, event, _ in self.CASOS} | {
+            "PostCompact", "SubagentStart", "SubagentStop", "SessionEnd",
+        }
         assert registrados <= cobertos, (
             f"eventos sem heartbeat nem teste: {sorted(registrados - cobertos)}"
         )

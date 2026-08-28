@@ -136,6 +136,32 @@ def main() -> int:
         return 2
 
     apply_confirmation(state, args.final, args.source, confidence=args.confidence)
+    database_path = harness_dir / "harness.db"
+    if database_path.exists():
+        try:
+            from transactional_state import HarnessDatabase
+
+            tier, kind = args.final.split("-", 1)
+            task = HarnessDatabase(harness_dir).confirm_classification(
+                state["task_id"],
+                tier=tier,
+                kind=kind,
+                pipeline=load_pipelines().get(args.final, []),
+                source=args.source,
+                confidence=args.confidence if args.confidence is not None else 1.0,
+            )
+            state.update({
+                "revision": task["revision"],
+                "code_revision": task["code_revision"],
+                "owner_epoch": task["owner_epoch"],
+                "verified": task["verified"],
+                "pending_gate": task["pending_gate"],
+                "scope_id": task["scope_id"],
+                "current_step": task["phase"],
+            })
+        except Exception as exc:
+            print(f"erro: confirmacao transacional falhou: {exc}", file=sys.stderr)
+            return 2
     _atomic_write_json(state_path, state)
 
     meta = state["classification_meta"]

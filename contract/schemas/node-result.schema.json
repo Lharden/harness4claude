@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness4contract.local/schemas/node-result.schema.json",
+  "type": "object",
+  "required": ["run_id", "role", "status", "findings", "evidence_refs", "coverage", "errors"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "role": {"type": "string"},
+    "status": {"enum": ["completed", "failed", "timeout", "missing"]},
+    "findings": {"type": "array", "items": {"type": "object"}},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "coverage": {"type": "array", "items": {"type": "string"}},
+    "errors": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}
+

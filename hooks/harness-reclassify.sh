@@ -19,7 +19,7 @@ else
 fi
 
 # Read file path + cwd from stdin JSON via env var (safe from injection).
-# Saida: linha 1 = cwd, linha 2 = file_path. O cwd resolve o bucket do projeto —
+# Saida: linha 1 = session_id, linha 2 = cwd, linha 3 = file_path.
 # sem ele, editar arquivos num repo promovia a classificacao de outro (o
 # contador global chegou a 130 arquivos misturando dois projetos).
 INPUT=$(cat)
@@ -28,18 +28,23 @@ EXTRACT=$(echo "$INPUT" | python -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
+    print((d.get('session_id') or '').replace('\n', ' '))
     print((d.get('cwd') or '').replace('\n', ' '))
     print(d.get('tool_input',{}).get('file_path',''))
 except Exception:
+    print('')
     print('')
     print('')
 " 2>/dev/null)
 
 # Expansao de parametro em vez de pipe: `head`/`sed` fecham o pipe cedo e, com
 # `set -o pipefail`, o produtor morre com SIGPIPE (exit 141). Ver harness-classify.sh.
-SESSION_CWD="${EXTRACT%%$'\n'*}"
+SESSION_ID="${EXTRACT%%$'\n'*}"
+SESSION_ID="${SESSION_ID%$'\r'}"
+EXTRACT_REST="${EXTRACT#*$'\n'}"
+SESSION_CWD="${EXTRACT_REST%%$'\n'*}"
 SESSION_CWD="${SESSION_CWD%$'\r'}"   # print() do Python no Windows emite \r\n
-FILE_PATH="${EXTRACT#*$'\n'}"
+FILE_PATH="${EXTRACT_REST#*$'\n'}"
 FILE_PATH="${FILE_PATH%%$'\n'*}"
 FILE_PATH="${FILE_PATH%$'\r'}"
 
@@ -62,6 +67,7 @@ fi
 export MSYS_NO_PATHCONV=1
 export HARNESS_FILE_PATH="$FILE_PATH"
 export HARNESS_SESSION_CWD="$SESSION_CWD"
+export HARNESS_SESSION_ID="$SESSION_ID"
 SCRIPTS_DIR="${HOOK_DIR_REL}/../scripts"
 if command -v cygpath &>/dev/null; then
     export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
@@ -79,7 +85,8 @@ harness_dir = r'$HARNESS_DIR_WIN'
 try:
     sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR'])
     from harness_paths import ensure_state_dir
-    harness_dir = str(ensure_state_dir(harness_dir, os.environ.get('HARNESS_SESSION_CWD') or None))
+    harness_dir = str(ensure_state_dir(harness_dir, os.environ.get('HARNESS_SESSION_CWD') or None,
+                                       session_id=os.environ.get('HARNESS_SESSION_ID') or None))
 except Exception:
     pass
 state_file = os.path.join(harness_dir, 'state.json')

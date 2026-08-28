@@ -1,7 +1,7 @@
 {
   "name": "harness4claude",
-  "version": "3.15.0",
-  "description": "Spec-Driven Development orchestrator with L0/L1/L2 classification, structured pipelines, quality gates, and multi-model review. Classifies tasks by complexity, routes through SDD skills (write-spec, design-doc, verify-against-spec), and manages pipeline state. Branch Keeper: sensor passivo que detecta ramificacao e deriva, abre a conversa-ramo em sessao propria com prompt-semente e parkeia o tema na conversa original.",
+  "version": "4.0.0",
+  "description": "Harness4Contract-backed SDD orchestrator with session/worktree isolation, transactional state, human gates, evidence-bound completion, Graphify, memory, arsenal, branching and multi-model review.",
   "author": {
     "name": "Leonardo",
     "url": "https://github.com/Lharden/harness4claude"

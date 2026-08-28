@@ -34,12 +34,15 @@ import sys, json, os
 sys.path.insert(0, os.environ['SCRIPTS_DIR_WIN'])
 root = os.environ['HARNESS_ROOT_WIN']
 try:
-    cwd = json.load(sys.stdin).get('cwd') or ''
+    payload = json.load(sys.stdin)
+    cwd = payload.get('cwd') or ''
+    session_id = payload.get('session_id') or ''
 except Exception:
     cwd = ''
+    session_id = ''
 try:
     from harness_paths import ensure_state_dir
-    print(ensure_state_dir(root, cwd or None))
+    print(ensure_state_dir(root, cwd or None, session_id=session_id or None))
 except Exception:
     print(root)
 " 2>/dev/null || printf '%s' "$HARNESS_DIR")"

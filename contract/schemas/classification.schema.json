@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness4contract.local/schemas/classification.schema.json",
+  "type": "object",
+  "required": ["task_id", "tier", "kind", "suggested", "source", "pipeline_id"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1},
+    "tier": {"enum": ["L0", "L1", "L2"]},
+    "kind": {"enum": ["question", "feature", "bug", "refactor", "architecture", "review", "docs"]},
+    "risk_flags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "suggested": {"type": "string", "minLength": 1},
+    "final": {"type": ["string", "null"]},
+    "source": {"enum": ["regex", "semantic", "human_override"]},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "agreed": {"type": ["boolean", "null"]},
+    "pipeline_id": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
+

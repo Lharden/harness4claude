@@ -13,11 +13,37 @@ estava validado por 9 testes de concorrencia. Divergir dele seria regressao.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
 REAL_HARNESS_DIR = Path.home() / ".claude" / "harness"
+BASH_REQUIRED_CLASSES = {
+    "test_arsenal_gate.py": {"TestInvocacaoBloqueia", "TestMencaoNaoBloqueia", "TestPassaDireto", "TestFalhaAberta"},
+    "test_harness_dir_resolution.py": {"TestOverrideRedirectsWrites", "TestDefaultFallback", "TestEdgeCases", "TestInlinePythonLayer", "TestOverrideLeavesTrace"},
+    "test_health_check_smoke.py": {"TestSmokeDetectaSabotagem", "TestSmokeNaoTocaEstadoReal"},
+    "test_hook_liveness.py": {"TestHooksGravamHeartbeat"},
+    "test_host_contract_resilience.py": {"TestGitGuardFailsLoud", "TestCrlfNaoFragmentaBucket"},
+    "test_plugin_root_integrity.py": {"TestPluginRootIntegrity"},
+    "test_plugin_root_resolver.py": {"TestPluginRootPersistence"},
+    "test_state_lock.py": {"TestBasicLifecycle", "TestConcurrency", "TestStaleHandling", "TestWriteRaceProtection", "TestReentrancySemantics"},
+}
+
+
+def _bash_executable() -> str | None:
+    discovered = shutil.which("bash")
+    if discovered:
+        return discovered
+    if os.name == "nt":
+        for candidate in (
+            Path(r"C:\Program Files\Git\bin\bash.exe"),
+            Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
+            Path.home() / "scoop" / "apps" / "git" / "current" / "bin" / "bash.exe",
+        ):
+            if candidate.exists():
+                return str(candidate)
+    return None
 
 
 def pytest_configure(config):
@@ -36,6 +62,23 @@ def pytest_configure(config):
         "integration: requer ambiente externo (Ollama, indice real de skills). "
         "Fora do gate hermetico; ver docs/self-reform/claude/TEST_MATRIX.md.",
     )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Bash integration is a separate, explicit platform gate.
+
+    Python/unit coverage remains mandatory on every host. Shell suites are skipped
+    with a visible reason when no executable exists, instead of failing 60+ tests
+    with the same FileNotFoundError and obscuring product regressions.
+    """
+    if _bash_executable() is not None:
+        return
+    marker = pytest.mark.skip(reason="Bash integration runtime is not installed on this host")
+    for item in items:
+        module = Path(str(item.fspath)).name
+        class_name = item.cls.__name__ if item.cls is not None else ""
+        if class_name in BASH_REQUIRED_CLASSES.get(module, set()) and item.name != "test_cobre_todos_os_eventos_registrados":
+            item.add_marker(marker)
 
 
 @pytest.fixture(scope="class", autouse=True)

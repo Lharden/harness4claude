@@ -61,8 +61,8 @@ fi
 # ---------------------------------------------------------------------------
 INPUT="$(cat)"
 
-# Single Python call: extract cwd + message + normalize unicode.
-# Formato de saida: PRIMEIRA linha = cwd da sessao, resto = mensagem normalizada.
+# Single Python call: extract session + cwd + message + normalize unicode.
+# Formato: primeira linha = session_id, segunda = cwd, resto = mensagem.
 # O cwd vem primeiro porque nunca contem quebra de linha, enquanto a mensagem
 # pode — inverter a ordem tornaria o split ambiguo.
 # Errors logged to debug file instead of silently swallowed
@@ -73,6 +73,7 @@ try:
     msg = data.get('prompt', data.get('user_prompt', data.get('user_message', data.get('content', ''))))
     if not msg or not msg.strip():
         sys.exit(0)
+    print((data.get('session_id') or '').replace('\n', ' '))
     print((data.get('cwd') or '').replace('\n', ' '))
     text = msg.lower().strip()
     nfkd = unicodedata.normalize('NFKD', text)
@@ -95,16 +96,16 @@ fi
 # pipefail`, `head -n 1` fecha o pipe e o `printf` de um prompt grande morre com
 # SIGPIPE, derrubando o hook com exit 141 (visto com o prompt de ~160KB do
 # sumarizador). Sem pipe tambem economiza dois processos por prompt.
-case "$EXTRACT" in
-    *$'\n'*) ;;
-    *) exit 0 ;;  # sem quebra de linha => extrator nao emitiu mensagem
-esac
-SESSION_CWD="${EXTRACT%%$'\n'*}"
+case "$EXTRACT" in *$'\n'*$'\n'*) ;; *) exit 0 ;; esac
+SESSION_ID="${EXTRACT%%$'\n'*}"
+SESSION_ID="${SESSION_ID%$'\r'}"
+EXTRACT_REST="${EXTRACT#*$'\n'}"
+SESSION_CWD="${EXTRACT_REST%%$'\n'*}"
 # print() do Python no Windows emite \r\n. Sem tirar o \r, o cwd vira um caminho
 # que nao existe: find_repo_root falha, cai no cwd cru, e a raiz de um repo e um
 # subdiretorio dele geram buckets DIFERENTES — o estado de um projeto fragmenta.
 SESSION_CWD="${SESSION_CWD%$'\r'}"
-MSG_LOWER="${EXTRACT#*$'\n'}"
+MSG_LOWER="${EXTRACT_REST#*$'\n'}"
 
 if [ -z "$MSG_LOWER" ]; then
     exit 0
@@ -128,6 +129,7 @@ else
 fi
 export HARNESS_MSG_LOWER="$MSG_LOWER"
 export HARNESS_SESSION_CWD="$SESSION_CWD"
+export HARNESS_SESSION_ID="$SESSION_ID"
 export PYTHONUTF8=1
 
 python << 'PYEOF'
@@ -164,7 +166,8 @@ sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
 try:
     from harness_paths import ensure_state_dir
     _sd = str(ensure_state_dir(os.environ.get("HARNESS_ROOT_DIR") or None,
-                               os.environ.get("HARNESS_SESSION_CWD") or None))
+                               os.environ.get("HARNESS_SESSION_CWD") or None,
+                               session_id=os.environ.get("HARNESS_SESSION_ID") or None))
     state_file = os.path.join(_sd, "state.json")
     counter_file = os.path.join(_sd, ".session-files-count")
 except Exception:
@@ -400,13 +403,18 @@ PIPELINES = {
     # mapeia cada fase ao mecanismo real (skill direta OU Workflow de fan-out).
     # Zero skills fantasma: removidos triage-issue, request-refactor-plan,
     # improve-codebase-architecture, prd-to-plan, execucao.
+    "L0-question":     [],
     "L1-feature":      ["write-spec-light", "tdd", "verify-against-spec"],
     "L1-bug":          ["systematic-debugging", "tdd", "verify"],
     "L1-refactor":     ["write-spec-light", "tdd", "verify-against-spec"],
-    "L2-feature":      ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
-    "L2-bug":          ["systematic-debugging", "grill-me", "tdd", "verify"],
-    "L2-refactor":     ["discuss", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
-    "L2-architecture": ["discuss", "brainstorming", "write-spec", "grill-me", "design-doc", "validate-plan", "tdd", "verify-against-spec"],
+    "L1-review":       ["code-review", "verify"],
+    "L1-docs":         ["source-selection", "documentation", "verify"],
+    "L2-feature":      ["discuss", "brainstorming", "graph-context", "write-spec", "grill-me", "approve-spec", "design-doc", "validate-plan", "approve-plan", "tdd", "verify-multimodel"],
+    "L2-bug":          ["systematic-debugging", "graph-context", "grill-me", "tdd", "verify"],
+    "L2-refactor":     ["discuss", "graph-context", "write-spec", "grill-me", "approve-spec", "design-doc", "validate-plan", "approve-plan", "tdd", "verify-multimodel"],
+    "L2-architecture": ["discuss", "brainstorming", "graph-context", "write-spec", "grill-me", "approve-spec", "design-doc", "validate-plan", "approve-plan", "tdd", "verify-multimodel"],
+    "L2-review":       ["graph-context", "code-review", "verify-multimodel"],
+    "L2-docs":         ["source-selection", "graph-context", "documentation", "verify-against-spec"],
 }
 # Fonte unica: scripts/pipelines.json, compartilhada com confirm_classification.py
 # (que precisa trocar o pipeline quando a confirmacao semantica corrige o nivel).
@@ -476,6 +484,36 @@ new_state = {
 }
 
 _atomic_write_json(state_file, new_state)
+
+# Dual-write transacional: state.json continua sendo a projecao legivel pelos
+# hooks legados; harness.db valida unicidade de scope, revisao, gates e evidencia.
+try:
+    from transactional_state import HarnessDatabase
+    transactional = HarnessDatabase(os.path.dirname(state_file)).start_task(
+        scope_id=os.path.dirname(state_file),
+        legacy_level=classification,
+        tier=level,
+        kind=task_type,
+        pipeline=pipeline,
+        prompt=msg,
+        task_id=task_id,
+    )
+    new_state.update({
+        "revision": transactional["revision"],
+        "code_revision": transactional["code_revision"],
+        "owner_epoch": transactional["owner_epoch"],
+        "verified": transactional["verified"],
+        "pending_gate": transactional["pending_gate"],
+        "scope_id": transactional["scope_id"],
+    })
+    _atomic_write_json(state_file, new_state)
+except Exception as exc:
+    # O prompt continua; health-check e contract adapter tornam a degradacao visivel.
+    try:
+        with open(os.path.join(os.path.dirname(state_file), "transactional-state-error.log"), "a", encoding="utf-8") as f:
+            f.write(f"{started_at} {exc}\n")
+    except Exception:
+        pass
 
 # ============================================================================
 # Reset counter file

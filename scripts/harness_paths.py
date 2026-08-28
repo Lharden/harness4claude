@@ -31,6 +31,7 @@ import re
 from pathlib import Path
 
 PROJECTS_SUBDIR = "projects"
+SESSIONS_SUBDIR = "sessions"
 
 
 def default_root() -> Path:
@@ -95,6 +96,16 @@ def project_slug(cwd: str | os.PathLike | None) -> str:
     return f"{base[:40]}-{digest}"
 
 
+def session_slug(session_id: str | None) -> str | None:
+    """Identificador seguro e estavel para isolar threads no mesmo worktree."""
+    cleaned = _clean(session_id)
+    if not cleaned:
+        return None
+    readable = re.sub(r"[^A-Za-z0-9._-]+", "-", cleaned).strip("-._") or "session"
+    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
+    return f"{readable[:40]}-{digest}"
+
+
 def is_global_scope(scope: str | None = None) -> bool:
     """HARNESS_SCOPE=global restaura o state unico da maquina."""
     value = scope if scope is not None else os.environ.get("HARNESS_SCOPE", "")
@@ -105,12 +116,15 @@ def state_dir(
     root: str | os.PathLike | None = None,
     cwd: str | os.PathLike | None = None,
     scope: str | None = None,
+    session_id: str | None = None,
 ) -> Path:
-    """Diretorio do estado da tarefa: raiz (global) ou `raiz/projects/<slug>`."""
+    """Estado por worktree e, quando conhecido, por sessao do host."""
     base = Path(root) if root is not None else default_root()
     if is_global_scope(scope):
         return base
-    return base / PROJECTS_SUBDIR / project_slug(cwd or os.getcwd())
+    project = base / PROJECTS_SUBDIR / project_slug(cwd or os.getcwd())
+    session = session_slug(session_id)
+    return project / SESSIONS_SUBDIR / session if session else project
 
 
 def signals_dir(root: str | os.PathLike | None = None) -> Path:
@@ -122,9 +136,10 @@ def ensure_state_dir(
     root: str | os.PathLike | None = None,
     cwd: str | os.PathLike | None = None,
     scope: str | None = None,
+    session_id: str | None = None,
 ) -> Path:
     """Resolve e cria o diretorio de estado. Nunca levanta — hook nao pode falhar."""
-    d = state_dir(root, cwd, scope)
+    d = state_dir(root, cwd, scope, session_id)
     try:
         d.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -144,6 +159,7 @@ def main() -> int:
     parser.add_argument("--root", default=None, help="raiz do harness (default: HARNESS_DIR)")
     parser.add_argument("--signals", action="store_true", help="imprime a raiz de signals.json")
     parser.add_argument("--slug", action="store_true", help="imprime so o slug do projeto")
+    parser.add_argument("--session-id", default=None, help="id da sessao do host para isolamento de thread")
     args = parser.parse_args()
 
     if args.slug:
@@ -152,7 +168,7 @@ def main() -> int:
     if args.signals:
         print(signals_dir(args.root))
         return 0
-    print(ensure_state_dir(args.root, args.cwd))
+    print(ensure_state_dir(args.root, args.cwd, session_id=args.session_id))
     return 0
 
 
