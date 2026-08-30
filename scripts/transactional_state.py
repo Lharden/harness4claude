@@ -352,6 +352,11 @@ class HarnessDatabase:
                 (occurred_at, expired_task_id),
             )
             connection.execute(
+                "UPDATE gates SET status = 'cancelled', decision = 'ttl-expired', resolved_at = ? "
+                "WHERE task_id = ? AND status = 'pending'",
+                (occurred_at, expired_task_id),
+            )
+            connection.execute(
                 "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
                 "VALUES (?, ?, 'pipeline-expired', ?, ?)",
                 (

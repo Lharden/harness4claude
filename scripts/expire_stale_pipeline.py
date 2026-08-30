@@ -74,7 +74,7 @@ def is_expired(state: dict, ttl_hours: float, *, now: datetime | None = None) ->
     `started_at` ausente ou impossivel de parsear conta como EXPIRADO: e
     exatamente a forma de state travado que nao teria como se recuperar sozinha.
     """
-    if state.get("status") != "active" or not state.get("pipeline"):
+    if state.get("status") not in {"active", "verified", "awaiting_gate"} or not state.get("pipeline"):
         return False
 
     started_raw = state.get("started_at")

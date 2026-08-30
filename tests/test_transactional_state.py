@@ -90,6 +90,22 @@ def test_stale_task_ttl_abandons_pipeline_and_releases_scope(tmp_path: Path):
     assert db.current_task("session|repo|worktree") is None
 
 
+def test_stale_task_ttl_cancels_a_pending_human_gate(tmp_path: Path):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["systematic-debugging", "tdd", "verify"], prompt="fix",
+    )
+    task = db.open_gate(task["task_id"], "escalation")
+    started = datetime.fromisoformat(task["started_at"]).timestamp()
+
+    expired = db.expire_stale_task("s", ttl_seconds=1, now=started + 2)
+
+    assert expired is not None
+    assert expired["status"] == "abandoned"
+    assert expired["pending_gate"] is None
+
+
 def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
     cli = str(ROOT / "scripts" / "state_cli.py")
     base = [sys.executable, cli, "--home", str(tmp_path)]

@@ -68,6 +68,10 @@ class TestIsExpired:
     def test_idle_nunca_expira(self, exp):
         assert exp.is_expired(_state(status="idle"), 24) is False
 
+    def test_gate_humano_abandonado_tambem_expira(self, exp):
+        velho = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        assert exp.is_expired(_state(status="awaiting_gate", started_at=velho), 24) is True
+
     def test_active_sem_pipeline_nao_expira(self, exp):
         assert exp.is_expired(_state(pipeline=()), 24) is False
 
