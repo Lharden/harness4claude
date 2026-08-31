@@ -1,0 +1,28 @@
+{
+  "contract_version": "1.0.0",
+  "capabilities": [
+    {"id": "classification.deterministic-suggestion", "level": "required"},
+    {"id": "classification.semantic-confirmation", "level": "required"},
+    {"id": "classification.human-override", "level": "required"},
+    {"id": "state.session-worktree-isolation", "level": "required"},
+    {"id": "state.transactional-fsm", "level": "required"},
+    {"id": "state.ttl-signals", "level": "required"},
+    {"id": "workflow.sdd-v3", "level": "required"},
+    {"id": "workflow.human-gates", "level": "required"},
+    {"id": "workflow.adversarial-agents", "level": "required"},
+    {"id": "workflow.spec-verification", "level": "required"},
+    {"id": "context.graphify", "level": "required"},
+    {"id": "context.skill-router", "level": "required"},
+    {"id": "capability.arsenal", "level": "required"},
+    {"id": "memory.wiki-vault", "level": "required"},
+    {"id": "memory.operational-search", "level": "required"},
+    {"id": "conversation.branch-keeper", "level": "required"},
+    {"id": "safety.command-policy", "level": "required"},
+    {"id": "integration.harness-lite", "level": "required"},
+    {"id": "integration.science-harness", "level": "required"},
+    {"id": "lifecycle.full-hooks", "level": "required"},
+    {"id": "observability.health-telemetry", "level": "required"},
+    {"id": "editorial.drop-constrain-retain", "level": "required"}
+  ]
+}
+

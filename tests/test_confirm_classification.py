@@ -53,11 +53,14 @@ def _state(suggested="L2-feature", pipeline=("discuss", "tdd"), current_step=Non
 class TestPipelinesSource:
     """scripts/pipelines.json e a fonte compartilhada com o hook de classify."""
 
-    def test_arquivo_existe_e_tem_as_7_classificacoes(self, cc):
+    def test_arquivo_existe_e_tem_as_classificacoes_do_contrato(self, cc):
         table = cc.load_pipelines()
         assert set(table) == {
+            "L0-question",
             "L1-feature", "L1-bug", "L1-refactor",
+            "L1-review", "L1-docs",
             "L2-feature", "L2-bug", "L2-refactor", "L2-architecture",
+            "L2-review", "L2-docs",
         }
 
     def test_bate_com_o_fallback_do_hook(self, cc):

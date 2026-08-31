@@ -31,6 +31,16 @@
             "statusMessage": "Branch Keeper: sensor de ramo..."
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/science_intent.py\"",
+            "timeout": 5000,
+            "statusMessage": "Science evidence routing..."
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -59,7 +69,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
@@ -77,6 +87,40 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-precompact.sh\"",
             "timeout": 10000,
             "statusMessage": "Salvando snapshot de handoff..."
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event PostCompact",
+            "timeout": 5000,
+            "statusMessage": "Restaurando pipeline transacional..."
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event SubagentStart",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event SubagentStop",
+            "timeout": 5000
           }
         ]
       }
@@ -117,6 +161,18 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-branch-sensor.sh\"",
             "timeout": 8000,
             "statusMessage": "Branch Keeper: sensor de ramo..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event SessionEnd",
+            "timeout": 5000,
+            "statusMessage": "Fechando telemetria do Harness..."
           }
         ]
       }

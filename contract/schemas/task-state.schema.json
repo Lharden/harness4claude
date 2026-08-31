@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness4contract.local/schemas/task-state.schema.json",
+  "type": "object",
+  "required": ["task_id", "scope_id", "tier", "kind", "status", "revision", "pipeline", "phase"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "scope_id": {"type": "string"},
+    "tier": {"enum": ["L0", "L1", "L2"]},
+    "kind": {"type": "string"},
+    "status": {"enum": ["suggested", "active", "awaiting_gate", "verified", "done", "abandoned", "rolled_back"]},
+    "revision": {"type": "integer", "minimum": 0},
+    "owner_epoch": {"type": "integer", "minimum": 0},
+    "pipeline": {"type": "array", "items": {"type": "string"}},
+    "phase": {"type": ["string", "null"]},
+    "gate": {"type": ["object", "null"]},
+    "artifacts": {"type": "array", "items": {"type": "object"}},
+    "evidence": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": true
+}
+

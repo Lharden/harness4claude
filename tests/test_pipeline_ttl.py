@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -66,6 +67,10 @@ class TestIsExpired:
 
     def test_idle_nunca_expira(self, exp):
         assert exp.is_expired(_state(status="idle"), 24) is False
+
+    def test_gate_humano_abandonado_tambem_expira(self, exp):
+        velho = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        assert exp.is_expired(_state(status="awaiting_gate", started_at=velho), 24) is True
 
     def test_active_sem_pipeline_nao_expira(self, exp):
         assert exp.is_expired(_state(pipeline=()), 24) is False
@@ -134,6 +139,55 @@ class TestExpire:
         assert depois["status"] == "idle"
         assert depois["task_id"] is None
         assert depois["pipeline"] == []
+
+    def test_pipeline_velho_abandona_tambem_o_estado_transacional(self, exp, harness_dir):
+        velho = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        db = exp.HarnessDatabase(harness_dir)
+        db.start_task(
+            scope_id="legacy", legacy_level="L1-feature", tier="L1", kind="feature",
+            pipeline=["write-spec-light", "tdd", "verify-against-spec"], prompt="build",
+            task_id="t-20260724-170615",
+        )
+        with sqlite3.connect(harness_dir / "harness.db") as connection:
+            connection.execute(
+                "UPDATE tasks SET started_at = ? WHERE task_id = ?",
+                (velho, "t-20260724-170615"),
+            )
+        state = _state(started_at=velho)
+        state["scope_id"] = "legacy"
+        _write(harness_dir, state)
+
+        assert exp.expire(harness_dir, 24) == "t-20260724-170615"
+
+        assert db.task("t-20260724-170615")["status"] == "abandoned"
+        assert db.current_task("legacy") is None
+
+    def test_json_atrasado_e_reparado_sem_apagar_tarefa_transacional_nova(self, exp, harness_dir):
+        velho = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        db = exp.HarnessDatabase(harness_dir)
+        replacement = db.start_task(
+            scope_id="legacy", legacy_level="L1-feature", tier="L1", kind="feature",
+            pipeline=["write-spec-light", "tdd", "verify-against-spec"], prompt="new",
+            task_id="t-new",
+        )
+        _write(harness_dir, _state(started_at=velho, task_id="t-old"))
+
+        assert exp.expire(harness_dir, 24) is None
+
+        projection = json.loads((harness_dir / "state.json").read_text(encoding="utf-8"))
+        assert projection["task_id"] == replacement["task_id"]
+        assert projection["status"] == "active"
+        assert db.current_task("legacy")["task_id"] == replacement["task_id"]
+        started = datetime.fromisoformat(replacement["started_at"]).timestamp()
+        db.expire_stale_task(
+            "legacy", ttl_seconds=1, now=started + 2, expected_task_id=replacement["task_id"]
+        )
+
+    def test_session_start_serializa_expiracao_com_o_classificador(self):
+        source = (ROOT / "hooks" / "harness-session-start.sh").read_text(encoding="utf-8")
+
+        assert "acquire_state_lock" in source
+        assert source.index("acquire_state_lock") < source.index("expire_stale_pipeline.py")
 
     def test_contador_zerado_no_expire(self, exp, harness_dir):
         """O contador global inflava a reclassificacao da task seguinte."""

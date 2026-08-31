@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {"id": "codex-question", "level": "C0", "kind": "question", "expected": {"tier": "L0", "kind": "question"}},
+    {"id": "codex-bug", "level": "C1", "kind": "bug", "expected": {"tier": "L1", "kind": "bug"}},
+    {"id": "codex-feature", "level": "C2", "kind": "feature", "expected": {"tier": "L1", "kind": "feature"}},
+    {"id": "codex-architecture", "level": "C3", "kind": "architecture", "expected": {"tier": "L2", "kind": "architecture"}},
+    {"id": "codex-review", "level": "CR", "kind": "review", "expected": {"tier": "L1", "kind": "review"}},
+    {"id": "codex-docs", "level": "DOCS", "kind": "api-docs", "expected": {"tier": "L1", "kind": "docs"}},
+    {"id": "claude-l1-feature", "level": "L1-feature", "expected": {"tier": "L1", "kind": "feature"}},
+    {"id": "claude-l1-bug", "level": "L1-bug", "expected": {"tier": "L1", "kind": "bug"}},
+    {"id": "claude-l1-refactor", "level": "L1-refactor", "expected": {"tier": "L1", "kind": "refactor"}},
+    {"id": "claude-l2-feature", "level": "L2-feature", "expected": {"tier": "L2", "kind": "feature"}},
+    {"id": "claude-l2-bug", "level": "L2-bug", "expected": {"tier": "L2", "kind": "bug"}},
+    {"id": "claude-l2-refactor", "level": "L2-refactor", "expected": {"tier": "L2", "kind": "refactor"}},
+    {"id": "claude-l2-architecture", "level": "L2-architecture", "expected": {"tier": "L2", "kind": "architecture"}}
+  ]
+}

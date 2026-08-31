@@ -161,6 +161,16 @@ class TestIsolamento:
         assert not (b / "state.json").exists(), \
             "state de um projeto nao pode ser visivel do bucket de outro"
 
+    def test_duas_sessoes_no_mesmo_worktree_tem_estado_independente(self, hp, tmp_path):
+        root = tmp_path / "root"
+        repo = _repo(tmp_path, "alpha")
+        a = hp.ensure_state_dir(root, str(repo), session_id="session-a")
+        b = hp.ensure_state_dir(root, str(repo), session_id="session-b")
+
+        assert a != b
+        assert a.parent == b.parent
+        assert a.name.startswith("session-a-")
+
 
 class TestCli:
     """Contrato com os hooks em bash."""

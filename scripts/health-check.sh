@@ -426,6 +426,36 @@ else
     warn "claude CLI ausente no PATH — nao foi possivel verificar carga do plugin"
 fi
 
+# Contrato comum e engine transacional.
+if python "$PLUGIN_DIR/scripts/contract_adapter.py" check --root "$PLUGIN_DIR" >/dev/null 2>&1; then
+    echo "[OK]     Harness4Contract v1: 22 capacidades equivalentes e lock valido"
+else
+    echo "[FAIL]   Harness4Contract degradado; rode: python scripts/contract_adapter.py check"
+    EXIT_CODE=1
+fi
+
+DB_FAILURES="$(python - "$HARNESS_DIR" <<'PY'
+import sqlite3, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+bad = []
+for path in root.rglob("harness.db") if root.exists() else []:
+    try:
+        with sqlite3.connect(path) as db:
+            result = db.execute("PRAGMA integrity_check").fetchone()[0]
+        if result != "ok": bad.append(f"{path}: {result}")
+    except sqlite3.Error as exc:
+        bad.append(f"{path}: {exc}")
+print("\n".join(bad))
+PY
+)"
+if [ -n "$DB_FAILURES" ]; then
+    echo "[FAIL]   integridade do estado transacional: $DB_FAILURES"
+    EXIT_CODE=1
+else
+    echo "[OK]     estado transacional SQLite integro"
+fi
+
 echo ""
 echo "--- Proveniencia (qual codigo esta rodando) ---"
 # ADR-000: o objeto-de-medicao e o plugin CARREGADO, nao o clone de trabalho.

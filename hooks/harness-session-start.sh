@@ -179,12 +179,15 @@ import sys, json, os
 sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR_PY'])
 root = os.environ['HARNESS_ROOT_PY']
 try:
-    cwd = json.load(sys.stdin).get('cwd') or ''
+    payload = json.load(sys.stdin)
+    cwd = payload.get('cwd') or ''
+    session_id = payload.get('session_id') or ''
 except Exception:
     cwd = ''
+    session_id = ''
 try:
     from harness_paths import ensure_state_dir
-    print(ensure_state_dir(root, cwd or None))
+    print(ensure_state_dir(root, cwd or None, session_id=session_id or None))
 except Exception:
     print(root)
 " 2>/dev/null || printf '%s' "$HARNESS_DIR_PY")"
@@ -290,6 +293,16 @@ fi
 # projeto (auditoria 2026-07-28: uma task de 24/07 reaparecia 4 dias depois).
 # Quando expira, avisa EXPIRED em vez de RESUMING e nao ha o que retomar.
 EXPIRED_TASK=""
+LOCK_LIB="$PLUGIN_DIR/scripts/state-lock.sh"
+if [[ -f "$LOCK_LIB" ]]; then
+    # shellcheck source=../scripts/state-lock.sh
+    source "$LOCK_LIB"
+    if ! acquire_state_lock; then
+        exit 0
+    fi
+    trap release_state_lock EXIT
+fi
+
 EXPIRE_PY="$PLUGIN_DIR/scripts/expire_stale_pipeline.py"
 if [ -f "$EXPIRE_PY" ] && command -v python >/dev/null 2>&1; then
     EXPIRED_TASK="$(python "$EXPIRE_PY" --harness-dir "$STATE_DIR_PY" \
@@ -319,6 +332,8 @@ fi
 
 python -c "
 import json, os, sys
+sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR_PY'])
+from continuation_policy import should_continue
 
 parts = []
 
@@ -326,15 +341,21 @@ parts = []
 try:
     with open(r'$STATE_FILE_PY') as f:
         state = json.load(f)
-    if state.get('status') == 'active' and state.get('pipeline'):
+    if should_continue(state):
         tid = state.get('task_id', 'unknown')
         cls = state.get('classification', 'unknown')
         step = state.get('current_step') or (state['pipeline'][0] if state['pipeline'] else 'none')
         pipe = ' -> '.join(state['pipeline'])
+        gate = state.get('pending_gate')
+        instruction = (
+            f'Pending human gate: {gate}. Invoke harness-workflow skill to resolve it.'
+            if gate else
+            'Invoke harness-workflow skill to continue where you left off.'
+        )
         parts.append(
-            f'HARNESS v3 RESUMING: Active pipeline {cls} (task {tid}). '
+            f'HARNESS v3 RESUMING: Scoped pipeline {cls} (task {tid}). '
             f'Current step: {step}. Pipeline: {pipe}. '
-            f'Invoke harness-workflow skill to continue where you left off.'
+            f'{instruction}'
         )
 except Exception:
     pass

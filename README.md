@@ -1,10 +1,10 @@
-# Harness v3 SDD
+# Harness4Claude 4
 
 Spec-Driven Development orchestrator for Claude Code.
 
-Harness v3 SDD brings structured, specification-first development pipelines to Claude Code.
-It classifies every prompt by complexity, routes it through the appropriate pipeline, and
-ensures implementations match their specs before you ship.
+Harness4Claude implements Harness4Contract v1 for Claude Code. It combines structured,
+specification-first pipelines with session/worktree isolation, transactional state,
+human gates and revision-bound evidence.
 
 ---
 
@@ -15,6 +15,10 @@ ensures implementations match their specs before you ship.
 - Generates formal specs with prioritized user stories (P1/P2/P3), acceptance criteria (Given/When/Then), and boundary definitions (ALWAYS/NEVER/ASK)
 - Challenges specs via adversarial review (`grill-me`) to surface gaps before implementation
 - Verifies implementation against the spec with evidence-based coverage reports
+- Enforces pipeline order, artifact obligations, optimistic revisions, leases and fencing in SQLite WAL
+- Isolates active task state by session and Git worktree while retaining aggregate telemetry
+- Provides Graphify context, cited wiki retrieval, capability arsenal, Branch Keeper and Science Harness routing
+- Emits a machine-readable 22-capability conformance report from `scripts/contract_adapter.py`
 
 ---
 
@@ -23,11 +27,12 @@ ensures implementations match their specs before you ship.
 | Level | Type | Pipeline |
 |-------|------|----------|
 | L0 | any | Direct execution (no pipeline) |
-| L1 | feature | `write-spec-light` -> `brainstorming` -> `tdd` -> `verify-against-spec` |
-| L1 | bug | `systematic-debugging` -> `tdd` -> `verify-against-spec` |
-| L2 | feature | `discuss` -> `write-spec` -> `grill-me` -> `design-doc` -> `validate-plan` -> `brainstorming` -> `tdd` -> `verify-against-spec` |
-| L2 | architecture | `discuss` -> `write-spec` -> `grill-me` -> `design-doc` -> `validate-plan` -> `verify-against-spec` |
-| L2 | refactor | `discuss` -> `write-spec` -> `grill-me` -> `validate-plan` -> `tdd` -> `verify-against-spec` |
+| L1 | feature/refactor | `write-spec-light` -> `tdd` -> `verify-against-spec` |
+| L1 | bug | `systematic-debugging` -> `tdd` -> `verify` |
+| L1 | review/docs | `code-review` or `source-selection` -> delivery -> `verify` |
+| L2 | feature | `discuss` -> `brainstorming` -> `graph-context` -> `write-spec` -> `grill-me` -> `approve-spec` -> `design-doc` -> `validate-plan` -> `approve-plan` -> `tdd` -> `verify-multimodel` |
+| L2 | architecture/refactor | `discuss` -> `graph-context` -> `write-spec` -> `grill-me` -> `approve-spec` -> `design-doc` -> `validate-plan` -> `approve-plan` -> `tdd` -> `verify-multimodel` |
+| L2 | bug | `systematic-debugging` -> `graph-context` -> `grill-me` -> `tdd` -> `verify` |
 
 Each pipeline ends with `verify-against-spec`, which ensures nothing ships without
 evidence that the implementation satisfies every requirement in the spec.
@@ -80,6 +85,7 @@ If anything goes wrong, run the diagnostic script:
 
 ```bash
 bash /path/to/harness4claude/scripts/health-check.sh
+python /path/to/harness4claude/scripts/contract_adapter.py check
 ```
 
 This reports the status of every dependency, file, and hook registration.
@@ -102,14 +108,14 @@ Example output:
 | Dependency | Minimum Version | Install (Windows) | Install (macOS) | Install (Linux) |
 |------------|----------------|--------------------|-----------------|-----------------|
 | Python | 3.10+ | `winget install Python.Python.3.12` | `brew install python@3.12` | `apt install python3` |
+| Bash | 5+ | Git for Windows | built in | `apt install bash` |
 | pytest | 7+ | `pip install pytest` | `pip install pytest` | `pip install pytest` |
 | jq | 1.7+ | `winget install jqlang.jq` | `brew install jq` | `apt install jq` |
 
-**Python is the only hard dependency.** Every hook parses JSON through inline
-`python -c`, never `jq` — the audit of 2026-07-28 found zero `jq` invocations in
-`hooks/` or `scripts/`. `jq` is listed because the health-check and the bootstrap
-still probe for it and it is handy for inspecting `signals.json` by hand, but the
-harness runs fine without it. `pytest` is only needed to run the test suite.
+Python and Bash are runtime dependencies. Hooks parse JSON through inline Python;
+the shell wrappers provide Claude Code lifecycle entrypoints. The Python/unit suite
+always runs; Bash integration tests are explicitly skipped with a visible reason on
+hosts without a Bash executable. `jq` is diagnostic convenience and `pytest` runs tests.
 
 ---
 
@@ -194,8 +200,15 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
   allowed cross-project pipeline continuity at the cost of cross-project interference
 - `signals.json` stays at the root on purpose: telemetry is meant to aggregate across
   projects, and its records are keyed by `task_id`, so there is no contamination
-- An active pipeline expires after `HARNESS_PIPELINE_TTL_H` hours (default 24) and is
-  recorded as abandoned, so a forgotten task cannot block classification indefinitely
+- An active pipeline expires after `HARNESS_PIPELINE_TTL_H` hours (default 24) through
+  a task-ID compare-and-swap; the scoped JSON projection is repaired from SQLite when
+  it is stale, so a newer task cannot be expired by an older session-start observation
+- A response to a pending human gate resumes the scoped task and exposes the exact gate
+  context instead of creating a replacement task
+- Each `PostToolUse` file edit or shell command advances the transactional code revision,
+  so evidence collected before a possible mutation cannot satisfy completion
+- Compact and subagent lifecycle context is rendered from the same session/worktree
+  scope and includes the active task, phase, pending gate and artifact paths
 - Skills communicate via `signals.json` rather than direct invocation, enabling loose coupling
 - The orchestrator (`harness-workflow`) is the only skill that reads classification tags directly
 
