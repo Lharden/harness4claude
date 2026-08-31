@@ -101,6 +101,25 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def _sync_projection(path: Path, current: dict) -> None:
+    projection = {
+        "task_id": current["task_id"],
+        "schema_version": 3,
+        "classification": current["legacy_level"],
+        "status": current["status"],
+        "pipeline": current["pipeline"],
+        "current_step": current["phase"],
+        "started_at": current["started_at"],
+        "revision": current["revision"],
+        "code_revision": current["code_revision"],
+        "owner_epoch": current["owner_epoch"],
+        "verified": current["verified"],
+        "pending_gate": current["pending_gate"],
+        "scope_id": current["scope_id"],
+    }
+    _atomic_write_json(path, projection)
+
+
 def expire(
     harness_dir: Path | str,
     ttl_hours: float,
@@ -131,6 +150,31 @@ def expire(
 
     task_id = state.get("task_id") or "unknown"
 
+    database_path = harness_dir / "harness.db"
+    if database_path.exists():
+        try:
+            database = HarnessDatabase(harness_dir)
+            scope_id = str(state.get("scope_id") or "legacy")
+            current_task = database.current_task(scope_id)
+            if current_task is not None:
+                if current_task["task_id"] != task_id:
+                    _sync_projection(state_path, current_task)
+                    return None
+                current = now or datetime.now(timezone.utc)
+                expired_task = database.expire_stale_task(
+                    scope_id,
+                    ttl_seconds=ttl_hours * 3600,
+                    now=current.timestamp(),
+                    expected_task_id=str(task_id),
+                )
+                if expired_task is None:
+                    _sync_projection(state_path, current_task)
+                    return None
+        except Exception:
+            # A transactional store that exists is authoritative. Preserve the
+            # projection on uncertainty instead of erasing a potentially live task.
+            return None
+
     # Telemetria antes do reset: sem isso a task some sem deixar rastro e a
     # taxa de abandono (sinal de que o pipeline e pesado demais) fica invisivel.
     try:
@@ -151,19 +195,6 @@ def expire(
         )
         record(signals_dir, task)
     except Exception:
-        pass
-
-    try:
-        scope_id = str(state.get("scope_id") or "legacy")
-        current = now or datetime.now(timezone.utc)
-        HarnessDatabase(harness_dir).expire_stale_task(
-            scope_id,
-            ttl_seconds=ttl_hours * 3600,
-            now=current.timestamp(),
-        )
-    except Exception:
-        # Legacy installations may not have a transactional task yet. The
-        # JSON projection still needs to recover, so expiry remains fail-open.
         pass
 
     _atomic_write_json(state_path, dict(IDLE_STATE))

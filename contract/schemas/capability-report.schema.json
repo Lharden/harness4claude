@@ -2,10 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://harness4contract.local/schemas/capability-report.schema.json",
   "type": "object",
-  "required": ["contract_version", "adapter", "capabilities"],
+  "required": [
+    "contract_version",
+    "adapter",
+    "capabilities",
+    "snapshot_lock_valid",
+    "pipeline_fingerprint",
+    "conformant"
+  ],
   "properties": {
     "contract_version": {"type": "string"},
     "adapter": {"type": "string", "minLength": 1},
+    "snapshot_lock_valid": {"const": true},
+    "pipeline_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "conformant": {"const": true},
     "capabilities": {
       "type": "object",
       "additionalProperties": {
@@ -21,4 +31,3 @@
   },
   "additionalProperties": true
 }
-

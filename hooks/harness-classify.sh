@@ -241,9 +241,10 @@ except Exception:
 # ============================================================================
 has_active = False
 try:
+    from continuation_policy import should_continue
     with open(state_file, encoding='utf-8') as f:
         state = json.load(f)
-    if state.get("status") == "active" and state.get("pipeline"):
+    if should_continue(state):
         has_active = True
 except Exception:
     pass
@@ -256,11 +257,17 @@ if has_active and not is_task_switch:
     pipeline = state.get("pipeline", [])
     step_display = current_step if current_step else (pipeline[0] if pipeline else "none")
     pipe_display = ' -> '.join(pipeline)
+    gate_display = state.get('pending_gate')
+    gate_instruction = (
+        f" Resolve pending human gate {gate_display} through skill='harness-workflow'."
+        if gate_display else
+        " Continue the active pipeline by invoking skill='harness-workflow'."
+    )
     output = json.dumps({
         "systemMessage": (
             f"HARNESS v3 CONTINUING: {classification} (task {task_id}). "
             f"Current step: {step_display}. Pipeline: {pipe_display}. "
-            f"Continue the active pipeline by invoking skill='harness-workflow'."
+            f"{gate_instruction}"
         )
     })
     print(output)

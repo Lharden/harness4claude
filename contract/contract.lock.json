@@ -1,6 +1,5 @@
 {
   "contract_version": "1.0.0",
-  "sha256": "4a9e9cff25a33f32976b881a1a772ab6040968159a71aebc92107018ac150b7d",
   "files": [
     "capabilities.json",
     "fixtures/classification.json",
@@ -11,6 +10,6 @@
     "schemas/evidence.schema.json",
     "schemas/node-result.schema.json",
     "schemas/task-state.schema.json"
-  ]
+  ],
+  "sha256": "0e580f5693076f2a9cec81ca81d47e1532420417d7d85189ee5565dc9f3b574c"
 }
-

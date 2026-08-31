@@ -189,6 +189,13 @@ class HarnessDatabase:
         with self._write() as connection:
             connection.execute("INSERT OR IGNORE INTO scopes(scope_id, created_at) VALUES (?, ?)", (scope_id, now))
             connection.execute(
+                "UPDATE gates SET status = 'cancelled', decision = 'task-switch', resolved_at = ? "
+                "WHERE status = 'pending' AND task_id IN ("
+                "SELECT task_id FROM tasks WHERE scope_id = ? "
+                "AND status IN ('suggested', 'active', 'awaiting_gate', 'verified'))",
+                (now, scope_id),
+            )
+            connection.execute(
                 "UPDATE tasks SET status = 'abandoned', revision = revision + 1, updated_at = ? "
                 "WHERE scope_id = ? AND status IN ('suggested', 'active', 'awaiting_gate', 'verified')",
                 (now, scope_id),
@@ -321,6 +328,7 @@ class HarnessDatabase:
         *,
         ttl_seconds: float,
         now: float | None = None,
+        expected_task_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Abandon the scoped non-terminal task after its pipeline TTL."""
         current_time = time.time() if now is None else float(now)
@@ -334,6 +342,8 @@ class HarnessDatabase:
                 (scope_id, *ACTIVE_STATUSES),
             ).fetchone()
             if row is None:
+                return None
+            if expected_task_id is not None and str(row["task_id"]) != expected_task_id:
                 return None
             try:
                 started = datetime.fromisoformat(str(row["started_at"]))
