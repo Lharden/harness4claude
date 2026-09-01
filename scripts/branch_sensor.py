@@ -219,7 +219,22 @@ def _i(env: str, default: int) -> int:
 
 
 def verdict(*, hit_a: str | None, sim: float | None, drift_streak: int) -> dict:
-    """Decide entre ramo, deriva e silencio. Funcao pura — o resto e IO."""
+    """Decide entre ramo, deriva e silencio. Funcao pura — o resto e IO.
+
+    AVISO DE CALIBRACAO (medido 2026-09-01, ancora real desta maquina):
+    os cossenos observados vivem entre 0.28 e 0.44 — abaixo do
+    HARNESS_BRANCH_FLOOR de 0.55 em 100% dos casos. Logo `sim <
+    branch_floor` e sempre verdade e o segundo ramo abaixo equivale a
+    `hit_a` sozinho: hoje a camada B nao veta nada, so reporta se o
+    Ollama respondeu. Pior, a medicao saiu anticorrelacionada — o mesmo
+    assunto pontuou 0.33 e uma tangente clara pontuou 0.44, sinal de que
+    o cosseno contra o primeiro prompt esta dominado por comprimento e
+    estilo, nao por tema.
+
+    Nao troque 0.55 por outro numero a olho: seria repetir o chute com
+    outro digito. O piso certo (e a metrica certa) saem de
+    scripts/calibrate_branch_floor.py contra rotulos reais.
+    """
     branch_floor = _f("HARNESS_BRANCH_FLOOR", 0.55)
     drift_floor = _f("HARNESS_BRANCH_DRIFT_FLOOR", 0.35)
     drift_turns = _i("HARNESS_BRANCH_DRIFT_TURNS", 3)
