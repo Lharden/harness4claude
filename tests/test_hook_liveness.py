@@ -178,6 +178,25 @@ class TestRunEndToEnd:
         assert code == 0
         assert any("ilegivel" in ln for ln in lines)
 
+    def test_atividade_do_codex_nao_condena_hooks_do_claude(self, hl, tmp_path):
+        agora = time.time()
+        antigo = agora - 30 * DAY
+        harness, home = self._setup(
+            tmp_path,
+            {"UserPromptSubmit": antigo, "SessionStart": antigo},
+            antigo,
+        )
+        codex = home / ".codex"
+        codex.mkdir()
+        history = codex / "history.jsonl"
+        history.write_text("{}", encoding="utf-8")
+        os.utime(history, (agora - 60, agora - 60))
+
+        code, lines = hl.run(harness, ROOT / "hooks" / "hooks.json", home, agora)
+
+        assert code == 0, "\n".join(lines)
+        assert any("host sem uso" in line for line in lines)
+
 
 class TestHooksGravamHeartbeat:
     """Integracao: cada hook registrado precisa deixar seu rastro ao ser chamado."""

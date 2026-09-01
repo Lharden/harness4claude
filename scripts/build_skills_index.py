@@ -8,6 +8,7 @@ stdlib-only; saidas atomicas em ~/.claude/harness/skills-index/.
 Uso: python build_skills_index.py [--no-embed] [--check-stale] [--out DIR]
 --check-stale: exit 0 = fresco, exit 1 = stale/ausente.
 """
+
 import argparse
 import hashlib
 import json
@@ -128,10 +129,11 @@ def _skill_dirs(root):
             if not os.path.isdir(alvo):
                 continue
             if os.path.isfile(os.path.join(alvo, "SKILL.md")):
-                candidatos.append(alvo)          # o caminho E a skill
+                candidatos.append(alvo)  # o caminho E a skill
             else:
-                candidatos.extend(               # o caminho e o pai das skills
-                    os.path.join(alvo, d) for d in sorted(os.listdir(alvo))
+                candidatos.extend(  # o caminho e o pai das skills
+                    os.path.join(alvo, d)
+                    for d in sorted(os.listdir(alvo))
                     if os.path.isfile(os.path.join(alvo, d, "SKILL.md"))
                 )
     else:
@@ -139,7 +141,7 @@ def _skill_dirs(root):
         if os.path.isdir(conv):
             candidatos = [os.path.join(conv, d) for d in sorted(os.listdir(conv))]
     vistos, saida = set(), []
-    for c in candidatos:                          # manifesto pode repetir caminho
+    for c in candidatos:  # manifesto pode repetir caminho
         chave = os.path.normcase(os.path.abspath(c))
         if chave not in vistos:
             vistos.add(chave)
@@ -147,8 +149,12 @@ def _skill_dirs(root):
     return saida
 
 
-def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
-                claude_json=CLAUDE_JSON, personal_dir=PERSONAL_SKILLS_DIR):
+def scan_skills(
+    installed_json=INSTALLED_JSON,
+    settings_json=SETTINGS_JSON,
+    claude_json=CLAUDE_JSON,
+    personal_dir=PERSONAL_SKILLS_DIR,
+):
     """Lista skills de plugins instalados (via installPath) + pessoais, sem embeddings."""
     enabled_map = _load_json(settings_json, {}).get("enabledPlugins", {})
     usage = _load_json(claude_json, {}).get("skillUsage", {})
@@ -175,13 +181,22 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
         # lia 0 — a mesma falha silenciosa do prefixo vindo da chave de instalacao.
         dirname = os.path.basename(skill_dir.rstrip("/\\"))
         u = usage.get(sid) or usage.get(name) or usage.get(dirname) or {}
-        skills.append({
-            "id": sid, "name": name, "plugin": plugin_label, "source": source,
-            "enabled": enabled, "path": md, "description": desc,
-            "desc_chars": len(desc), "aliases": list(aliases.get(sid, [])),
-            "usage_count": int(u.get("usageCount", 0)),
-            "last_used_at": u.get("lastUsedAt"), "vec_row": -1,
-        })
+        skills.append(
+            {
+                "id": sid,
+                "name": name,
+                "plugin": plugin_label,
+                "source": source,
+                "enabled": enabled,
+                "path": md,
+                "description": desc,
+                "desc_chars": len(desc),
+                "aliases": list(aliases.get(sid, [])),
+                "usage_count": int(u.get("usageCount", 0)),
+                "last_used_at": u.get("lastUsedAt"),
+                "vec_row": -1,
+            }
+        )
 
     for pid, entries in _load_json(installed_json, {}).get("plugins", {}).items():
         for entry in entries or []:
@@ -203,7 +218,7 @@ def scan_skills(installed_json=INSTALLED_JSON, settings_json=SETTINGS_JSON,
 
 def fingerprint(skills, settings_json=SETTINGS_JSON):
     enabled_map = _load_json(settings_json, {}).get("enabledPlugins", {})
-    h1 = hashlib.sha1()
+    h1 = hashlib.sha1(usedforsecurity=False)
     for s in skills:
         try:
             st = os.stat(s["path"])
@@ -211,7 +226,9 @@ def fingerprint(skills, settings_json=SETTINGS_JSON):
         except OSError:
             h1.update(f"{s['path']}|gone\n".encode())
     h2 = hashlib.sha1(
-        "".join(sorted(f"{k}={v}" for k, v in enabled_map.items())).encode())
+        "".join(sorted(f"{k}={v}" for k, v in enabled_map.items())).encode(),
+        usedforsecurity=False,
+    )
     return {"skill_files_hash": h1.hexdigest(), "enabled_plugins_hash": h2.hexdigest()}
 
 
@@ -247,9 +264,9 @@ def ollama_embed(texts, timeout=180):
     for i in range(0, len(texts), 64):
         req = urllib.request.Request(
             OLLAMA_URL.rstrip("/") + "/api/embed",
-            data=json.dumps({"model": EMBED_MODEL, "input": texts[i:i + 64],
-                             "keep_alive": "30m"}).encode("utf-8"),
-            headers={"Content-Type": "application/json"})
+            data=json.dumps({"model": EMBED_MODEL, "input": texts[i : i + 64], "keep_alive": "30m"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             out.extend(json.load(r)["embeddings"])
     return out
@@ -275,8 +292,9 @@ def build(out_dir=DEFAULT_OUT, no_embed=False, skills=None):
         "skills": skills,
     }
     atomic_write(os.path.join(out_dir, "embeddings.f16.bin"), blob)
-    atomic_write(os.path.join(out_dir, "skills-index.json"),
-                 json.dumps(index, ensure_ascii=False, indent=1).encode("utf-8"))
+    atomic_write(
+        os.path.join(out_dir, "skills-index.json"), json.dumps(index, ensure_ascii=False, indent=1).encode("utf-8")
+    )
     meta = {k: index[k] for k in ("schema_version", "built_at", "model", "dim", "fingerprint")}
     meta["count"] = len(skills)
     atomic_write(os.path.join(out_dir, "meta.json"), json.dumps(meta).encode("utf-8"))

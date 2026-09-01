@@ -70,18 +70,6 @@ def claude_activity(home: Path) -> float:
     return newest_mtime(list(root.glob("*/*.jsonl")))
 
 
-def codex_activity(home: Path) -> float:
-    """Ultima atividade de sessao do Codex."""
-    base = home / ".codex"
-    if not base.is_dir():
-        return 0.0
-    candidates = [base / "session_index.jsonl", base / "history.jsonl"]
-    sessions = base / "sessions"
-    if sessions.is_dir():
-        candidates.extend(sessions.rglob("*.jsonl"))
-    return newest_mtime(candidates)
-
-
 def registered_events(hooks_json: Path) -> list[str]:
     """Eventos que o plugin registra — a fonte de verdade e o proprio hooks.json."""
     try:
@@ -167,7 +155,7 @@ def run(harness_dir: Path, hooks_json: Path, home: Path, now: float) -> tuple[in
     if not events:
         return 0, ["[WARN]   hooks.json ilegivel — liveness nao verificada"]
 
-    activity = max(claude_activity(home), codex_activity(home))
+    activity = claude_activity(home)
     beats = {e: read_heartbeat(harness_dir, e) for e in events}
     any_beat = max([b for b in beats.values() if b], default=0.0)
     lines: list[str] = []

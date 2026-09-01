@@ -82,8 +82,9 @@ def arquivos_alterados(ref: str | None, cwd: Path) -> tuple[list[str], list[str]
         if saida.returncode != 0:
             return [], [f"git diff falhou: {saida.stderr.strip()[:120]}"]
         arquivos = [linha.strip() for linha in saida.stdout.splitlines() if linha.strip()]
-        novos = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
-                               cwd=cwd, capture_output=True, text=True, timeout=30)
+        novos = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"], cwd=cwd, capture_output=True, text=True, timeout=30
+        )
         if novos.returncode == 0:
             arquivos += [linha.strip() for linha in novos.stdout.splitlines() if linha.strip()]
     except (OSError, subprocess.SubprocessError) as exc:
@@ -121,8 +122,7 @@ def frescor_do_grafo(diretorio: Path, alterados: set[str], raiz: Path) -> tuple[
     """
     manifesto = Path(diretorio) / "manifest.json"
     if not manifesto.is_file():
-        return ("frescor-desconhecido",
-                "sem manifest.json — não dá para saber se o grafo está atualizado")
+        return ("frescor-desconhecido", "sem manifest.json — não dá para saber se o grafo está atualizado")
     try:
         with open(manifesto, encoding="utf-8") as handle:
             dados = json.load(handle)
@@ -139,10 +139,14 @@ def frescor_do_grafo(diretorio: Path, alterados: set[str], raiz: Path) -> tuple[
         except OSError:
             continue
     if velhos:
-        return ("desatualizado",
+        return (
+            "desatualizado",
+            (
                 f"{velhos} arquivo(s) mudaram DEPOIS da construção do grafo e não estão "
                 "neste diff — a vizinhança pode descrever código que já não existe. "
-                "Rode `graphify update .`")
+                "Rode `graphify update .`"
+            ),
+        )
     return ("atual", "")
 
 
@@ -221,8 +225,7 @@ def calcula(grafo: dict, alterados: list[str], profundidade: int) -> dict:
             continue
         atual = arquivos_afetados.get(arquivo)
         if atual is None or dist < atual["saltos"]:
-            arquivos_afetados[arquivo] = {"arquivo": arquivo, "saltos": dist,
-                                          "confianca": conf, "nos": 1}
+            arquivos_afetados[arquivo] = {"arquivo": arquivo, "saltos": dist, "confianca": conf, "nos": 1}
         else:
             atual["nos"] += 1
             if conf == "INFERRED":
@@ -236,14 +239,12 @@ def calcula(grafo: dict, alterados: list[str], profundidade: int) -> dict:
         "fora_do_grafo": fora,
         "afetados": ordenados,
         "testes_afetados": testes,
-        "hubs_atingidos": [{"no": h, "grau": g} for h, g in
-                           sorted(hubs.items(), key=lambda x: -x[1])],
+        "hubs_atingidos": [{"no": h, "grau": g} for h, g in sorted(hubs.items(), key=lambda x: -x[1])],
         "truncou_na_profundidade": truncou,
     }
 
 
-def command_impact(diretorio: Path, ref: str | None, files: list[str] | None,
-                   profundidade: int, cwd: Path) -> dict:
+def command_impact(diretorio: Path, ref: str | None, files: list[str] | None, profundidade: int, cwd: Path) -> dict:
     grafo, erros = carrega_grafo(diretorio)
     avisos: list[str] = []
 
@@ -254,38 +255,58 @@ def command_impact(diretorio: Path, ref: str | None, files: list[str] | None,
     avisos += avisos_git
 
     if not grafo:
-        return {"comando": "impact", "ready": False, "errors": erros, "warnings": avisos,
-                "resumo": {"alterados": len(alterados)}, "detalhe": {}}
+        return {
+            "comando": "impact",
+            "ready": False,
+            "errors": erros,
+            "warnings": avisos,
+            "resumo": {"alterados": len(alterados)},
+            "detalhe": {},
+        }
     if not alterados:
-        return {"comando": "impact", "ready": True, "errors": [],
-                "warnings": avisos + ["nenhum arquivo alterado — nada a analisar"],
-                "resumo": {"alterados": 0}, "detalhe": {}}
+        return {
+            "comando": "impact",
+            "ready": True,
+            "errors": [],
+            "warnings": [*avisos, "nenhum arquivo alterado — nada a analisar"],
+            "resumo": {"alterados": 0},
+            "detalhe": {},
+        }
 
-    grafo_status, motivo_frescor = frescor_do_grafo(
-        diretorio, {_normaliza(a) for a in alterados}, cwd)
+    grafo_status, motivo_frescor = frescor_do_grafo(diretorio, {_normaliza(a) for a in alterados}, cwd)
     if motivo_frescor:
         avisos.append(motivo_frescor)
     d = calcula(grafo, alterados, profundidade)
 
     if d["fora_do_grafo"]:
-        avisos.insert(0, f"IMPACTO DESCONHECIDO em {len(d['fora_do_grafo'])} arquivo(s): "
-                         "alterados e ausentes do grafo. Não é 'sem impacto' — é não sei.")
+        avisos.insert(
+            0,
+            f"IMPACTO DESCONHECIDO em {len(d['fora_do_grafo'])} arquivo(s): "
+            "alterados e ausentes do grafo. Não é 'sem impacto' — é não sei.",
+        )
     if not d["direcionado"]:
-        avisos.append("grafo NÃO direcionado: a saída é vizinhança, não dependência. "
-                      "Para direção real, reconstrua com `graphify . --directed`.")
+        avisos.append(
+            "grafo NÃO direcionado: a saída é vizinhança, não dependência. "
+            "Para direção real, reconstrua com `graphify . --directed`."
+        )
     if d["hubs_atingidos"]:
-        avisos.append(f"{len(d['hubs_atingidos'])} hub(s) atingido(s) — daqui o grafo liga "
-                      "tudo a tudo e a busca parou. Impacto potencialmente amplo.")
+        avisos.append(
+            f"{len(d['hubs_atingidos'])} hub(s) atingido(s) — daqui o grafo liga "
+            "tudo a tudo e a busca parou. Impacto potencialmente amplo."
+        )
     if d["truncou_na_profundidade"]:
         avisos.append(f"busca truncada em {profundidade} salto(s); pode haver mais além disso")
     if grafo_status != "atual":
-        avisos.insert(0, f"VIZINHANÇA NÃO CONFERIDA (grafo {grafo_status}): a lista abaixo foi "
-                         "lida de um grafo que o disco já contradiz ou não confirma. Não é "
-                         "medição — é a última medição conhecida.")
+        avisos.insert(
+            0,
+            f"VIZINHANÇA NÃO CONFERIDA (grafo {grafo_status}): a lista abaixo foi "
+            "lida de um grafo que o disco já contradiz ou não confirma. Não é "
+            "medição — é a última medição conhecida.",
+        )
 
     return {
         "comando": "impact",
-        "ready": True,   # impacto não é defeito: é informação para revisar.
+        "ready": True,  # impacto não é defeito: é informação para revisar.
         "errors": [],
         "warnings": avisos,
         "resumo": {
@@ -330,16 +351,13 @@ def render(res: dict) -> str:
         linhas += [f"- `{t['arquivo']}` ({t['saltos']} salto)" for t in d["testes_afetados"][:15]]
         linhas.append("")
     if d.get("afetados"):
-        linhas += ["## Arquivos na vizinhança", "", "| arquivo | saltos | confiança | nós |",
-                   "|---|---:|---|---:|"]
-        linhas += [f"| `{a['arquivo']}` | {a['saltos']} | {a['confianca']} | {a['nos']} |"
-                   for a in d["afetados"][:30]]
+        linhas += ["## Arquivos na vizinhança", "", "| arquivo | saltos | confiança | nós |", "|---|---:|---|---:|"]
+        linhas += [f"| `{a['arquivo']}` | {a['saltos']} | {a['confianca']} | {a['nos']} |" for a in d["afetados"][:30]]
     return "\n".join(linhas)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--graph", default="graphify-out", help="diretório do grafo")
     parser.add_argument("--ref", help="comparar contra este ref em vez de HEAD")
     parser.add_argument("--files", help="arquivos explícitos, separados por vírgula")
@@ -349,9 +367,13 @@ def main() -> int:
     args = parser.parse_args()
 
     cwd = Path(args.cwd).resolve()
-    res = command_impact(Path(args.graph) if os.path.isabs(args.graph) else cwd / args.graph,
-                         args.ref, args.files.split(",") if args.files else None,
-                         args.depth, cwd)
+    res = command_impact(
+        Path(args.graph) if os.path.isabs(args.graph) else cwd / args.graph,
+        args.ref,
+        args.files.split(",") if args.files else None,
+        args.depth,
+        cwd,
+    )
     print(render(res) if args.report else json.dumps(res, indent=2, ensure_ascii=False))
     return 0 if res["ready"] else 1
 

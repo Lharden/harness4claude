@@ -3,7 +3,6 @@ import os
 import sys
 from pathlib import Path
 
-
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 spec = importlib.util.spec_from_file_location("claude_command_policy", ROOT / "scripts" / "command_policy.py")
 policy = importlib.util.module_from_spec(spec)

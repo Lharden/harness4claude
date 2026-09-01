@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 
-
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 SPEC = importlib.util.spec_from_file_location(
     "post_tool_policy",

@@ -17,6 +17,7 @@ deduplica por página depois.
 Uso: python build_wiki_index.py --root DIR [--no-embed] [--check-stale] [--out DIR]
 --check-stale: exit 0 = fresco, exit 1 = stale/ausente.
 """
+
 import argparse
 import hashlib
 import json
@@ -128,15 +129,14 @@ def load_aliases(path=ALIASES_JSON):
             data = json.load(f)
     except (OSError, ValueError):
         return {}
-    return {k: list(v) for k, v in data.items()
-            if not k.startswith("_") and isinstance(v, list)}
+    return {k: list(v) for k, v in data.items() if not k.startswith("_") and isinstance(v, list)}
 
 
 def page_meta(path, wiki_dir, text, aliases_map=None):
     """Metadados comuns a todos os chunks de uma página."""
     fm_match = _FM_BLOCK_RE.match(text)
     fm_raw = fm_match.group(1) if fm_match else ""
-    body = text[fm_match.end():] if fm_match else text
+    body = text[fm_match.end() :] if fm_match else text
 
     page_id = os.path.relpath(path, wiki_dir).replace(os.sep, "/")[:-3]
     stem = os.path.basename(path)[:-3]
@@ -157,10 +157,7 @@ def page_meta(path, wiki_dir, text, aliases_map=None):
         # aliases alimentam a Camada A (match exato): derivados do nome/titulo mais os
         # curados em wiki-aliases.json. Tags ficam de fora de proposito — "meta" e
         # "harness" aparecem em dezenas de páginas e disparariam em tudo.
-        "aliases": sorted(
-            ({stem, stem.replace("-", " "), title} | set((aliases_map or {}).get(page_id, [])))
-            - {""}
-        ),
+        "aliases": sorted(({stem, stem.replace("-", " "), title} | set((aliases_map or {}).get(page_id, []))) - {""}),
     }, body
 
 
@@ -250,7 +247,7 @@ def fingerprint(root):
     os.path.join sobre VAULT_PATH mistura as barras no Windows).
     """
     wiki = os.path.join(root, "wiki")
-    h = hashlib.sha1()
+    h = hashlib.sha1(usedforsecurity=False)
     for path in page_files(root):
         rel = os.path.relpath(path, wiki).replace(os.sep, "/")
         try:
@@ -289,8 +286,7 @@ def embed_text(chunk):
     """
     tags = " ".join(chunk["tags"])
     heading = chunk["heading"] or chunk["title"]
-    return (f"search_document: {chunk['title']} — {heading}. "
-            f"{chunk['type']}. {tags}. {chunk['description']}")
+    return f"search_document: {chunk['title']} — {heading}. {chunk['type']}. {tags}. {chunk['description']}"
 
 
 def build(root, out_dir=DEFAULT_OUT, no_embed=False, pages=None):
@@ -314,8 +310,9 @@ def build(root, out_dir=DEFAULT_OUT, no_embed=False, pages=None):
         "pages": pages,
     }
     atomic_write(os.path.join(out_dir, "embeddings.f16.bin"), blob)
-    atomic_write(os.path.join(out_dir, "wiki-index.json"),
-                 json.dumps(index, ensure_ascii=False, indent=1).encode("utf-8"))
+    atomic_write(
+        os.path.join(out_dir, "wiki-index.json"), json.dumps(index, ensure_ascii=False, indent=1).encode("utf-8")
+    )
     meta = {k: index[k] for k in ("schema_version", "built_at", "model", "dim", "fingerprint")}
     meta["chunks"] = len(pages)
     meta["pages"] = len({p["page_id"] for p in pages})
