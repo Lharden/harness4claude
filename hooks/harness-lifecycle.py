@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sqlite3
 import sys
-import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -66,7 +66,9 @@ def main() -> int:
     database = bucket / "lifecycle.db"
     with sqlite3.connect(database) as connection:
         connection.execute(
-            "CREATE TABLE IF NOT EXISTS lifecycle_events(id INTEGER PRIMARY KEY, event TEXT, session_id TEXT, cwd TEXT, created_at TEXT)"
+            "CREATE TABLE IF NOT EXISTS lifecycle_events("
+            "id INTEGER PRIMARY KEY, event TEXT, session_id TEXT, "
+            "cwd TEXT, created_at TEXT)"
         )
         connection.execute(
             "INSERT INTO lifecycle_events(event, session_id, cwd, created_at) VALUES (?, ?, ?, ?)",

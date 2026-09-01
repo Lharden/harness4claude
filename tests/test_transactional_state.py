@@ -1,13 +1,12 @@
 import importlib.util
-import os
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 spec = importlib.util.spec_from_file_location("transactional_state", ROOT / "scripts" / "transactional_state.py")
@@ -69,8 +68,54 @@ def test_zero_tests_and_stale_owner_do_not_verify(tmp_path: Path):
     lease = db.acquire_lease("s", "owner-a", ttl_seconds=1, now=10)
     takeover = db.acquire_lease("s", "owner-b", ttl_seconds=1, now=12)
     with pytest.raises(state.StateTransitionError, match="owner epoch"):
-        db.transition(task["task_id"], "missing", expected_revision=db.task(task["task_id"])["revision"], owner_epoch=lease["owner_epoch"])
+        db.transition(
+            task["task_id"],
+            "missing",
+            expected_revision=db.task(task["task_id"])["revision"],
+            owner_epoch=lease["owner_epoch"],
+        )
     assert takeover["owner_epoch"] == 2
+
+
+def test_latest_failing_test_revokes_passing_evidence_for_same_revision(tmp_path: Path):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="pytest", exit_code=0,
+        tests_collected=3, tests_passed=3, output_hash="passing",
+    )
+
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="pytest", exit_code=1,
+        tests_collected=3, tests_passed=2, output_hash="failing",
+    )
+
+    assert task["verified"] is False
+    assert task["status"] == "active"
+    with pytest.raises(state.StateTransitionError, match="fresh verification"):
+        db.complete(task["task_id"], expected_revision=task["revision"])
+
+
+def test_non_test_evidence_does_not_revoke_latest_passing_test(tmp_path: Path):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="pytest", exit_code=0,
+        tests_collected=2, tests_passed=2, output_hash="passing",
+    )
+
+    task = db.record_evidence(
+        task["task_id"], evidence_type="review", command=None, exit_code=None,
+        tests_collected=None, tests_passed=None, output_hash="review",
+    )
+
+    assert task["verified"] is True
 
 
 def test_state_cli_creates_database_and_projection(tmp_path: Path):
@@ -148,12 +193,12 @@ def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
     cli = str(ROOT / "scripts" / "state_cli.py")
     base = [sys.executable, cli, "--home", str(tmp_path)]
     init = subprocess.run(
-        base + ["init", "--scope", "s", "--task", "t-touch", "--classification", "L1-bug"],
+        [*base, "init", "--scope", "s", "--task", "t-touch", "--classification", "L1-bug"],
         capture_output=True, text=True, check=False,
     )
     assert init.returncode == 0, init.stderr
     evidence = subprocess.run(
-        base + [
+        [*base,
             "evidence", "--task", "t-touch", "--type", "test", "--command-text", "pytest",
             "--exit-code", "0", "--tests-collected", "2", "--tests-passed", "2",
         ],
@@ -162,7 +207,7 @@ def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
     assert evidence.returncode == 0, evidence.stderr
 
     touched = subprocess.run(
-        base + ["touch", "--task", "t-touch", "--path", "src/app.py"],
+        [*base, "touch", "--task", "t-touch", "--path", "src/app.py"],
         capture_output=True, text=True, check=False,
     )
 

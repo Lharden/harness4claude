@@ -6,10 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 sys.path.insert(0, str(ROOT / "scripts"))
-from harness_paths import ensure_state_dir  # type: ignore[import-not-found]  # noqa: E402
+from harness_paths import ensure_state_dir  # type: ignore[import-not-found]
 
 
 def test_postcompact_reloads_the_exact_scoped_task(tmp_path: Path):

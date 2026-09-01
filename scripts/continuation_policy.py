@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 CONTINUABLE_STATUSES = {"active", "awaiting_gate"}
 
 

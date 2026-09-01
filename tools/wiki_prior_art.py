@@ -228,7 +228,7 @@ def collect(task: str, *, top_k: int = DEFAULT_TOP_K, index_dir: Path | None = N
     # depois faria o hit certo competir por posição com vizinho temático.
     try:
         registros = registry_hits(task)
-    except Exception:  # noqa: BLE001 - passo de contexto, nunca derruba o pipeline
+    except Exception:
         registros = []
     literais = literal_hits(task, chunks)
     ja_citadas = {h["id"] for h in literais} | {h["id"] for h in registros}

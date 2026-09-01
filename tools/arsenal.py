@@ -60,11 +60,11 @@ from typing import Any
 import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from wiki_index import default_root  # noqa: E402
+from wiki_index import default_root
 
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "scripts"))
-import build_skills_index as bsi  # noqa: E402
+import build_skills_index as bsi
 
 SCHEMA_VERSION = 1
 REGISTRY_REL = Path("arsenal") / "tools.toml"
@@ -196,6 +196,7 @@ _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Registry
 # --------------------------------------------------------------------------
 
+
 def registry_path(root: Path) -> Path:
     return Path(root) / REGISTRY_REL
 
@@ -284,8 +285,7 @@ def _alvos_de_absorcao(item: dict) -> list[str]:
     return []
 
 
-def validate_registry(registry: dict, dispensados: dict[str, dict],
-                      root: Path | None = None) -> list[str]:
+def validate_registry(registry: dict, dispensados: dict[str, dict], root: Path | None = None) -> list[str]:
     """Contrato do registry. Lista de erros legíveis — vazia quando válido."""
     erros: list[str] = []
 
@@ -321,9 +321,7 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
         # A regra central, como código: fato mensurável não entra aqui.
         for campo, onde in CAMPOS_MEDIVEIS.items():
             if campo in item:
-                erros.append(
-                    f"{rotulo}: '{campo}' é fato, não julgamento — remova daqui e leia de {onde}"
-                )
+                erros.append(f"{rotulo}: '{campo}' é fato, não julgamento — remova daqui e leia de {onde}")
 
         ident = str(item.get("id", "")).strip()
         if ident:
@@ -331,17 +329,12 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
                 erros.append(f"{rotulo}: id duplicado (já em tools[{vistos[ident]}])")
             vistos[ident] = i
             if ident in dispensados:
-                erros.append(
-                    f"{rotulo}: está em tools.toml E em dispensados.toml — decida uma coisa só"
-                )
+                erros.append(f"{rotulo}: está em tools.toml E em dispensados.toml — decida uma coisa só")
 
         if item.get("kind") not in KINDS:
             erros.append(f"{rotulo}: kind deve ser um de {list(KINDS)}")
         if item.get("decisao") not in DECISOES:
-            erros.append(
-                f"{rotulo}: decisao deve ser um de {list(DECISOES)}"
-                " ('dispensado' vive em dispensados.toml)"
-            )
+            erros.append(f"{rotulo}: decisao deve ser um de {list(DECISOES)} ('dispensado' vive em dispensados.toml)")
 
         for campo in ("decidido_em", "prova_ate", "capturado_em"):
             valor = item.get(campo)
@@ -392,13 +385,10 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
         # de absorção aqui não era conferida por ninguém.
         for alvo in _alvos_de_absorcao(item):
             if not _referencia_existe(alvo, root):
-                erros.append(
-                    f"dispensados[{ident}]: absorvido_em aponta para '{alvo}', que não existe"
-                )
+                erros.append(f"dispensados[{ident}]: absorvido_em aponta para '{alvo}', que não existe")
         if capacidades is not None:
             for cap in sorted(capacidades_de(item) - capacidades):
-                erros.append(f"dispensados[{ident}]: {CAMPO_CAPACIDADE} usa '{cap}', "
-                             "que não está em [[capacidades]]")
+                erros.append(f"dispensados[{ident}]: {CAMPO_CAPACIDADE} usa '{cap}', que não está em [[capacidades]]")
 
     return erros
 
@@ -406,6 +396,7 @@ def validate_registry(registry: dict, dispensados: dict[str, dict],
 # --------------------------------------------------------------------------
 # Disco: o que está realmente instalado, e quanto custa
 # --------------------------------------------------------------------------
+
 
 def roster() -> list[dict]:
     """Skills vistas no disco. Reusa scan_skills do build_skills_index, não recopia.
@@ -419,9 +410,7 @@ def roster() -> list[dict]:
     ignora qualquer troca posterior das constantes do módulo. O sintoma foi
     teste sintético lendo a configuração real da máquina e passando por acaso.
     """
-    return bsi.scan_skills(
-        bsi.INSTALLED_JSON, bsi.SETTINGS_JSON, bsi.CLAUDE_JSON, bsi.PERSONAL_SKILLS_DIR
-    )
+    return bsi.scan_skills(bsi.INSTALLED_JSON, bsi.SETTINGS_JSON, bsi.CLAUDE_JSON, bsi.PERSONAL_SKILLS_DIR)
 
 
 def comandos() -> list[dict]:
@@ -453,12 +442,20 @@ def comandos() -> list[dict]:
                 # Mesmo motivo do prefix em scan_skills: o roster usa o nome do
                 # manifest, não a chave de instalação.
                 prefixo = bsi.manifest_name(raiz) or _short(pid)
-                saida.append({
-                    "id": f"{prefixo}:{nome}", "name": nome, "plugin": pid,
-                    "source": "command", "enabled": bool(habilitados.get(pid, False)),
-                    "path": str(md), "description": desc, "desc_chars": len(desc),
-                    "usage_count": 0, "last_used_at": None,
-                })
+                saida.append(
+                    {
+                        "id": f"{prefixo}:{nome}",
+                        "name": nome,
+                        "plugin": pid,
+                        "source": "command",
+                        "enabled": bool(habilitados.get(pid, False)),
+                        "path": str(md),
+                        "description": desc,
+                        "desc_chars": len(desc),
+                        "usage_count": 0,
+                        "last_used_at": None,
+                    }
+                )
     return saida
 
 
@@ -527,8 +524,16 @@ def uso_de_plugin() -> dict[str, int]:
 
 def _novo_agregado(ident: str, kind: str, plugin_key: str | None, enabled: bool) -> dict:
     return {
-        "id": ident, "kind": kind, "plugin_key": plugin_key, "enabled": enabled,
-        "n_skills": 0, "n_comandos": 0, "chars": 0, "usos": 0, "usos_plugin": 0, "skills": [],
+        "id": ident,
+        "kind": kind,
+        "plugin_key": plugin_key,
+        "enabled": enabled,
+        "n_skills": 0,
+        "n_comandos": 0,
+        "chars": 0,
+        "usos": 0,
+        "usos_plugin": 0,
+        "skills": [],
     }
 
 
@@ -588,6 +593,7 @@ def tokens(chars: int) -> int:
 # Comandos
 # --------------------------------------------------------------------------
 
+
 def command_check(root: Path) -> dict:
     caminho = registry_path(root)
     if not caminho.is_file():
@@ -613,8 +619,7 @@ def command_check(root: Path) -> dict:
             # sem capacidade nunca aparece no `overlap`, e sem este contador a
             # ausência de aviso pareceria ausência de sobreposição.
             "sem_capacidade": sum(
-                1 for t in list(registry.get("tools") or []) + list(dispensados.values())
-                if not capacidades_de(t)
+                1 for t in list(registry.get("tools") or []) + list(dispensados.values()) if not capacidades_de(t)
             ),
             "vocabulario": len(capacidades_declaradas(registry) or ()),
             "registry": str(caminho),
@@ -622,8 +627,7 @@ def command_check(root: Path) -> dict:
     }
 
 
-def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
-                      rede: bool = False) -> dict:
+def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False, rede: bool = False) -> dict:
     """Registry x disco x uso. Cada divergência tem nome, porque tem consequência distinta."""
     caminho = registry_path(root)
     warnings: list[str] = []
@@ -660,10 +664,13 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
         if ident in entradas or ident in dispensados:
             continue
         achado(
-            "fantasma", ident, "error",
-            f"habilitado no disco, sem decisão no registry ({info['n_skills']} skill(s), "
-            f"{info['tokens']} tok/sessão)",
-            chars=info["chars"], n_skills=info["n_skills"], usos=info["usos"],
+            "fantasma",
+            ident,
+            "error",
+            f"habilitado no disco, sem decisão no registry ({info['n_skills']} skill(s), {info['tokens']} tok/sessão)",
+            chars=info["chars"],
+            n_skills=info["n_skills"],
+            usos=info["usos"],
         )
 
     for ident, item in sorted(entradas.items()):
@@ -672,12 +679,16 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
         # Cobrar presença dela seria acusar de órfã exatamente o caso de sucesso.
         if item.get("decisao") in ("adotado", "prova") and (info is None or not info["enabled"]):
             achado(
-                "orfa", ident, "error",
+                "orfa",
+                ident,
+                "error",
                 f"registry diz '{item.get('decisao')}', mas não está habilitado no disco",
             )
         if item.get("decisao") == "absorvido" and info and info["enabled"]:
             achado(
-                "absorvido_mas_instalado", ident, "warning",
+                "absorvido_mas_instalado",
+                ident,
+                "warning",
                 f"a peça já foi absorvida em {item.get('absorvido_em')}, mas o pacote inteiro "
                 f"continua habilitado ({info['tokens']} tok/sessão) — pagando duas vezes",
                 chars=info["chars"],
@@ -686,18 +697,24 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
             prazo = str(item.get("prova_ate") or "")
             if prazo and prazo < hoje and info["usos"] == 0:
                 achado(
-                    "prova_falhou", ident, "warning",
+                    "prova_falhou",
+                    ident,
+                    "warning",
                     f"prova venceu em {prazo} com zero invocações — decida adotar ou dispensar",
                     chars=info["chars"],
                 )
             elif prazo and prazo < hoje:
                 achado(
-                    "prova_vencida", ident, "warning",
+                    "prova_vencida",
+                    ident,
+                    "warning",
                     f"prova venceu em {prazo} com {info['usos']} uso(s) — falta confirmar a adoção",
                 )
         if ident in ambiguos:
             achado(
-                "id_ambiguo", ident, "error",
+                "id_ambiguo",
+                ident,
+                "error",
                 f"id resolve para mais de um plugin: {sorted(ambiguos[ident])}",
             )
 
@@ -705,16 +722,16 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
         info = disco.get(ident)
         if info and info["enabled"]:
             achado(
-                "recaida", ident, "error",
-                f"dispensado em {item.get('decidido_em')} ({item.get('motivo')}), "
-                "mas está habilitado no disco",
+                "recaida",
+                ident,
+                "error",
+                f"dispensado em {item.get('decidido_em')} ({item.get('motivo')}), mas está habilitado no disco",
             )
 
     if fontes:
         achados.extend(audita_fontes(entradas, hoje, rede))
     if rollback:
-        instalados = {_short(k) for k in
-                      (bsi._load_json(bsi.INSTALLED_JSON, {}) or {}).get("plugins", {})}
+        instalados = {_short(k) for k in (bsi._load_json(bsi.INSTALLED_JSON, {}) or {}).get("plugins", {})}
         achados.extend(audita_rollback(entradas, instalados))
 
     erros = [a for a in achados if a["nivel"] == "error"]
@@ -722,9 +739,8 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False,
         "comando": "reconcile",
         "ready": not erros,
         "errors": [f"{a['tipo']}: {a['id']} — {a['mensagem']}" for a in erros],
-        "warnings": warnings + [
-            f"{a['tipo']}: {a['id']} — {a['mensagem']}" for a in achados if a["nivel"] == "warning"
-        ],
+        "warnings": warnings
+        + [f"{a['tipo']}: {a['id']} — {a['mensagem']}" for a in achados if a["nivel"] == "warning"],
         "achados": achados,
         "resumo": {
             "no_registry": len(entradas),
@@ -757,28 +773,40 @@ def render_pagina(registry: dict) -> str:
 
     hoje = date.today().isoformat()
     linhas = [
-        "---", "type: index", f"created: {hoje}", f"updated: {hoje}",
-        "status: active", "tags: [arsenal, ferramentas, meta]", "---", "",
-        "# Arsenal — as ferramentas ativas e por que estão aqui", "",
+        "---",
+        "type: index",
+        f"created: {hoje}",
+        f"updated: {hoje}",
+        "status: active",
+        "tags: [arsenal, ferramentas, meta]",
+        "---",
+        "",
+        "# Arsenal — as ferramentas ativas e por que estão aqui",
+        "",
         "> Gerado por `python tools/arsenal.py build --write` a partir de",
         "> `AI-Brain/arsenal/tools.toml`. **Editar aqui não adianta** — a próxima",
-        "> geração sobrescreve; edite o registry.", "",
+        "> geração sobrescreve; edite o registry.",
+        "",
         "O registry guarda **julgamento**: por que entrou, com que limite, como sair.",
         "Todo **fato** — versão, custo, uso, se está habilitado — é lido do disco na",
         "hora por `arsenal reconcile`. Nada mensurável fica salvo aqui, porque fato",
-        "salvo é fato que deriva.", "",
+        "salvo é fato que deriva.",
+        "",
         f"Teto do orçamento: **{registry.get('teto_tokens', TETO_TOKENS_PADRAO)} tokens**.",
-        "Confira o custo real com `python tools/arsenal.py budget --report`.", "",
+        "Confira o custo real com `python tools/arsenal.py budget --report`.",
+        "",
     ]
 
     titulos = {
         "adotado": ("Adotadas", "Instaladas e em uso. O motivo de cada uma está escrito."),
         "absorvido": (
             "Absorvidas — a peça entrou, o pacote não",
-            "*Solve et coagula.* Apresentar uma ferramenta não é instalá-la: às vezes já "
-            "existe coisa melhor aqui, às vezes existe algo parecido mas a nova tem uma "
-            "nuance melhor — e é a nuance que vale. Nenhuma destas está instalada, e "
-            "todas mudaram algo aqui dentro.",
+            (
+                "*Solve et coagula.* Apresentar uma ferramenta não é instalá-la: às vezes já "
+                "existe coisa melhor aqui, às vezes existe algo parecido mas a nova tem uma "
+                "nuance melhor — e é a nuance que vale. Nenhuma destas está instalada, e "
+                "todas mudaram algo aqui dentro."
+            ),
         ),
         "prova": ("Em prova", "Decisão com prazo. Vencido o prazo, o `reconcile` cobra."),
         "candidato": ("Candidatas", "Vistas, ainda não decididas."),
@@ -817,12 +845,14 @@ def render_pagina(registry: dict) -> str:
             linhas += ["", f"*Decidido em {t.get('decidido_em')} · saída: `{t.get('rollback')}`*", ""]
 
     linhas += [
-        "## O que não está aqui", "",
+        "## O que não está aqui",
+        "",
         "Ferramenta dispensada não vira página. Ela vive em",
         "`AI-Brain/arsenal/dispensados.toml` e serve a um único propósito: quando algo",
         "reaparecer no funil, o `prior-art` saber que já foi olhado, para não relitigar",
         "a mesma decisão. Recusa que vira página vira tema, e tema mantém no centro",
-        "justamente o que se decidiu não usar.", "",
+        "justamente o que se decidiu não usar.",
+        "",
     ]
     return "\n".join(linhas)
 
@@ -835,16 +865,25 @@ def _prosa(valor: object) -> str:
 def command_build(root: Path, escrever: bool) -> dict:
     caminho = registry_path(root)
     if not caminho.is_file():
-        return {"comando": "build", "ready": False,
-                "errors": [f"registry ausente: {caminho}"], "warnings": [], "resumo": {}}
+        return {
+            "comando": "build",
+            "ready": False,
+            "errors": [f"registry ausente: {caminho}"],
+            "warnings": [],
+            "resumo": {},
+        }
     registry = load_registry(caminho)
     erros = validate_registry(registry, load_dispensados(root), root)
     if erros:
         # Não gera página a partir de registry inválido: a página herdaria o defeito
         # e passaria a parecer verdade só porque está renderizada.
-        return {"comando": "build", "ready": False,
-                "errors": ["registry inválido — rode `arsenal check`"] + erros,
-                "warnings": [], "resumo": {}}
+        return {
+            "comando": "build",
+            "ready": False,
+            "errors": ["registry inválido — rode `arsenal check`", *erros],
+            "warnings": [],
+            "resumo": {},
+        }
     texto = render_pagina(registry)
     destino = Path(root) / PAGINA_REL
     if escrever:
@@ -853,9 +892,16 @@ def command_build(root: Path, escrever: bool) -> dict:
     else:
         print(texto)
     return {
-        "comando": "build", "ready": True, "errors": [], "warnings": [],
-        "resumo": {"pagina": str(destino), "escrita": escrever,
-                   "ferramentas": len(registry.get("tools") or []), "linhas": texto.count("\n") + 1},
+        "comando": "build",
+        "ready": True,
+        "errors": [],
+        "warnings": [],
+        "resumo": {
+            "pagina": str(destino),
+            "escrita": escrever,
+            "ferramentas": len(registry.get("tools") or []),
+            "linhas": texto.count("\n") + 1,
+        },
     }
 
 
@@ -971,11 +1017,14 @@ def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: b
         for ident, entrada in sorted(cat.items()):
             if ident in decididos or ident in vistos:
                 continue
-            novos.append({
-                "id": ident, "origem": "marketplace",
-                "tokens": custo_oficial(entrada),
-                "n_skills": len(((entrada.get("components") or {}).get("skills")) or []),
-            })
+            novos.append(
+                {
+                    "id": ident,
+                    "origem": "marketplace",
+                    "tokens": custo_oficial(entrada),
+                    "n_skills": len(((entrada.get("components") or {}).get("skills")) or []),
+                }
+            )
 
     if sessoes:
         conhecidos = {i.lower() for i in decididos | vistos}
@@ -988,8 +1037,7 @@ def command_candidates(root: Path, marketplaces: bool, sessoes: bool, aceitar: b
                 if base in conhecidos:
                     continue
                 conhecidos.add(base)
-                novos.append({"id": base, "origem": "sessao",
-                              "onde": md.name, "evidencia": evidencia})
+                novos.append({"id": base, "origem": "sessao", "onde": md.name, "evidencia": evidencia})
 
     if aceitar and novos:
         _grava_vistos(root, vistos | {n["id"] for n in novos})
@@ -1048,13 +1096,14 @@ def _fonte_alcancavel(url: str) -> tuple[bool, str]:
     """GET curto. Nunca levanta — contrato herdado do skill_router."""
     import urllib.error
     import urllib.request
+
     try:
         req = urllib.request.Request(url, method="GET", headers={"User-Agent": "arsenal/1"})
         with urllib.request.urlopen(req, timeout=REDE_TIMEOUT) as resp:
             return (200 <= resp.status < 400), f"HTTP {resp.status}"
     except urllib.error.HTTPError as exc:
         return False, f"HTTP {exc.code}"
-    except Exception as exc:  # noqa: BLE001 - rede caindo não é defeito do registry
+    except Exception as exc:
         return False, type(exc).__name__
 
 
@@ -1078,8 +1127,14 @@ def audita_fontes(entradas: dict[str, dict], hoje: str, rede: bool) -> list[dict
     for ident, item in sorted(entradas.items()):
         fonte = str(item.get("fonte") or "").strip()
         if not fonte:
-            achados.append({"tipo": "sem_fonte", "id": ident, "nivel": "info",
-                            "mensagem": "nenhuma fonte declarada — procedência não rastreável"})
+            achados.append(
+                {
+                    "tipo": "sem_fonte",
+                    "id": ident,
+                    "nivel": "info",
+                    "mensagem": "nenhuma fonte declarada — procedência não rastreável",
+                }
+            )
             continue
 
         capturado = str(item.get("capturado_em") or "")
@@ -1087,32 +1142,58 @@ def audita_fontes(entradas: dict[str, dict], hoje: str, rede: bool) -> list[dict
             try:
                 idade = (date.fromisoformat(hoje) - date.fromisoformat(capturado)).days
                 if idade > FONTE_ANTIGA_DIAS:
-                    achados.append({
-                        "tipo": "fonte_antiga", "id": ident, "nivel": "warning",
-                        "mensagem": f"lida em {capturado} ({idade} dias) e nunca reconferida",
-                    })
+                    achados.append(
+                        {
+                            "tipo": "fonte_antiga",
+                            "id": ident,
+                            "nivel": "warning",
+                            "mensagem": f"lida em {capturado} ({idade} dias) e nunca reconferida",
+                        }
+                    )
             except ValueError:
                 pass
 
         tipo, alvo = _classifica_fonte(fonte)
         if tipo == "marketplace":
             if mercados and alvo not in mercados:
-                achados.append({
-                    "tipo": "marketplace_ausente", "id": ident, "nivel": "warning",
-                    "mensagem": f"fonte cita o marketplace '{alvo}', que não está mais registrado",
-                })
+                achados.append(
+                    {
+                        "tipo": "marketplace_ausente",
+                        "id": ident,
+                        "nivel": "warning",
+                        "mensagem": f"fonte cita o marketplace '{alvo}', que não está mais registrado",
+                    }
+                )
         elif tipo == "url":
             if not rede:
-                achados.append({"tipo": "fonte_exige_rede", "id": ident, "nivel": "info",
-                                "mensagem": f"{alvo} — não conferido (rode com --rede)"})
+                achados.append(
+                    {
+                        "tipo": "fonte_exige_rede",
+                        "id": ident,
+                        "nivel": "info",
+                        "mensagem": f"{alvo} — não conferido (rode com --rede)",
+                    }
+                )
             else:
                 ok, detalhe = _fonte_alcancavel(alvo)
                 if not ok:
-                    achados.append({"tipo": "fonte_morta", "id": ident, "nivel": "warning",
-                                    "mensagem": f"{alvo} não respondeu ({detalhe})"})
+                    achados.append(
+                        {
+                            "tipo": "fonte_morta",
+                            "id": ident,
+                            "nivel": "warning",
+                            "mensagem": f"{alvo} não respondeu ({detalhe})",
+                        }
+                    )
         else:
-            achados.append({"tipo": "fonte_em_prosa", "id": ident, "nivel": "info",
-                            "mensagem": f"'{fonte}' não é endereço — só uma pessoa confere"})
+            achados.append(
+                {
+                    "tipo": "fonte_em_prosa",
+                    "id": ident,
+                    "nivel": "info",
+                    "mensagem": f"'{fonte}' não é endereço — só uma pessoa confere",
+                }
+            )
     return achados
 
 
@@ -1135,33 +1216,53 @@ def audita_rollback(entradas: dict[str, dict], instalados: set[str]) -> list[dic
 
         if baixo.startswith("n/a"):
             if len(bruto) < 8:
-                achados.append({"tipo": "rollback_vazio", "id": ident, "nivel": "warning",
-                                "mensagem": "'n/a' sem explicar por que não há volta"})
+                achados.append(
+                    {
+                        "tipo": "rollback_vazio",
+                        "id": ident,
+                        "nivel": "warning",
+                        "mensagem": "'n/a' sem explicar por que não há volta",
+                    }
+                )
             continue
 
         m = re.search(r"claude\s+plugin\s+(?:disable|uninstall)\s+([^\s]+)", comando)
         if m:
             alvo = _short(m.group(1).strip("\"'"))
             if instalados and alvo not in instalados:
-                achados.append({
-                    "tipo": "rollback_podre", "id": ident, "nivel": "error",
-                    "mensagem": f"desabilitaria '{alvo}', que não está instalado — "
-                                "o comando sairia com sucesso sem desfazer nada",
-                })
+                achados.append(
+                    {
+                        "tipo": "rollback_podre",
+                        "id": ident,
+                        "nivel": "error",
+                        "mensagem": f"desabilitaria '{alvo}', que não está instalado — "
+                        "o comando sairia com sucesso sem desfazer nada",
+                    }
+                )
             continue
 
         m = re.search(r"\brm\b(?:\s+-\w+)*\s+(\S+)", comando)
         if m:
             caminho = Path(m.group(1).strip("\"'")).expanduser()
             if not caminho.exists():
-                achados.append({
-                    "tipo": "rollback_podre", "id": ident, "nivel": "error",
-                    "mensagem": f"apagaria '{caminho}', que não existe mais",
-                })
+                achados.append(
+                    {
+                        "tipo": "rollback_podre",
+                        "id": ident,
+                        "nivel": "error",
+                        "mensagem": f"apagaria '{caminho}', que não existe mais",
+                    }
+                )
             continue
 
-        achados.append({"tipo": "rollback_nao_reconhecido", "id": ident, "nivel": "info",
-                        "mensagem": f"'{comando[:60]}' — forma não conferível por máquina"})
+        achados.append(
+            {
+                "tipo": "rollback_nao_reconhecido",
+                "id": ident,
+                "nivel": "info",
+                "mensagem": f"'{comando[:60]}' — forma não conferível por máquina",
+            }
+        )
     return achados
 
 
@@ -1205,8 +1306,14 @@ def command_gc(aplicar: bool, agora: float) -> dict:
     alvos: list[dict] = []
 
     if not CACHE_DIR.is_dir():
-        return {"comando": "gc", "ready": True, "errors": [],
-                "warnings": [f"cache ausente: {CACHE_DIR}"], "resumo": {}, "alvos": []}
+        return {
+            "comando": "gc",
+            "ready": True,
+            "errors": [],
+            "warnings": [f"cache ausente: {CACHE_DIR}"],
+            "resumo": {},
+            "alvos": [],
+        }
 
     for filho in sorted(CACHE_DIR.iterdir()):
         if filho.is_dir() and filho.name.startswith(TEMP_PREFIXOS):
@@ -1252,25 +1359,31 @@ def command_gc(aplicar: bool, agora: float) -> dict:
                             continue
                     except OSError:
                         continue
-                    alvos.append({
-                        "tipo": "versao_orfa", "caminho": str(versao),
-                        "rotulo": f"{plugin.name}/{versao.name}", "bytes": _tamanho(versao),
-                    })
+                    alvos.append(
+                        {
+                            "tipo": "versao_orfa",
+                            "caminho": str(versao),
+                            "rotulo": f"{plugin.name}/{versao.name}",
+                            "bytes": _tamanho(versao),
+                        }
+                    )
 
     # Trava 4, descoberta rodando o gc de verdade em 2026-08-13: `plugin-root`
     # aponta para uma árvore de cache, e apagar essa árvore o deixa apontando
     # para o vazio. O health-check pegou depois — "toda skill que o usa como
     # prefixo falha" — mas depois é tarde, e o gc sabia disso antes de apagar.
     try:
-        raiz_plugin = (Path(os.environ.get("HARNESS_DIR") or Path.home() / ".claude" / "harness")
-                       / "plugin-root").read_text(encoding="utf-8").strip()
+        raiz_plugin = (
+            (Path(os.environ.get("HARNESS_DIR") or Path.home() / ".claude" / "harness") / "plugin-root")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
     except OSError:
         raiz_plugin = ""
     if raiz_plugin:
         alvo_plugin = os.path.normcase(os.path.abspath(raiz_plugin))
         antes = len(alvos)
-        alvos = [a for a in alvos
-                 if not alvo_plugin.startswith(os.path.normcase(os.path.abspath(a["caminho"])))]
+        alvos = [a for a in alvos if not alvo_plugin.startswith(os.path.normcase(os.path.abspath(a["caminho"])))]
         if len(alvos) < antes:
             avisos.append(
                 f"preservado: {raiz_plugin} é o plugin-root em uso. Apagá-lo faria toda "
@@ -1353,22 +1466,34 @@ def command_overlap(root: Path, faz: list[str]) -> dict:
     """
     caminho = registry_path(root)
     if not caminho.is_file():
-        return {"comando": "overlap", "ready": False,
-                "errors": [f"registry ausente: {caminho}"], "warnings": [], "resumo": {}, "hits": []}
+        return {
+            "comando": "overlap",
+            "ready": False,
+            "errors": [f"registry ausente: {caminho}"],
+            "warnings": [],
+            "resumo": {},
+            "hits": [],
+        }
     registry = load_registry(caminho)
     dispensados = load_dispensados(root)
     vocabulario = capacidades_declaradas(registry)
 
     pedido = {c.strip() for c in faz if c.strip()}
     if not pedido:
-        return {"comando": "overlap", "ready": False,
-                "errors": ["--faz vazio: informe ao menos uma capacidade"],
-                "warnings": [], "resumo": {}, "hits": []}
+        return {
+            "comando": "overlap",
+            "ready": False,
+            "errors": ["--faz vazio: informe ao menos uma capacidade"],
+            "warnings": [],
+            "resumo": {},
+            "hits": [],
+        }
     if vocabulario is not None:
         desconhecidas = sorted(pedido - vocabulario)
         if desconhecidas:
             return {
-                "comando": "overlap", "ready": False,
+                "comando": "overlap",
+                "ready": False,
                 "errors": [f"capacidade fora do vocabulário: {desconhecidas}"],
                 "warnings": [],
                 "resumo": {"vocabulario": sorted(vocabulario)},
@@ -1376,26 +1501,37 @@ def command_overlap(root: Path, faz: list[str]) -> dict:
             }
 
     hits = []
-    for item, estado in ([(t, "registrada") for t in (registry.get("tools") or [])]
-                         + [(d, "dispensada") for d in dispensados.values()]):
+    for item, estado in [(t, "registrada") for t in (registry.get("tools") or [])] + [
+        (d, "dispensada") for d in dispensados.values()
+    ]:
         comuns = pedido & capacidades_de(item)
         if not comuns:
             continue
-        hits.append({
-            "id": str(item.get("id")),
-            "estado": estado,
-            "decisao": item.get("decisao") or "dispensada",
-            "em_comum": sorted(comuns),
-            "faz_o_que": sorted(capacidades_de(item)),
-            "por_que": " ".join(str(item.get("por_que") or item.get("motivo") or "").split())[:200],
-        })
+        hits.append(
+            {
+                "id": str(item.get("id")),
+                "estado": estado,
+                "decisao": item.get("decisao") or "dispensada",
+                "em_comum": sorted(comuns),
+                "faz_o_que": sorted(capacidades_de(item)),
+                "por_que": " ".join(str(item.get("por_que") or item.get("motivo") or "").split())[:200],
+            }
+        )
     hits.sort(key=lambda h: (-len(h["em_comum"]), h["id"]))
     return {
         "comando": "overlap",
         "ready": True,  # sobreposição não é defeito: é informação para decidir.
         "errors": [],
-        "warnings": ([f"{len(hits)} ferramenta(s) já declaram essa capacidade — "
-                      "confira se a nova traz nuance que as nossas não têm"] if hits else []),
+        "warnings": (
+            [
+                (
+                    f"{len(hits)} ferramenta(s) já declaram essa capacidade — "
+                    "confira se a nova traz nuance que as nossas não têm"
+                )
+            ]
+            if hits
+            else []
+        ),
         "resumo": {"pedido": sorted(pedido), "encontradas": len(hits)},
         "hits": hits,
     }
@@ -1425,8 +1561,10 @@ def superficie_mcp() -> dict:
     return {
         "servidores": len(servidores),
         "detalhe": linhas,
-        "nota": ("contagem de servidores, NÃO custo em tokens. Os schemas de tool não são "
-                 "legíveis daqui; o `always_on` do catálogo cobre só plugin de marketplace."),
+        "nota": (
+            "contagem de servidores, NÃO custo em tokens. Os schemas de tool não são "
+            "legíveis daqui; o `always_on` do catálogo cobre só plugin de marketplace."
+        ),
     }
 
 
@@ -1463,12 +1601,16 @@ def command_spend(teto: int) -> dict:
         try:
             atraso = (date.today() - date.fromisoformat(str(calculado))).days
             if atraso > 2:
-                avisos.append(f"stats-cache calculado em {calculado} ({atraso} dias atrás): "
-                              "o gasto abaixo é do que já foi consolidado, não de hoje")
+                avisos.append(
+                    f"stats-cache calculado em {calculado} ({atraso} dias atrás): "
+                    "o gasto abaixo é do que já foi consolidado, não de hoje"
+                )
         except ValueError:
             pass
-    avisos.append("NADA aqui interrompe gasto em execução — isto mede, não freia. "
-                  "A lacuna está registrada em arsenal/dispensados.toml sob `loopx`.")
+    avisos.append(
+        "NADA aqui interrompe gasto em execução — isto mede, não freia. "
+        "A lacuna está registrada em arsenal/dispensados.toml sob `loopx`."
+    )
 
     return {
         "comando": "spend",
@@ -1516,15 +1658,19 @@ def command_gate(root: Path, alvo: str) -> dict:
         teto = int(registry.get("teto_tokens") or TETO_TOKENS_PADRAO)
 
     def bloqueio(motivo: str, comoResolver: str) -> dict:
-        return {"comando": "gate", "ready": False, "errors": [motivo],
-                "warnings": [], "resumo": {"alvo": ident, "como_resolver": comoResolver}}
+        return {
+            "comando": "gate",
+            "ready": False,
+            "errors": [motivo],
+            "warnings": [],
+            "resumo": {"alvo": ident, "como_resolver": comoResolver},
+        }
 
     if ident in dispensados:
         item = dispensados[ident]
         return bloqueio(
             f"'{ident}' foi dispensado em {item.get('decidido_em')}: {item.get('motivo')}",
-            "Se a decisão mudou, tire de dispensados.toml e escreva a entrada nova em "
-            "tools.toml dizendo o que mudou.",
+            "Se a decisão mudou, tire de dispensados.toml e escreva a entrada nova em tools.toml dizendo o que mudou.",
         )
 
     if ident not in entradas:
@@ -1546,20 +1692,37 @@ def command_gate(root: Path, alvo: str) -> dict:
     gasto = atual["resumo"]["tokens"]
     custo = custo_oficial(catalogo().get(ident) or {})
     if custo is None:
-        return {"comando": "gate", "ready": True, "errors": [],
-                "warnings": [f"custo de '{ident}' não está no catálogo — orçamento não pôde ser "
-                             f"conferido antes. Rode `arsenal budget` depois de instalar."],
-                "resumo": {"alvo": ident, "gasto_atual": gasto, "teto": teto}}
+        return {
+            "comando": "gate",
+            "ready": True,
+            "errors": [],
+            "warnings": [
+                (
+                    f"custo de '{ident}' não está no catálogo — orçamento não pôde ser "
+                    "conferido antes. Rode `arsenal budget` depois de instalar."
+                )
+            ],
+            "resumo": {"alvo": ident, "gasto_atual": gasto, "teto": teto},
+        }
     if gasto + custo > teto:
         return bloqueio(
             f"'{ident}' custa {custo} tok e o roster já gasta {gasto} de {teto} — "
             f"instalar estouraria em {gasto + custo - teto}",
-            "Dispense algo de peso equivalente antes, ou suba o teto_tokens no registry "
-            "com o motivo escrito.",
+            "Dispense algo de peso equivalente antes, ou suba o teto_tokens no registry com o motivo escrito.",
         )
-    return {"comando": "gate", "ready": True, "errors": [], "warnings": [],
-            "resumo": {"alvo": ident, "custo": custo, "gasto_atual": gasto,
-                       "sobra_depois": teto - gasto - custo, "teto": teto}}
+    return {
+        "comando": "gate",
+        "ready": True,
+        "errors": [],
+        "warnings": [],
+        "resumo": {
+            "alvo": ident,
+            "custo": custo,
+            "gasto_atual": gasto,
+            "sobra_depois": teto - gasto - custo,
+            "teto": teto,
+        },
+    }
 
 
 def _lista_load_bearing(itens: list[dict], limite: int = 6) -> str:
@@ -1588,22 +1751,34 @@ def command_budget(teto: int) -> dict:
 
     erros = []
     if excedente > 0:
-        erros.append(
-            f"orçamento estourado: {tok_total} tok > teto {teto} (excedente {excedente})"
-        )
+        erros.append(f"orçamento estourado: {tok_total} tok > teto {teto} (excedente {excedente})")
 
     return {
         "comando": "budget",
         "ready": not erros,
         "errors": erros,
         "warnings": (
-            ([f"{tok_sem_retorno} tok "
-              f"({round(100 * tok_sem_retorno / tok_total) if tok_total else 0}%) em "
-              f"{len(sem_retorno)} ferramenta(s) que custam roster e nunca tiveram skill invocada"]
-             if sem_retorno else [])
-            + ([f"dessas, {len(load_bearing)} têm uso pesado por hook/MCP "
-                f"({_lista_load_bearing(load_bearing)}) — encurte a descrição, não desinstale"]
-               if load_bearing else [])
+            (
+                [
+                    (
+                        f"{tok_sem_retorno} tok "
+                        f"({round(100 * tok_sem_retorno / tok_total) if tok_total else 0}%) em "
+                        f"{len(sem_retorno)} ferramenta(s) que custam roster e nunca tiveram skill invocada"
+                    )
+                ]
+                if sem_retorno
+                else []
+            )
+            + (
+                [
+                    (
+                        f"dessas, {len(load_bearing)} têm uso pesado por hook/MCP "
+                        f"({_lista_load_bearing(load_bearing)}) — encurte a descrição, não desinstale"
+                    )
+                ]
+                if load_bearing
+                else []
+            )
         ),
         "resumo": {
             "tokens": tok_total,
@@ -1625,9 +1800,14 @@ def command_budget(teto: int) -> dict:
         },
         "ranking": [
             {
-                "id": v["id"], "n_skills": v["n_skills"], "n_comandos": v["n_comandos"],
-                "chars": v["chars"], "tokens": v["tokens"], "fonte_do_custo": v["fonte_do_custo"],
-                "usos": v["usos"], "usos_plugin": v["usos_plugin"],
+                "id": v["id"],
+                "n_skills": v["n_skills"],
+                "n_comandos": v["n_comandos"],
+                "chars": v["chars"],
+                "tokens": v["tokens"],
+                "fonte_do_custo": v["fonte_do_custo"],
+                "usos": v["usos"],
+                "usos_plugin": v["usos_plugin"],
                 "tokens_por_uso": (v["tokens"] if v["usos"] == 0 else round(v["tokens"] / v["usos"])),
             }
             for v in ranking
@@ -1655,19 +1835,19 @@ def _carrega_vetores() -> tuple[dict, list, list[str]]:
                 "índice STALE: o fingerprint não bate com o disco. As colisões abaixo "
                 "descrevem um roster que já mudou. Rode: python scripts/build_skills_index.py"
             )
-    except Exception as exc:  # noqa: BLE001 - diagnóstico nunca derruba o comando
+    except Exception as exc:
         avisos.append(f"não foi possível conferir staleness do índice: {exc}")
 
     dim = int(meta.get("dim") or 0)
     if not dim:
-        return index, [], avisos + ["meta.json sem 'dim'"]
+        return index, [], [*avisos, "meta.json sem 'dim'"]
     try:
         data = (IDX_DIR / "embeddings.f16.bin").read_bytes()
         linhas = len(data) // (2 * dim)
         flat = struct.unpack(f"<{linhas * dim}e", data[: linhas * dim * 2])
     except (OSError, struct.error) as exc:
-        return index, [], avisos + [f"embeddings ilegíveis: {exc}"]
-    return index, [flat[i * dim:(i + 1) * dim] for i in range(linhas)], avisos
+        return index, [], [*avisos, f"embeddings ilegíveis: {exc}"]
+    return index, [flat[i * dim : (i + 1) * dim] for i in range(linhas)], avisos
 
 
 def command_collisions(minimo: float, so_habilitadas: bool = True) -> dict:
@@ -1680,9 +1860,12 @@ def command_collisions(minimo: float, so_habilitadas: bool = True) -> dict:
         # quando a saída vem vazia que "nenhuma colisão" se lê como "nenhum
         # problema". Limite conhecido some da saída = limite esquecido.
         return {
-            "comando": "collisions", "ready": True, "errors": [],
+            "comando": "collisions",
+            "ready": True,
+            "errors": [],
             "warnings": avisos or ["sem vetores para comparar"],
-            "resumo": {"comparadas": 0, "ponto_cego": PONTO_CEGO_MCP}, "pares": [],
+            "resumo": {"comparadas": 0, "ponto_cego": PONTO_CEGO_MCP},
+            "pares": [],
         }
 
     linhas = [r["vec_row"] for r in registros]
@@ -1719,10 +1902,15 @@ def command_collisions(minimo: float, so_habilitadas: bool = True) -> dict:
         else:
             # Interno nunca vira erro: não há ação sua que o resolva.
             nivel = "warning" if c >= COS_INTERNO_ALERTA else "info"
-        saida.append({
-            "cos": round(float(c), 4), "a": ra["id"], "b": rb["id"],
-            "cruzado": cruzado, "nivel": nivel,
-        })
+        saida.append(
+            {
+                "cos": round(float(c), 4),
+                "a": ra["id"],
+                "b": rb["id"],
+                "cruzado": cruzado,
+                "nivel": nivel,
+            }
+        )
 
     erros = [p for p in saida if p["nivel"] == "error"]
     avisos_cruzados = [p for p in saida if p["nivel"] == "warning" and p["cruzado"]]
@@ -1734,8 +1922,7 @@ def command_collisions(minimo: float, so_habilitadas: bool = True) -> dict:
         "warnings": (
             avisos
             + [f"entre plugins {p['cos']}: {p['a']} <-> {p['b']}" for p in avisos_cruzados[:15]]
-            + [f"interno (informativo) {p['cos']}: {p['a']} <-> {p['b']}"
-               for p in avisos_internos[:8]]
+            + [f"interno (informativo) {p['cos']}: {p['a']} <-> {p['b']}" for p in avisos_internos[:8]]
         ),
         "resumo": {
             "comparadas": len(registros),
@@ -1754,6 +1941,7 @@ def command_collisions(minimo: float, so_habilitadas: bool = True) -> dict:
 # Saída
 # --------------------------------------------------------------------------
 
+
 def render_report(res: dict) -> str:
     linhas = [f"# arsenal {res['comando']} — {'OK' if res['ready'] else 'REPROVADO'}", ""]
     resumo = res.get("resumo") or {}
@@ -1769,9 +1957,12 @@ def render_report(res: dict) -> str:
         linhas.append("")
     ranking = res.get("ranking")
     if ranking:
-        linhas += ["## Ranking por custo", "",
-                   "| ferramenta | skills | cmds | tokens | usos skill | usos plugin | tok/uso |",
-                   "|---|---:|---:|---:|---:|---:|---:|"]
+        linhas += [
+            "## Ranking por custo",
+            "",
+            "| ferramenta | skills | cmds | tokens | usos skill | usos plugin | tok/uso |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
         linhas += [
             f"| {r['id']} | {r['n_skills']} | {r['n_comandos']} | {r['tokens']} "
             f"| {r['usos']} | {r['usos_plugin']} | {r['tokens_por_uso']} |"
@@ -1789,7 +1980,8 @@ def main() -> int:
     comum.add_argument("--report", action="store_true", help="markdown em vez de JSON")
 
     parser = argparse.ArgumentParser(
-        description=__doc__, parents=[comum],
+        description=__doc__,
+        parents=[comum],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="comando", required=True)
@@ -1802,25 +1994,20 @@ def main() -> int:
     construir.add_argument("--write", action="store_true", help="grava; sem isso imprime")
     orc = sub.add_parser("budget", parents=[comum], help="Custo do roster contra o teto.")
     orc.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
-    gasto = sub.add_parser("spend", parents=[comum],
-                           help="O que este setup custa: medido, contado e não medido.")
+    gasto = sub.add_parser("spend", parents=[comum], help="O que este setup custa: medido, contado e não medido.")
     gasto.add_argument("--teto", type=int, default=TETO_TOKENS_PADRAO)
-    lixo = sub.add_parser("gc", parents=[comum],
-                          help="Lixo do cache de plugins. Sem --apply, só lista.")
+    lixo = sub.add_parser("gc", parents=[comum], help="Lixo do cache de plugins. Sem --apply, só lista.")
     lixo.add_argument("--apply", action="store_true", help="apaga de verdade")
-    sobrep = sub.add_parser("overlap", parents=[comum],
-                            help="Quem já faz isto? Interseção de capacidades declaradas.")
-    sobrep.add_argument("--faz", required=True,
-                        help="capacidades do candidato, separadas por vírgula")
-    portao = sub.add_parser("gate", parents=[comum],
-                            help="Pode instalar? Exit 1 = bloqueado, com o motivo.")
+    sobrep = sub.add_parser("overlap", parents=[comum], help="Quem já faz isto? Interseção de capacidades declaradas.")
+    sobrep.add_argument("--faz", required=True, help="capacidades do candidato, separadas por vírgula")
+    portao = sub.add_parser("gate", parents=[comum], help="Pode instalar? Exit 1 = bloqueado, com o motivo.")
     portao.add_argument("--tool", required=True, help="id do plugin (nome curto)")
-    cand = sub.add_parser("candidates", parents=[comum],
-                          help="Funil proativo: o que apareceu e não passou por decisão.")
+    cand = sub.add_parser(
+        "candidates", parents=[comum], help="Funil proativo: o que apareceu e não passou por decisão."
+    )
     cand.add_argument("--marketplaces", action="store_true", help="só o catálogo")
     cand.add_argument("--sessions", action="store_true", help="só as notas de sessão")
-    cand.add_argument("--accept", action="store_true",
-                      help="marca os listados como vistos (baseline; não é decisão)")
+    cand.add_argument("--accept", action="store_true", help="marca os listados como vistos (baseline; não é decisão)")
     col = sub.add_parser("collisions", parents=[comum], help="Descrições que disputam o mesmo gatilho.")
     col.add_argument("--min", dest="minimo", type=float, default=COS_CRUZADO_ALERTA)
     col.add_argument("--todas", action="store_true", help="inclui skills desabilitadas")

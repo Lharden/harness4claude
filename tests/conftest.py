@@ -10,6 +10,7 @@ Duas responsabilidades:
 O padrao da fixture foi PROMOVIDO de `tests/test_state_lock.py:38-55`, onde ja
 estava validado por 9 testes de concorrencia. Divergir dele seria regressao.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,13 +22,25 @@ import pytest
 REAL_HARNESS_DIR = Path.home() / ".claude" / "harness"
 BASH_REQUIRED_CLASSES = {
     "test_arsenal_gate.py": {"TestInvocacaoBloqueia", "TestMencaoNaoBloqueia", "TestPassaDireto", "TestFalhaAberta"},
-    "test_harness_dir_resolution.py": {"TestOverrideRedirectsWrites", "TestDefaultFallback", "TestEdgeCases", "TestInlinePythonLayer", "TestOverrideLeavesTrace"},
+    "test_harness_dir_resolution.py": {
+        "TestOverrideRedirectsWrites",
+        "TestDefaultFallback",
+        "TestEdgeCases",
+        "TestInlinePythonLayer",
+        "TestOverrideLeavesTrace",
+    },
     "test_health_check_smoke.py": {"TestSmokeDetectaSabotagem", "TestSmokeNaoTocaEstadoReal"},
     "test_hook_liveness.py": {"TestHooksGravamHeartbeat"},
     "test_host_contract_resilience.py": {"TestGitGuardFailsLoud", "TestCrlfNaoFragmentaBucket"},
     "test_plugin_root_integrity.py": {"TestPluginRootIntegrity"},
     "test_plugin_root_resolver.py": {"TestPluginRootPersistence"},
-    "test_state_lock.py": {"TestBasicLifecycle", "TestConcurrency", "TestStaleHandling", "TestWriteRaceProtection", "TestReentrancySemantics"},
+    "test_state_lock.py": {
+        "TestBasicLifecycle",
+        "TestConcurrency",
+        "TestStaleHandling",
+        "TestWriteRaceProtection",
+        "TestReentrancySemantics",
+    },
 }
 
 
@@ -77,7 +90,10 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         module = Path(str(item.fspath)).name
         class_name = item.cls.__name__ if item.cls is not None else ""
-        if class_name in BASH_REQUIRED_CLASSES.get(module, set()) and item.name != "test_cobre_todos_os_eventos_registrados":
+        if (
+            class_name in BASH_REQUIRED_CLASSES.get(module, set())
+            and item.name != "test_cobre_todos_os_eventos_registrados"
+        ):
             item.add_marker(marker)
 
 
