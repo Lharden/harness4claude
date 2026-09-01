@@ -77,6 +77,17 @@
             "timeout": 5000
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-transactional.py\" --event PostToolUse",
+            "timeout": 5000,
+            "statusMessage": "Registrando evidência transacional..."
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -161,6 +172,16 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-branch-sensor.sh\"",
             "timeout": 8000,
             "statusMessage": "Branch Keeper: sensor de ramo..."
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-transactional.py\" --event Stop",
+            "timeout": 5000,
+            "statusMessage": "Validando evidência de conclusão..."
           }
         ]
       }
