@@ -260,3 +260,68 @@ class TestPayloadDoHook:
     def test_transcript_ausente_nao_derruba(self, sensor):
         payload = {"hook_event_name": "Stop", "transcript_path": "/nao/existe.jsonl"}
         assert sensor.text_from_payload(payload) == ""
+
+
+class TestAncoraCega:
+    """Ancora que nasce sem embedding tem que ser recuperada depois.
+
+    O `set_anchor` so roda quando `load_anchor` devolve None. Uma ancora
+    gravada com o Ollama fora tem texto e `embedding: null` — e um dict, nao
+    e None — entao ela nunca era recriada e `cosine(vec, None)` devolvia None
+    pelo resto da vida daquele projeto. A camada B ficava cega em silencio, e
+    todo ramo saia marcado `degradado` sem que nada no disco explicasse por
+    que. Medido em 2026-09-01: 2 das 5 ancoras reais estavam nesse estado.
+
+    O backfill repara o vetor e **nao** toca no texto: mover a ancora seria
+    mover o zero da regua no meio da medicao.
+    """
+
+    def _payload(self, tmp_path, prompt, session_id="s1"):
+        return {
+            "hook_event_name": "UserPromptSubmit",
+            "cwd": str(tmp_path),
+            "session_id": session_id,
+            "prompt": prompt,
+        }
+
+    def _run_main(self, sensor, monkeypatch, payload):
+        import io
+
+        monkeypatch.setattr(sensor.sys, "stdin", io.StringIO(json.dumps(payload)))
+        return sensor.main()
+
+    def test_ancora_sem_embedding_e_recuperada(self, sensor, tmp_path, monkeypatch):
+        sensor.set_anchor(cwd=str(tmp_path), text="objetivo da sessao",
+                          source="first-prompt", session_id="s1", embedding=None)
+        assert sensor.load_anchor(cwd=str(tmp_path), session_id="s1")["embedding"] is None
+
+        monkeypatch.setattr(sensor, "embed", lambda _t: [1.0, 0.0])
+        assert self._run_main(sensor, monkeypatch,
+                              self._payload(tmp_path, "seguindo o trabalho normal")) == 0
+
+        a = sensor.load_anchor(cwd=str(tmp_path), session_id="s1")
+        assert a["embedding"] == [1.0, 0.0]
+        assert a["text"] == "objetivo da sessao"
+
+    def test_backfill_nao_desloca_a_ancora_existente(self, sensor, tmp_path, monkeypatch):
+        sensor.set_anchor(cwd=str(tmp_path), text="objetivo original",
+                          source="first-prompt", session_id="s1", embedding=[1.0, 0.0])
+        monkeypatch.setattr(sensor, "embed", lambda _t: [0.0, 1.0])
+        self._run_main(sensor, monkeypatch,
+                       self._payload(tmp_path, "outro texto qualquer no turno"))
+
+        a = sensor.load_anchor(cwd=str(tmp_path), session_id="s1")
+        assert a["embedding"] == [1.0, 0.0]
+        assert a["text"] == "objetivo original"
+
+    def test_ollama_ainda_fora_nao_quebra_o_hook(self, sensor, tmp_path, monkeypatch):
+        sensor.set_anchor(cwd=str(tmp_path), text="objetivo da sessao",
+                          source="first-prompt", session_id="s1", embedding=None)
+
+        def _explode(_texto):
+            raise OSError("ollama fora")
+
+        monkeypatch.setattr(sensor, "embed", _explode)
+        assert self._run_main(sensor, monkeypatch,
+                              self._payload(tmp_path, "seguindo o trabalho normal")) == 0
+        assert sensor.load_anchor(cwd=str(tmp_path), session_id="s1")["embedding"] is None

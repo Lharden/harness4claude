@@ -475,7 +475,8 @@ def main() -> int:
 
     # Ancora: nasce no primeiro turno substantivo da sessao. Se ja houver
     # pipeline com spec, a skill sobrescreve com o objetivo formal.
-    if load_anchor(cwd, session_id) is None and not (
+    _anchor = load_anchor(cwd, session_id)
+    if _anchor is None and not (
         payload.get("hook_event_name") or ""
     ).lower().startswith("stop"):
         vec = None
@@ -491,6 +492,26 @@ def main() -> int:
             embedding=vec,
         )
         return 0
+
+    # Ancora nascida com o Ollama fora ficava com embedding nulo e, por nao
+    # ser None, nunca era recriada: cosine(vec, None) devolvia None e a
+    # camada B ficava cega pelo resto da vida daquele projeto. Medido em
+    # 2026-09-01: 2 de 5 ancoras em disco estavam nesse estado.
+    # Backfill so do vetor — o texto nao muda, o zero da regua nao se move.
+    if _anchor is not None and not _anchor.get("embedding"):
+        _vec = None
+        try:
+            _vec = embed(_anchor["text"])
+        except Exception:
+            _vec = None
+        if _vec:
+            set_anchor(
+                cwd=cwd,
+                text=_anchor["text"],
+                source=_anchor.get("source") or "first-prompt",
+                session_id=_anchor.get("session_id"),
+                embedding=_vec,
+            )
 
     b = _budget(cwd)
     turn = int(b.get("turn", 0)) + 1
