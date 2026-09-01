@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "capabilities": [
     {"id": "classification.deterministic-suggestion", "level": "required"},
     {"id": "classification.semantic-confirmation", "level": "required"},
@@ -25,4 +25,3 @@
     {"id": "editorial.drop-constrain-retain", "level": "required"}
   ]
 }
-

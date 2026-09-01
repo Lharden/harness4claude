@@ -365,41 +365,9 @@ l1_all = l1_bug + l1_refactor + l1_small_feature
 # ============================================================================
 # Classification logic
 # ============================================================================
-def any_match(patterns, text):
-    return any(re.search(p, text) for p in patterns)
+from classify_prompt import classify_prompt
 
-has_l0 = any_match(l0_all, msg)
-has_l1 = any_match(l1_all, msg)
-has_l2 = any_match(l2_all, msg)
-
-# L0 only if NO L1/L2 keywords present
-if has_l0 and not has_l1 and not has_l2:
-    level = "L0"
-elif has_l2:
-    # L2 wins on tie with L1
-    level = "L2"
-elif has_l1:
-    level = "L1"
-else:
-    # Default when nothing matches
-    level = "L1"
-
-# ============================================================================
-# Type classification
-# ============================================================================
-has_bug = any_match(l1_bug, msg)
-has_refactor = any_match(l1_refactor, msg)
-has_arch = any_match(l2_architecture, msg)
-
-if has_bug:
-    task_type = "bug"
-elif has_refactor:
-    task_type = "refactor"
-elif has_arch:
-    task_type = "architecture"
-else:
-    task_type = "feature"
-
+level, task_type = classify_prompt(msg)
 classification = f"{level}-{task_type}"
 
 # ============================================================================

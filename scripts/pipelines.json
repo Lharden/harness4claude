@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "pipelines": {
     "L0-question": [],
     "L1-feature": ["write-spec-light", "tdd", "verify-against-spec"],
