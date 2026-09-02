@@ -122,6 +122,27 @@ def embed(text: str) -> list[float] | None:
 
 #: Marcadores de tangente. Sao formas de ABRIR assunto, nao temas — por isso
 #: envelhecem devagar e valem em qualquer projeto.
+#:
+#: MEDIDO EM 2026-09-02 (scripts/calibrate_branch_layer_a.py, 702 pares:
+#: 40 positivos por supervisao distante, 662 negativos). O resultado nao
+#: recomenda ajuste, recomenda revisao da premissa:
+#:
+#:   - `e se` e o UNICO padrao que ja acertou: 20 disparos, 2 positivos e
+#:     18 negativos. Precisao 0.10.
+#:   - os outros 15 tem precisao 0.000 ou nunca disparam.
+#:   - 12 dos 16 NUNCA dispararam em 702 pares reais.
+#:   - 19 candidatos estruturais foram testados na mesma peneira. Nenhum passou.
+#:
+#: Ressalva metodologica, e ela importa: o rotulo positivo e o primeiro prompt
+#: de uma sessao NOVA, escrito em contexto limpo — ninguem abre conversa com
+#: "alias, e se". Isso invalida o RECALL por construcao. A PRECISAO nao sofre
+#: disso: ela mede se, quando a frase aparece no meio de uma sessao, o usuario
+#: de fato ramifica depois. A resposta medida e nao.
+#:
+#: Consequencia de projeto: `verdict()` exige `hit_a` para emitir `ramo`, entao
+#: esta lista e o portao. Um portao com precisao 0.10 nao e um detector com
+#: ajuste pendente — e a premissa de que tangente se anuncia por frase-marcador
+#: nao se sustentando nos dados deste usuario.
 LAYER_A_PATTERNS = (
     r"\be se\b",
     r"\boutra ideia\b",
