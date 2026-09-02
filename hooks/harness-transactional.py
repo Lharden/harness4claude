@@ -70,6 +70,38 @@ def is_trusted_verification(command: str) -> bool:
     return any(re.search(pattern, command, re.IGNORECASE) for pattern in VERIFICATION_PATTERNS)
 
 
+#: O proprio CLI de estado do harness. Ver `is_state_management`.
+STATE_CLI_PATTERNS = (
+    r"\bstate_cli\.py\b",
+    r"\bbranch_state\.py\b",
+    r"\bconfirm_classification\.py\b",
+)
+
+
+def is_state_management(command: str) -> bool:
+    """O comando so mexe no estado do harness, nao no codigo do projeto.
+
+    `_handle_post_tool` trata todo comando de shell como possivel alteracao de
+    codigo e chama `touch_file`, que zera `verified` e sobe `code_revision`. A
+    heuristica e conservadora e correta para `sed -i`, `npm install`, `git
+    checkout`. Mas ela criava um deadlock estrutural: `state_cli.py complete`
+    so pode ser invocado por shell, e a propria invocacao invalidava, no mesmo
+    PostToolUse, a evidencia que o `complete` exige. **Nenhuma task podia ser
+    concluida pelo caminho previsto.**
+
+    Medido em 2026-09-02: `code_revision` foi 501 -> 507 -> 511 entre gravar a
+    evidencia e tentar fechar, sem uma linha de codigo mudar. `verified` foi
+    para True tres vezes e voltou para False no comando seguinte, todas.
+
+    A isencao e estreita de proposito: so o CLI do proprio harness, e so
+    quando o comando nao tem composicao de shell — `state_cli.py ... && sed -i
+    ...` continua contando como alteracao, porque a segunda metade e.
+    """
+    if not command or _has_unquoted_shell_composition(command):
+        return False
+    return any(re.search(p, command, re.IGNORECASE) for p in STATE_CLI_PATTERNS)
+
+
 def _response(payload: dict[str, Any]) -> Any:
     return payload.get("tool_response") or payload.get("toolResponse") or payload.get("output") or ""
 
@@ -174,7 +206,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").casefold()
     command = _command(payload)
-    if tool_name in SHELL_TOOLS:
+    if tool_name in SHELL_TOOLS and not is_state_management(command):
         task = database.touch_file(task["task_id"], "shell-command")
     if is_trusted_verification(command):
         collected, passed, output_hash = _test_counts(payload)
