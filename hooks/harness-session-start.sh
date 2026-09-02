@@ -286,6 +286,25 @@ print(f'ARSENAL: {n} candidato(s) ainda sem decisao ({ids}). '
 fi
 export ARSENAL_DIGEST
 
+# ---------------------------------------------------------------------------
+# Sessoes anteriores neste diretorio
+# ---------------------------------------------------------------------------
+# Pelo CATALOGO, nao pelo indice semantico: e leitura de um json, custo zero de
+# Ollama. Pagar ~1s de embedding no inicio de toda sessao para mostrar tres
+# linhas seria taxar o comeco do trabalho para lembrar do trabalho. A busca
+# semantica fica para quando alguem perguntar (tools/session_query.py).
+#
+# So sugere; nunca carrega. A decisao do usuario em 2026-09-01 foi hibrida: o
+# hook aponta, e quem escolhe o que entra no contexto e ele.
+SESSIONS_DIGEST=""
+if [ -f "$PLUGIN_DIR/tools/session_query.py" ]; then
+    SESSIONS_DIGEST="$(python "$PLUGIN_DIR/tools/session_query.py" --recent "$PWD" --top-k 3 2>/dev/null | tr -d '' || true)"
+    case "$SESSIONS_DIGEST" in
+        "nenhuma sessao"*) SESSIONS_DIGEST="" ;;
+    esac
+fi
+export SESSIONS_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     python -c "
@@ -307,7 +326,8 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 # numa string de aspas duplas do bash: escape de quebra de linha vira
 # quebra real e quebra a sintaxe, e crase vira substituicao de comando.
 # Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
-partes_saida = [x for x in (digest, arsenal) if x]
+sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
+partes_saida = [x for x in (digest, arsenal, sessoes) if x]
 if partes_saida:
     print((chr(10) * 2).join(partes_saida))
 " 2>/dev/null | _harness_emit digest || true
@@ -353,6 +373,9 @@ if digest:
 arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 if arsenal:
     partes.append(arsenal)
+sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
+if sessoes:
+    partes.append(sessoes)
 print('\n\n'.join(partes))
 " 2>/dev/null | _harness_emit resuming || true
     exit 0
@@ -395,6 +418,9 @@ if digest:
 arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 if arsenal:
     parts.append(arsenal)
+sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
+if sessoes:
+    parts.append(sessoes)
 
 if parts:
     print('\n\n'.join(parts))

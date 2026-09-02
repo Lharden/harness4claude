@@ -46,6 +46,16 @@ def builder():
 
 
 @pytest.fixture(scope="module")
+def emit():
+    return _load("harness_emit_sess", "hooks/emit.py")
+
+
+@pytest.fixture(scope="module")
+def lifecycle():
+    return _load("harness_lifecycle_sess", "hooks/harness-lifecycle.py")
+
+
+@pytest.fixture(scope="module")
 def sq():
     return _load("session_query", "tools/session_query.py")
 
@@ -222,3 +232,82 @@ class TestBusca:
         branch-sensor decorativo por meses. Aqui fica escrito."""
         fonte = (ROOT / "tools" / "session_query.py").read_text(encoding="utf-8")
         assert "NAO calibrado" in fonte or "nao calibrados" in fonte
+
+
+class TestSessoesVivas:
+    """"Sessoes vivas" resolvido por batimento em disco, nao por protocolo.
+
+    Medido em 2026-09-01: das 61 sessoes peer que o `ListAgents` enumera, TODAS
+    estavam offline ou idle. Construir troca de mensagens entre elas seria
+    construir para um caso que nao acontece. Um arquivo por sessao com
+    `last_seen` responde a pergunta real com um `ls`.
+    """
+
+    def test_flush_deixa_batimento(self, emit, tmp_path):
+        import io as _io
+
+        em = emit.Emitter("UserPromptSubmit", hook="t", session_id="s-viva",
+                          cwd="C:/proj", root=tmp_path)
+        em.add("k", "qualquer coisa").flush(stream=_io.StringIO())
+        assert (tmp_path / "live" / "s-viva.json").exists()
+
+    def test_sem_session_id_nao_grava(self, emit, tmp_path):
+        import io as _io
+
+        emit.Emitter("UserPromptSubmit", hook="t", root=tmp_path) \
+            .add("k", "x").flush(stream=_io.StringIO())
+        assert not (tmp_path / "live").exists()
+
+    def test_batimento_velho_nao_conta_como_viva(self, emit, tmp_path):
+        d = tmp_path / "live"
+        d.mkdir(parents=True)
+        (d / "antiga.json").write_text(json.dumps({
+            "session_id": "antiga", "last_seen": "2020-01-01T00:00:00+00:00"}),
+            encoding="utf-8")
+        assert emit.live_sessions(tmp_path, max_age_s=600) == []
+
+    def test_batimento_recente_aparece(self, emit, tmp_path):
+        import io as _io
+
+        emit.Emitter("UserPromptSubmit", hook="t", session_id="agora",
+                     cwd="C:/proj", root=tmp_path).add("k", "x").flush(stream=_io.StringIO())
+        vivas = emit.live_sessions(tmp_path, max_age_s=600)
+        assert len(vivas) == 1 and vivas[0]["session_id"] == "agora"
+
+    def test_arquivo_corrompido_nao_quebra(self, emit, tmp_path):
+        d = tmp_path / "live"
+        d.mkdir(parents=True)
+        (d / "torta.json").write_text("{nao e json}", encoding="utf-8")
+        assert emit.live_sessions(tmp_path) == []
+
+
+class TestFechamentoDeSessao:
+    def test_sessionend_marca_indice_sujo(self, lifecycle, tmp_path):
+        lifecycle._fechar_sessao(
+            {"session_id": "s-1", "cwd": "C:/proj/alvo"}, tmp_path)
+        assert (tmp_path / "sessions-index" / ".stale").exists()
+
+    def test_sessionend_escreve_cartao_no_vault(self, lifecycle, tmp_path, monkeypatch):
+        """`wiki/sessions/` estava vazio desde sempre: o caminho projetado
+        (traces -> vault_sync) exige rotacao acima de 50 KB e o maior trace em
+        disco tem 3,3 KB. Escreve-se direto no destino."""
+        vault = tmp_path / "vault" / "AI-Brain"
+        (vault / "wiki").mkdir(parents=True)
+        monkeypatch.setenv("AI_BRAIN_PATH", str(vault))
+        lifecycle._fechar_sessao(
+            {"session_id": "abc12345-0000-0000-0000-000000000000",
+             "cwd": "C:/proj/meu-projeto"}, tmp_path)
+        cartoes = list((vault / "wiki" / "sessions").glob("*.md"))
+        assert len(cartoes) == 1
+        texto = cartoes[0].read_text(encoding="utf-8")
+        assert "type: session" in texto
+        assert "claude --resume abc12345-0000-0000-0000-000000000000" in texto
+
+    def test_sem_session_id_nao_faz_nada(self, lifecycle, tmp_path):
+        lifecycle._fechar_sessao({"cwd": "C:/x"}, tmp_path)
+        assert not (tmp_path / "sessions-index").exists()
+
+    def test_vault_ausente_nao_quebra(self, lifecycle, tmp_path, monkeypatch):
+        monkeypatch.setenv("AI_BRAIN_PATH", str(tmp_path / "nao-existe"))
+        lifecycle._fechar_sessao({"session_id": "s-2", "cwd": "C:/x"}, tmp_path)
+        assert (tmp_path / "sessions-index" / ".stale").exists()

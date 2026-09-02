@@ -231,7 +231,35 @@ class Emitter:
             pass
         for kind, text in self.blocks:
             self._record(kind, text, channel if out else SILENT)
+        self.heartbeat()
         return out
+
+    def heartbeat(self, title: str = "") -> None:
+        """Deixa um batimento por sessao em `<HARNESS_DIR>/live/`.
+
+        "Sessoes vivas" nao precisa de protocolo. Medido em 2026-09-01: das 61
+        sessoes peer que o `ListAgents` enumera, TODAS estavam offline ou idle —
+        construir troca de mensagens entre elas seria construir para um caso que
+        nao acontece. Um arquivo por sessao com `last_seen` responde a pergunta
+        real ("o que mais esta aberto agora?") com um `ls`, sem depender de host,
+        de porta, nem de a outra ponta estar escutando.
+
+        Nunca levanta: telemetria que derruba o hook virou o problema.
+        """
+        if not self.session_id:
+            return
+        try:
+            d = default_root(self.root) / "live"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"{self.session_id}.json").write_text(json.dumps({
+                "session_id": self.session_id,
+                "cwd": str(self.cwd),
+                "cwd_slug": _slug(self.cwd),
+                "title": title,
+                "last_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            }, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
 
     def _record(self, kind, text, channel) -> None:
         """Uma linha por bloco no extrato. Nunca levanta."""
@@ -279,6 +307,35 @@ def aggregate(root=None) -> dict:
     return agg
 
 
+def live_sessions(root=None, max_age_s: int = 600) -> list:
+    """Sessoes com batimento recente. Ordenadas da mais recente para a mais velha.
+
+    `max_age_s` de 600 e o corte entre "aberta" e "esquecida": uma janela sem
+    prompt ha dez minutos pode estar viva, mas ja nao e onde o trabalho esta.
+    """
+    from datetime import datetime as _dt
+
+    saida = []
+    agora = datetime.now(timezone.utc)
+    try:
+        d = default_root(root) / "live"
+        arquivos = list(d.glob("*.json"))
+    except Exception:
+        return saida
+    for f in arquivos:
+        try:
+            row = json.loads(f.read_text(encoding="utf-8"))
+            visto = _dt.fromisoformat(str(row.get("last_seen")))
+            idade = (agora - visto).total_seconds()
+        except Exception:
+            continue
+        if idade <= max_age_s:
+            row["age_s"] = int(idade)
+            saida.append(row)
+    saida.sort(key=lambda r: r.get("age_s", 1 << 30))
+    return saida
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Emissor unico dos hooks do harness.")
     ap.add_argument("--event", default="UserPromptSubmit")
@@ -290,10 +347,15 @@ def main(argv=None) -> int:
     ap.add_argument("--text-file", default=None, help="arquivo, ou - para stdin")
     ap.add_argument("--aggregate", action="store_true")
     ap.add_argument("--channel-of", default=None, help="imprime o canal do evento e sai")
+    ap.add_argument("--live", action="store_true", help="sessoes com batimento recente")
+    ap.add_argument("--max-age", type=int, default=600)
     a = ap.parse_args(argv)
 
     if a.channel_of is not None:
         print(resolve_channel(a.channel_of))
+        return 0
+    if a.live:
+        print(json.dumps(live_sessions(max_age_s=a.max_age), ensure_ascii=False, indent=1))
         return 0
     if a.aggregate:
         print(json.dumps(aggregate(), ensure_ascii=False, indent=2))
