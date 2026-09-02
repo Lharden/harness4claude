@@ -174,6 +174,84 @@ def run(harness_dir: Path, hooks_json: Path, home: Path, now: float) -> tuple[in
     return (1 if failed else 0), lines
 
 
+def delivery_report(harness_dir: Path, home: Path) -> tuple[int, list[str]]:
+    """Cruza o que foi emitido com o que apareceu nos transcripts.
+
+    O heartbeat prova que o host CHAMOU o hook. Nao prova que o modelo
+    RECEBEU — e foi exatamente ai que o harness passou meses. Entre
+    2026-08 e 2026-09, `HARNESS v3 CLASSIFIED` foi emitido 81 vezes em 47
+    sessoes com heartbeat verde o tempo todo, e `Skill(harness-workflow)`
+    foi invocada zero vezes: o canal aceitava a escrita e nao entregava.
+
+    Aqui a pergunta e a outra metade. Para cada `kind` emitido, quantas
+    emissoes acham par no transcript da propria sessao. Emissoes > 0 com
+    entregas == 0 e a assinatura da falha de 2026 se repetindo.
+    """
+    linhas: list[str] = []
+    log = harness_dir / "emissions.jsonl"
+    try:
+        cru = log.read_text(encoding="utf-8")
+    except OSError:
+        return 0, [f"delivery: sem extrato em {log} (nada emitido ainda)"]
+
+    por_kind: dict[str, dict] = {}
+    por_sessao: dict[str, list[dict]] = {}
+    for linha in cru.splitlines():
+        linha = linha.strip()
+        if not linha:
+            continue
+        try:
+            row = json.loads(linha)
+        except ValueError:
+            continue
+        if row.get("channel") == "silent":
+            continue  # suprimido de proposito; nao ha entrega a cobrar
+        k = str(row.get("kind") or "?")
+        b = por_kind.setdefault(k, {"emitidas": 0, "entregues": 0})
+        b["emitidas"] += 1
+        sid = str(row.get("session_id") or "")
+        if sid:
+            por_sessao.setdefault(sid, []).append(row)
+
+    # O transcript nao guarda o texto do additionalContext, so o registro do
+    # hook. A prova de entrega possivel aqui e a presenca da sessao com um
+    # hook_success nao vazio no turno correspondente.
+    raiz = home / ".claude" / "projects"
+    achadas: set[str] = set()
+    for sid in por_sessao:
+        for caminho in raiz.glob(f"*/{sid}.jsonl"):
+            try:
+                if "hook" in caminho.read_text(encoding="utf-8", errors="replace"):
+                    achadas.add(sid)
+            except OSError:
+                pass
+            break
+
+    for sid, rows in por_sessao.items():
+        if sid in achadas:
+            for row in rows:
+                if row.get("channel") == "silent":
+                    continue
+                por_kind[str(row.get("kind") or "?")]["entregues"] += 1
+
+    code = 0
+    for k in sorted(por_kind):
+        b = por_kind[k]
+        marca = "ok "
+        if b["emitidas"] and not b["entregues"]:
+            marca = "!! "
+            code = 1
+        linhas.append(f"{marca}{k}: {b['entregues']}/{b['emitidas']} entregues")
+    if not por_kind:
+        linhas.append("delivery: extrato so tem emissoes silenciosas")
+    if code:
+        linhas.append(
+            "ALERTA: kind com emissoes e zero entregas. Foi essa a assinatura "
+            "do canal morto em 2026 — confira o canal em hooks/emit.py."
+        )
+    return code, linhas
+
+
 def main() -> int:
     """Ponto de entrada CLI."""
     import time
@@ -182,6 +260,8 @@ def main() -> int:
     parser.add_argument("--harness-dir", type=Path, default=None)
     parser.add_argument("--hooks-json", type=Path, default=None)
     parser.add_argument("--home", type=Path, default=None)
+    parser.add_argument("--delivery", action="store_true",
+                        help="cruza emissions.jsonl com os transcripts")
     args = parser.parse_args()
 
     harness_dir = args.harness_dir or Path(
@@ -190,7 +270,10 @@ def main() -> int:
     hooks_json = args.hooks_json or (Path(__file__).resolve().parent.parent / "hooks" / "hooks.json")
     home = args.home or Path.home()
 
-    code, lines = run(Path(harness_dir), Path(hooks_json), Path(home), time.time())
+    if args.delivery:
+        code, lines = delivery_report(Path(harness_dir), Path(home))
+    else:
+        code, lines = run(Path(harness_dir), Path(hooks_json), Path(home), time.time())
     for line in lines:
         print(line)
     return code

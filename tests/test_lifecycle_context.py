@@ -11,6 +11,21 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from harness_paths import ensure_state_dir  # type: ignore[import-not-found]
 
 
+def _mensagem(saida: str) -> str:
+    """Texto entregue ao modelo.
+
+    A chave mudou em 2026-09-01: `systemMessage` e canal de UI e nao entra no
+    contexto do modelo — nos 343 transcripts desta maquina, 100% das linhas
+    com systemMessage no stdout tem `content` vazio. Aceitar as duas chaves
+    aqui deixaria a regressao passar despercebida.
+    """
+    payload = json.loads(saida)
+    assert "systemMessage" not in payload, (
+        "regressao: systemMessage nao chega ao modelo"
+    )
+    return payload["hookSpecificOutput"]["additionalContext"]
+
+
 def test_postcompact_reloads_the_exact_scoped_task(tmp_path: Path):
     harness_root = tmp_path / "harness"
     cwd = tmp_path / "repo"
@@ -44,7 +59,7 @@ def test_postcompact_reloads_the_exact_scoped_task(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stderr
-    message = json.loads(result.stdout)["systemMessage"]
+    message = _mensagem(result.stdout)
     assert "t-scoped" in message
     assert "approve-spec" in message
     assert "docs/specs/demo-spec.md" in message
@@ -74,6 +89,6 @@ def test_subagent_start_includes_scoped_node_contract(tmp_path: Path):
         env=env,
     )
 
-    message = json.loads(result.stdout)["systemMessage"]
+    message = _mensagem(result.stdout)
     assert "t-node" in message
     assert "NodeResult" in message
