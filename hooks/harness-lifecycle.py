@@ -41,6 +41,37 @@ def _resume_message(event: str, state: dict) -> str:
     return " ".join(parts)
 
 
+def _emit(payload: dict, event: str, texto: str) -> None:
+    """Entrega a retomada pelo emissor central.
+
+    `systemMessage` e canal de UI e nunca chegou. PostCompact e SubagentStart
+    tambem nunca foram observados entregando por canal nenhum, entao o mapa do
+    emissor os marca como nao verificados — mas o que sai daqui e instrucao de
+    retomada, e nao ha regressao possivel: hoje ja se perde.
+    """
+    if not texto:
+        return
+    try:
+        import importlib.util
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emit.py")
+        spec = importlib.util.spec_from_file_location("harness_emit", path)
+        if spec is None or spec.loader is None:
+            raise ImportError
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.Emitter(
+            event,
+            hook="lifecycle",
+            session_id=payload.get("session_id"),
+            cwd=payload.get("cwd"),
+        ).add("resume", texto).flush()
+    except Exception:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": event, "additionalContext": texto,
+        }}, ensure_ascii=False))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event", default=None)
@@ -75,7 +106,7 @@ def main() -> int:
             (event, payload.get("session_id"), payload.get("cwd"), datetime.now(timezone.utc).isoformat()),
         )
     if event in {"PostCompact", "SubagentStart"}:
-        print(json.dumps({"systemMessage": _resume_message(event, _load_state(bucket))}))
+        _emit(payload, event, _resume_message(event, _load_state(bucket)))
     return 0
 
 

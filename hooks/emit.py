@@ -82,11 +82,20 @@ SILENT = "silent"
 
 # Canal por evento. Ausente do mapa => stdout, o canal conservador que
 # comprovadamente chega. `stop` e silencioso de proposito; ver docstring.
+#
+# NAO VERIFICADO: `postcompact` e `subagentstart` nunca foram observados
+# entregando por canal nenhum — nao ha um so exemplo nos 343 transcripts.
+# Ficam em additionalContext pelo criterio semantico (o que sai deles e
+# instrucao de retomada, nao dado) e porque nao ha regressao a temer: hoje
+# esses sinais saem por systemMessage e ja se perdem. Se um dia aparecer
+# evidencia de entrega, e aqui que ela vira certeza.
 CHANNEL_BY_EVENT = {
     "userpromptsubmit": ADDCTX,
     "sessionstart": ADDCTX,
     "posttooluse": STDOUT,
     "precompact": STDOUT,
+    "postcompact": ADDCTX,  # nao verificado
+    "subagentstart": ADDCTX,  # nao verificado
     "stop": SILENT,
     "subagentstop": SILENT,
     "sessionend": SILENT,
