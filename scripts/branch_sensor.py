@@ -399,7 +399,7 @@ def enabled() -> bool:
 def evaluate(
     *, cwd, text: str, session_id: str | None = None, turn: int = 0
 ) -> str:
-    """Roda as camadas e devolve o `systemMessage`, ou string vazia.
+    """Roda as camadas e devolve o texto do sinal, ou string vazia.
 
     Contrato: nunca levanta. Todo caminho de erro vira silencio, porque este
     codigo roda em UserPromptSubmit e em Stop — quebrar aqui e quebrar a sessao.
