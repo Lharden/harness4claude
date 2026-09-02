@@ -104,7 +104,29 @@ def _fechar_sessao(payload: dict, root) -> None:
     except Exception:
         pass
 
-    # 2. cartao no vault, direto no destino
+    # 2. TTL em TODOS os buckets, nao so no visitado
+    #
+    # `expire_stale_pipeline` roda sobre um bucket, e so quando alguem abre
+    # sessao naquele diretorio. Projeto abandonado nunca recebe a visita, entao
+    # o pipeline dele fica `active` para sempre e o TTL de 24h vira decorativo
+    # justamente onde ele mais importa. Medido em 2026-09-02: 20 pipelines
+    # vencidos na maquina, o mais velho de 2026-07-28 — cinco semanas.
+    #
+    # No SessionEnd porque e faxina e ninguem espera resultado: ~20 leituras de
+    # arquivo. No SessionStart atrasaria o comeco do trabalho.
+    try:
+        import importlib.util
+
+        caminho = Path(__file__).resolve().parent.parent / "scripts" / "expire_stale_pipeline.py"
+        spec = importlib.util.spec_from_file_location("expire_stale_pipeline", caminho)
+        if spec is not None and spec.loader is not None:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.sweep(Path(root), mod.default_ttl_hours(), dry_run=False)
+    except Exception:
+        pass
+
+    # 3. cartao no vault, direto no destino
     try:
         vault = os.environ.get("AI_BRAIN_PATH") or (
             os.environ.get("VAULT_PATH", "") and os.path.join(os.environ["VAULT_PATH"], "AI-Brain"))

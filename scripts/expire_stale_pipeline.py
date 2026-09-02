@@ -202,6 +202,61 @@ def expire(
     return task_id
 
 
+def buckets(root: Path | str):
+    """Todo diretorio sob `projects/` que tem um state.json.
+
+    Inclui os buckets de sessao (`projects/<slug>/sessions/<uuid>/`), que sao
+    onde o estado transacional vive desde 2026-08.
+    """
+    raiz = Path(root) / "projects"
+    if not raiz.is_dir():
+        return []
+    achados = []
+    for caminho in raiz.rglob("state.json"):
+        if caminho.is_file():
+            achados.append(caminho.parent)
+    return sorted(achados)
+
+
+def sweep(root: Path | str, ttl_hours: float, *, dry_run: bool = True,
+          now: datetime | None = None) -> list:
+    """Expira pipelines vencidos em TODOS os buckets, nao so no visitado.
+
+    O `expire()` de um bucket so roda quando alguem abre sessao naquele
+    diretorio — e um projeto abandonado nunca mais recebe visita. Medido em
+    2026-09-02: 23 pipelines `active` na maquina, o mais velho de 2026-07-28,
+    cinco semanas depois de um TTL de 24 horas. Abrir sessao em qualquer um
+    deles faria o harness tentar retomar um pipeline de julho.
+
+    `dry_run` e o default de proposito: expirar em massa e irreversivel, e a
+    lista serve para o usuario ver o que sera perdido antes de perder.
+    """
+    achados = []
+    for bucket in buckets(root):
+        try:
+            estado = json.loads((bucket / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(estado, dict) or not estado.get("task_id"):
+            continue
+        if not is_expired(estado, ttl_hours, now=now):
+            continue
+        linha = {
+            "task_id": estado.get("task_id"),
+            "bucket": str(bucket),
+            "classification": estado.get("classification"),
+            "started_at": estado.get("started_at"),
+        }
+        if not dry_run:
+            try:
+                linha["expired"] = expire(bucket, ttl_hours, now=now,
+                                          signals_dir=Path(root))
+            except Exception as exc:
+                linha["erro"] = f"{type(exc).__name__}: {exc}"
+        achados.append(linha)
+    return achados
+
+
 def main() -> int:
     """Ponto de entrada CLI. Sempre retorna 0 — hook nunca bloqueia."""
     parser = argparse.ArgumentParser(description="Expira pipeline ativo alem do TTL.")
@@ -210,10 +265,31 @@ def main() -> int:
     parser.add_argument("--signals-dir", type=Path, default=None,
                         help="raiz onde signals.json e agregado (default: --harness-dir)")
     parser.add_argument("--ttl-hours", type=float, default=None)
+    parser.add_argument("--sweep", action="store_true",
+                        help="varre TODOS os buckets, nao so o visitado")
+    parser.add_argument("--apply", action="store_true",
+                        help="com --sweep: expira de verdade (default e so listar)")
     args = parser.parse_args()
 
     harness_dir = args.harness_dir or default_harness_dir()
     ttl_hours = args.ttl_hours if args.ttl_hours is not None else default_ttl_hours()
+
+    if args.sweep:
+        raiz = args.harness_dir or default_harness_dir()
+        achados = sweep(Path(raiz), ttl_hours, dry_run=not args.apply)
+        if not achados:
+            print(f"nenhum pipeline vencido (TTL {ttl_hours}h)")
+            return 0
+        verbo = "expirados" if args.apply else "venceriam (use --apply)"
+        print(f"{len(achados)} pipeline(s) {verbo}, TTL {ttl_hours}h:")
+        for x in achados:
+            marca = "!" if x.get("erro") else " "
+            print(f" {marca} {x['task_id']} | {x.get('classification')} | "
+                  f"{(x.get('started_at') or '')[:10]} | "
+                  f"{Path(x['bucket']).name}")
+            if x.get("erro"):
+                print(f"     {x['erro']}")
+        return 0
 
     try:
         expired = expire(Path(harness_dir), ttl_hours, signals_dir=args.signals_dir)

@@ -245,3 +245,82 @@ class TestCli:
         res = self._run(harness_dir)
         assert res.returncode == 0
         assert res.stdout.strip() == ""
+
+
+class TestVarreduraDeTodosOsBuckets:
+    """O TTL nao alcancava projeto abandonado, que e onde ele mais importa.
+
+    `expire()` roda sobre UM bucket, e so quando alguem abre sessao naquele
+    diretorio. Um projeto que ninguem visita mais nunca recebe a visita — entao
+    o pipeline dele fica `active` para sempre, e o TTL de 24h vira decorativo
+    exatamente no caso que ele existe para cobrir.
+
+    Medido em 2026-09-02: 20 pipelines vencidos na maquina, o mais velho de
+    2026-07-28 — cinco semanas. Abrir sessao em qualquer um deles faria o
+    harness tentar retomar um pipeline de julho.
+    """
+
+    def _bucket(self, raiz: Path, nome: str, *, dias: float, task="t-x",
+                classificacao="L1-feature"):
+        d = raiz / "projects" / nome
+        d.mkdir(parents=True, exist_ok=True)
+        quando = datetime.now(timezone.utc) - timedelta(days=dias)
+        (d / "state.json").write_text(json.dumps({
+            "task_id": f"{task}-{nome}", "schema_version": 3,
+            "classification": classificacao, "status": "active",
+            "pipeline": ["tdd"], "current_step": "tdd",
+            "artifacts_so_far": [], "started_at": quando.isoformat(),
+        }), encoding="utf-8")
+        return d
+
+    def test_acha_bucket_em_qualquer_profundidade(self, exp, tmp_path):
+        """Buckets de sessao vivem em projects/<slug>/sessions/<uuid>/."""
+        self._bucket(tmp_path, "raso", dias=10)
+        self._bucket(tmp_path, "fundo/sessions/uuid-1", dias=10)
+        achados = exp.buckets(tmp_path)
+        assert len(achados) == 2
+
+    def test_dry_run_lista_e_nao_toca(self, exp, tmp_path):
+        d = self._bucket(tmp_path, "velho", dias=10)
+        achados = exp.sweep(tmp_path, 24.0)
+        assert len(achados) == 1
+        estado = json.loads((d / "state.json").read_text(encoding="utf-8"))
+        assert estado["status"] == "active", "dry_run alterou o estado"
+
+    def test_apply_expira_de_verdade(self, exp, tmp_path):
+        d = self._bucket(tmp_path, "velho", dias=10)
+        achados = exp.sweep(tmp_path, 24.0, dry_run=False)
+        assert len(achados) == 1 and achados[0].get("expired")
+        estado = json.loads((d / "state.json").read_text(encoding="utf-8"))
+        assert estado["status"] != "active"
+
+    def test_pipeline_fresco_nao_e_tocado(self, exp, tmp_path):
+        """A varredura nao pode destruir trabalho em andamento em outro projeto."""
+        d = self._bucket(tmp_path, "fresco", dias=0.1)
+        assert exp.sweep(tmp_path, 24.0, dry_run=False) == []
+        assert json.loads((d / "state.json").read_text(encoding="utf-8"))["status"] == "active"
+
+    def test_mistura_expira_so_o_vencido(self, exp, tmp_path):
+        self._bucket(tmp_path, "velho-a", dias=40)
+        self._bucket(tmp_path, "velho-b", dias=5)
+        self._bucket(tmp_path, "fresco", dias=0.5)
+        achados = exp.sweep(tmp_path, 24.0, dry_run=False)
+        nomes = {Path(x["bucket"]).name for x in achados}
+        assert nomes == {"velho-a", "velho-b"}
+
+    def test_bucket_sem_task_e_ignorado(self, exp, tmp_path):
+        d = tmp_path / "projects" / "idle"
+        d.mkdir(parents=True)
+        (d / "state.json").write_text(json.dumps({"task_id": None, "status": "idle"}),
+                                      encoding="utf-8")
+        assert exp.sweep(tmp_path, 24.0) == []
+
+    def test_state_json_torto_nao_derruba_a_varredura(self, exp, tmp_path):
+        d = tmp_path / "projects" / "torto"
+        d.mkdir(parents=True)
+        (d / "state.json").write_text("{nao e json}", encoding="utf-8")
+        self._bucket(tmp_path, "velho", dias=10)
+        assert len(exp.sweep(tmp_path, 24.0)) == 1
+
+    def test_sem_projects_nao_quebra(self, exp, tmp_path):
+        assert exp.buckets(tmp_path) == [] and exp.sweep(tmp_path, 24.0) == []

@@ -311,3 +311,44 @@ class TestFechamentoDeSessao:
         monkeypatch.setenv("AI_BRAIN_PATH", str(tmp_path / "nao-existe"))
         lifecycle._fechar_sessao({"session_id": "s-2", "cwd": "C:/x"}, tmp_path)
         assert (tmp_path / "sessions-index" / ".stale").exists()
+
+    def test_sessionend_expira_pipeline_abandonado_de_outro_projeto(
+            self, lifecycle, tmp_path):
+        """A faxina alcanca bucket que ninguem visita — que e o caso que importa.
+
+        `expire_stale_pipeline` roda sobre UM bucket, e so quando alguem abre
+        sessao naquele diretorio. Projeto abandonado nunca recebe a visita, e o
+        TTL de 24h vira decorativo justamente ali. Medido em 2026-09-02: 20
+        pipelines vencidos na maquina, o mais velho com cinco semanas.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        d = tmp_path / "projects" / "abandonado"
+        d.mkdir(parents=True)
+        velho = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        (d / "state.json").write_text(json.dumps({
+            "task_id": "t-velha", "schema_version": 3, "classification": "L1-feature",
+            "status": "active", "pipeline": ["tdd"], "current_step": "tdd",
+            "artifacts_so_far": [], "started_at": velho,
+        }), encoding="utf-8")
+
+        lifecycle._fechar_sessao({"session_id": "s-1", "cwd": "C:/outro/projeto"}, tmp_path)
+
+        estado = json.loads((d / "state.json").read_text(encoding="utf-8"))
+        assert estado["status"] != "active"
+
+    def test_sessionend_nao_expira_pipeline_fresco_alheio(self, lifecycle, tmp_path):
+        """Faxina que destroi trabalho em andamento de outra janela e pior que sujeira."""
+        from datetime import datetime, timezone
+
+        d = tmp_path / "projects" / "em-andamento"
+        d.mkdir(parents=True)
+        (d / "state.json").write_text(json.dumps({
+            "task_id": "t-viva", "schema_version": 3, "classification": "L2-feature",
+            "status": "active", "pipeline": ["tdd"], "current_step": "tdd",
+            "artifacts_so_far": [], "started_at": datetime.now(timezone.utc).isoformat(),
+        }), encoding="utf-8")
+
+        lifecycle._fechar_sessao({"session_id": "s-2", "cwd": "C:/outro"}, tmp_path)
+
+        assert json.loads((d / "state.json").read_text(encoding="utf-8"))["status"] == "active"
