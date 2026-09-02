@@ -389,16 +389,89 @@ def record_offer(*, cwd, turn: int) -> None:
     _save_budget(cwd, b)
 
 
-def bump_drift(*, cwd, sim: float | None) -> int:
-    """Conta turnos consecutivos longe da ancora. Sem medida, nao conta nada."""
+#: Quantas medicoes de cosseno ficam guardadas por projeto.
+SIMS_RING = 12
+
+
+def bump_drift(*, cwd, sim: float | None, turn: int = 0) -> int:
+    """Conta medicoes consecutivas longe da ancora. Sem medida, nao conta nada.
+
+    A semantica do streak NAO mudou, e isso e deliberado. O diagnostico de
+    2026-09-01 acusou esta funcao de congelar o streak quando `sim is None`
+    (turno fora da amostragem), impedindo `deriva` de fechar. A acusacao esta
+    errada: medido com DRIFT_SAMPLE=2 e sim=0.10, o streak vai a 1 no turno 2,
+    2 no turno 4 e 3 no turno 6, e o veredicto sai. Sem medida a funcao devolve
+    o streak intacto — nao o zera.
+
+    `offered_deriva` nunca disparou por outro motivo: as sessoes observadas
+    terminaram nos turnos 2, 3, 5 e 9, e duas das cinco ancoras em disco
+    tinham `embedding: null` (ver o backfill em `main`), o que fazia `sim` ser
+    sempre None e o streak nunca sair de zero.
+
+    O que E novo aqui e o anel `sims`: cada medicao fica registrada com o
+    turno. Isso nao muda decisao nenhuma — e materia-prima de calibracao,
+    coletada de graca em producao. Os pisos 0.55/0.35 sao chutes admitidos no
+    proprio design doc, e a medicao avulsa que existe saiu anticorrelacionada
+    (mesmo assunto 0.33, tangente 0.44). Escolher numero melhor exige dados de
+    uso real, e este e o lugar mais barato de junta-los.
+    """
     b = _budget(cwd)
     if sim is None:
         return int(b.get("drift_streak", 0))
+
+    anel = b.get("sims")
+    if not isinstance(anel, list):
+        anel = []
+    anel.append({"turn": int(turn), "sim": round(float(sim), 4)})
+    b["sims"] = anel[-SIMS_RING:]
+
     b["drift_streak"] = (
         int(b.get("drift_streak", 0)) + 1 if sim < _f("HARNESS_BRANCH_DRIFT_FLOOR", 0.35) else 0
     )
     _save_budget(cwd, b)
     return b["drift_streak"]
+
+
+#: Resultados possiveis de `may_offer`, do mais permissivo ao mais restritivo.
+OK = "ok"
+DUPLICATE = "duplicate"
+BUDGET = "budget"
+MAX_OPEN = "max_open"
+
+
+def may_offer(*, cwd, topic: str, turn: int = 0, explicito: bool = False) -> str:
+    """Um unico portao para os quatro caminhos de deteccao.
+
+    A decisao do usuario em 2026-09-01 foi manter os quatro juntos: autocheck
+    do modelo, `/branch` explicito, camada A e camada B. O risco obvio disso e
+    quatro detectores oferecendo o MESMO tema no mesmo turno — o sensor viraria
+    a interrupcao que veio evitar. As camadas A e B ja passavam por
+    `already_seen` e `budget_allows` dentro do `evaluate`; os outros dois
+    caminhos nao consultavam nada, porque nao havia o que consultar.
+
+    Precedencia, do mais forte ao mais fraco:
+
+      0. `/branch` explicito — o usuario pediu. Ignora orcamento e cooldown
+         (`explicito=True`), mas NAO ignora duplicata: reoferecer um ramo que
+         ja existe e ruido mesmo quando pedido, e o caminho certo ali e
+         `recall`, nao um segundo registro do mesmo tema.
+      1. autocheck do modelo — passa por tudo.
+      2. camada A — passa por tudo.
+      3. camada B — nunca oferece ramo sozinha; so deriva.
+
+    Devolve `ok`, `duplicate`, `budget` ou `max_open`. Nunca levanta: um
+    portao que quebra cala o sensor, e silencio foi o modo de falha original.
+    """
+    try:
+        if branch_state.already_seen(cwd=cwd, topic=topic):
+            return DUPLICATE
+        if not branch_state.can_open(cwd):
+            return MAX_OPEN
+        if not explicito and not budget_allows(cwd=cwd, turn=turn):
+            return BUDGET
+    except Exception:
+        return OK
+    return OK
 
 
 def reset_session(cwd) -> None:
@@ -495,7 +568,7 @@ def evaluate(
             vec = None
         sim = cosine(vec, anchor.get("embedding")) if vec else None
 
-    streak = bump_drift(cwd=cwd, sim=sim)
+    streak = bump_drift(cwd=cwd, sim=sim, turn=turn)
     v = verdict(hit_a=hit, sim=sim, drift_streak=streak)
     if v["kind"] is None:
         return ""
@@ -506,7 +579,9 @@ def evaluate(
     tema = " ".join(text.split())[:160]
 
     if v["kind"] == "ramo":
-        if branch_state.already_seen(cwd=cwd, topic=tema):
+        # Mesmo portao que o autocheck e o /branch consultam. Sem isso os
+        # quatro caminhos de deteccao oferecem o mesmo tema no mesmo turno.
+        if may_offer(cwd=cwd, topic=tema, turn=turn) != OK:
             return ""
         record_offer(cwd=cwd, turn=turn)
         branch_state.signal("offered_ramo_degradado" if v["degraded"] else "offered_ramo")
@@ -534,6 +609,38 @@ def evaluate(
 # ---------------------------------------------------------------------------
 # CLI — chamado pelo wrapper bash com o payload do hook em stdin
 # ---------------------------------------------------------------------------
+
+
+def cli_may_offer(argv: list[str]) -> int:
+    """`branch_sensor.py may-offer --topic "..."` — o portao, pela linha de comando.
+
+    A skill `branch-out` consulta isto ANTES de oferecer. Sem esse passo o
+    autocheck do modelo e o `/branch` explicito nao veem o orcamento que as
+    camadas A e B ja respeitavam, e o usuario leva duas ofertas do mesmo tema
+    no mesmo turno — o cenario que a decisao de manter os quatro caminhos
+    juntos torna provavel.
+
+    Imprime uma palavra: ok | duplicate | budget | max_open.
+    """
+    import argparse as _ap
+
+    ap = _ap.ArgumentParser(prog="branch_sensor.py may-offer")
+    ap.add_argument("--topic", required=True)
+    ap.add_argument("--cwd", default=None)
+    ap.add_argument("--turn", type=int, default=None)
+    ap.add_argument("--explicito", action="store_true",
+                    help="/branch pedido pelo usuario: ignora orcamento, nao duplicata")
+    a = ap.parse_args(argv)
+
+    cwd = a.cwd or os.getcwd()
+    turn = a.turn if a.turn is not None else int(_budget(cwd).get("turn", 0))
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    print(may_offer(cwd=cwd, topic=a.topic, turn=turn, explicito=a.explicito))
+    return 0
 
 
 def main() -> int:
@@ -685,6 +792,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) > 1 and sys.argv[1] == "may-offer":
+            raise SystemExit(cli_may_offer(sys.argv[2:]))
         raise SystemExit(main())
     except SystemExit:
         raise

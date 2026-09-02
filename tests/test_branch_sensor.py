@@ -490,3 +490,141 @@ class TestSinalDiferido:
 
     def test_take_sem_arquivo_e_string_vazia(self, sensor, tmp_path):
         assert sensor.take_pending(cwd=str(tmp_path), session_id="s1") == ""
+
+
+class TestAnelDeSims:
+    """Cada medicao de cosseno fica registrada com o turno.
+
+    Nao muda decisao nenhuma — e materia-prima de calibracao coletada de graca
+    em producao. Os pisos 0.55/0.35 sao chutes admitidos no proprio design doc,
+    e a unica medicao avulsa que existe saiu anticorrelacionada (mesmo assunto
+    0.33, tangente 0.44). Escolher numero melhor exige dados de uso real.
+    """
+
+    def test_medicao_entra_no_anel_com_o_turno(self, sensor, tmp_path):
+        sensor.bump_drift(cwd=str(tmp_path), sim=0.31, turn=14)
+        sensor.bump_drift(cwd=str(tmp_path), sim=0.72, turn=16)
+        anel = sensor._budget(str(tmp_path))["sims"]
+        assert anel == [{"turn": 14, "sim": 0.31}, {"turn": 16, "sim": 0.72}]
+
+    def test_turno_sem_medicao_nao_polui_o_anel(self, sensor, tmp_path):
+        sensor.bump_drift(cwd=str(tmp_path), sim=0.31, turn=2)
+        sensor.bump_drift(cwd=str(tmp_path), sim=None, turn=3)
+        assert len(sensor._budget(str(tmp_path))["sims"]) == 1
+
+    def test_anel_tem_teto(self, sensor, tmp_path):
+        for t in range(sensor.SIMS_RING + 5):
+            sensor.bump_drift(cwd=str(tmp_path), sim=0.5, turn=t)
+        anel = sensor._budget(str(tmp_path))["sims"]
+        assert len(anel) == sensor.SIMS_RING
+        assert anel[-1]["turn"] == sensor.SIMS_RING + 4  # guarda os mais recentes
+
+
+class TestStreakSobreviveAAmostragem:
+    """O streak NAO congela em turno fora da amostragem.
+
+    O diagnostico de 2026-09-01 acusou `bump_drift` de impedir `deriva` de
+    fechar quando `sim is None`. A acusacao esta errada e este teste e a prova:
+    com DRIFT_SAMPLE=2 o streak chega a 3 no turno 6 e o veredicto sai.
+
+    Fica registrado porque a hipotese errada quase virou refatoracao: o motivo
+    real de `offered_deriva` nunca ter disparado foram sessoes curtas (turnos
+    observados: 2, 3, 5, 9) e duas ancoras com `embedding: null`, que faziam
+    `sim` ser sempre None.
+    """
+
+    def test_streak_chega_a_tres_com_amostragem_alternada(self, sensor, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_DRIFT_FLOOR", "0.35")
+        streak = 0
+        for turno in range(1, 7):
+            sim = 0.10 if turno % 2 == 0 else None
+            streak = sensor.bump_drift(cwd=str(tmp_path), sim=sim, turn=turno)
+        assert streak == 3
+        assert sensor.verdict(hit_a=None, sim=0.10, drift_streak=streak)["kind"] == "deriva"
+
+    def test_ancora_cega_e_que_travava_o_streak(self, sensor, tmp_path):
+        """Com embedding nulo, `sim` e sempre None e o streak nunca sai de zero.
+
+        Era o estado de 2 das 5 ancoras reais em disco. Ver TestAncoraCega.
+        """
+        for turno in range(1, 9):
+            streak = sensor.bump_drift(cwd=str(tmp_path), sim=None, turn=turno)
+        assert streak == 0
+        assert sensor.verdict(hit_a=None, sim=None, drift_streak=streak)["kind"] is None
+
+
+class TestPortaoUnico:
+    """Um portao para os quatro caminhos de deteccao.
+
+    A decisao de 2026-09-01 foi manter os quatro juntos: autocheck do modelo,
+    `/branch` explicito, camada A e camada B. O risco disso e quatro
+    detectores oferecendo o MESMO tema no mesmo turno — o sensor viraria a
+    interrupcao que veio evitar. As camadas A e B ja consultavam `already_seen`
+    e `budget_allows` dentro do `evaluate`; os outros dois nao consultavam
+    nada, porque nao havia o que consultar.
+    """
+
+    def test_tema_novo_passa(self, sensor, tmp_path):
+        assert sensor.may_offer(cwd=str(tmp_path), topic="indexar sessoes cruzadas",
+                                turn=5) == sensor.OK
+
+    def test_tema_ja_registrado_e_duplicata(self, sensor, tmp_path):
+        import branch_state
+
+        branch_state.add(cwd=str(tmp_path), name="Ja Existe",
+                         topic="indexar sessoes cruzadas")
+        assert sensor.may_offer(cwd=str(tmp_path), topic="indexar sessoes cruzadas",
+                                turn=5) == sensor.DUPLICATE
+
+    def test_branch_explicito_nao_reoferece_duplicata(self, sensor, tmp_path):
+        """Pedir de novo o que ja existe pede `recall`, nao um segundo registro."""
+        import branch_state
+
+        branch_state.add(cwd=str(tmp_path), name="Ja Existe",
+                         topic="indexar sessoes cruzadas")
+        assert sensor.may_offer(cwd=str(tmp_path), topic="indexar sessoes cruzadas",
+                                turn=5, explicito=True) == sensor.DUPLICATE
+
+    def test_orcamento_estourado_barra(self, sensor, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "0")
+        assert sensor.may_offer(cwd=str(tmp_path), topic="assunto inedito aqui",
+                                turn=5) == sensor.BUDGET
+
+    def test_branch_explicito_fura_o_orcamento(self, sensor, tmp_path, monkeypatch):
+        """O usuario pediu. Teto e cooldown existem para conter o sensor, nao ele."""
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "0")
+        assert sensor.may_offer(cwd=str(tmp_path), topic="assunto inedito aqui",
+                                turn=5, explicito=True) == sensor.OK
+
+    def test_teto_de_ramos_abertos_nao_e_furado_nem_por_branch(self, sensor, tmp_path,
+                                                               monkeypatch):
+        """Com o teto atingido o problema e capacidade, nao permissao.
+
+        Tres ramos abertos ja enchem o bloco de parking. A skill recebe
+        `max_open` e deve dizer isso, em vez de abrir o quarto.
+        """
+        import branch_state
+
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OPEN", "2")
+        for n in (1, 2):
+            b = branch_state.add(cwd=str(tmp_path), name=f"Ramo {n}",
+                                 topic=f"assunto distinto numero {n} aqui")
+            branch_state.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+        for explicito in (False, True):
+            assert sensor.may_offer(cwd=str(tmp_path), topic="tema totalmente outro",
+                                    turn=5, explicito=explicito) == sensor.MAX_OPEN
+
+    def test_falha_interna_abre_o_portao(self, sensor, tmp_path, monkeypatch):
+        """Portao que quebra cala o sensor, e silencio foi o modo de falha original."""
+        import branch_state
+
+        def _explode(**_kw):
+            raise OSError("registro ilegivel")
+
+        monkeypatch.setattr(branch_state, "already_seen", _explode)
+        assert sensor.may_offer(cwd=str(tmp_path), topic="qualquer",
+                                turn=5) == sensor.OK
+
+    def test_cli_imprime_uma_palavra(self, sensor, tmp_path, capsys):
+        sensor.cli_may_offer(["--cwd", str(tmp_path), "--topic", "assunto inedito"])
+        assert capsys.readouterr().out.strip() == sensor.OK

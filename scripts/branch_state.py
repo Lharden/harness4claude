@@ -416,6 +416,9 @@ def main() -> int:
     p.add_argument("--seed", default=None)
     p.add_argument("--launcher", default=None)
     p.add_argument("--detector", default="claude")
+    p.add_argument("--parent-session", dest="parent_session", default=None,
+                   help="uuid da sessao pai; e o unico fio que liga o ramo a ela")
+    p.add_argument("--origin-turn", dest="origin_turn", type=int, default=0)
     args = p.parse_args()
     cwd = args.cwd or os.getcwd()
 
@@ -430,7 +433,9 @@ def main() -> int:
             p.error("add exige --name")
         print(
             json.dumps(
-                add(cwd=cwd, name=args.name, topic=args.topic, detector=args.detector),
+                add(cwd=cwd, name=args.name, topic=args.topic,
+                    detector=args.detector, parent_session=args.parent_session,
+                    origin_turn=args.origin_turn),
                 ensure_ascii=False,
             )
         )

@@ -17,6 +17,24 @@ nascem e só uma é desenvolvida, e o assunto abandonado continua ocupando
 janela. Esta skill trata os três com um mesmo movimento: **um ramo vira uma
 sessão de verdade, com endereço próprio, e o tema sai do pai.**
 
+## Como invocar os scripts
+
+`$CLAUDE_PLUGIN_ROOT` só existe no ambiente dos **hooks**. Quando você roda um
+comando pela ferramenta de shell, ele está vazio — no PowerShell nem sequer é
+uma variável válida, e o comando falha em silêncio com um caminho tipo
+`/scripts/branch_state.py`. O caminho real fica gravado em disco:
+
+```bash
+# Bash
+H4C="$(cat ~/.claude/harness/plugin-root)"
+```
+```powershell
+# PowerShell
+$H4C = Get-Content "$HOME/.claude/harness/plugin-root"
+```
+
+Defina `$H4C` uma vez por sessão de trabalho e use nos comandos abaixo.
+
 ## Quando ativar
 
 - O hook emitiu `HARNESS v3 BRANCH SIGNAL` (ramo ou deriva) — **ativar antes de
@@ -50,6 +68,33 @@ Se não precisa, ele não deveria pagar por ele.
 | `close <slug>` | Fecha e grava a conclusão para o pai ler |
 | `drift` | Deriva: diz de onde a conversa saiu e pergunta o rumo. **Nunca abre janela** |
 
+## Precedência e orçamento — consulte antes de oferecer
+
+Quatro caminhos detectam ramo: você (autocheck), `/branch` do usuário, a camada
+A (regex) e a camada B (embedding). Os dois últimos já passam pelo orçamento
+dentro do sensor. **Os dois primeiros são você, e você precisa consultar.** Sem
+isso o usuário leva duas ofertas do mesmo tema no mesmo turno — a interrupção
+que este sistema existe para evitar.
+
+```bash
+python "$H4C/scripts/branch_sensor.py" may-offer --topic "<tema em uma frase>"
+# acrescente --explicito quando o usuário pediu /branch
+```
+
+Uma palavra na saída:
+
+| Resposta | O que fazer |
+|---|---|
+| `ok` | Ofereça |
+| `duplicate` | **Não ofereça.** Já existe ramo com esse tema — o caminho é `recall <slug>` |
+| `budget` | **Não ofereça.** Teto ou cooldown da sessão. Com `/branch` explícito isso não aparece |
+| `max_open` | **Não ofereça.** Três ramos já abertos: o problema é capacidade, não permissão. Diga isso e ofereça fechar ou recall — `--explicito` não fura este |
+
+Precedência quando dois caminhos disparam no mesmo turno: `/branch` explícito >
+autocheck > camada A > camada B. A camada B nunca oferece ramo sozinha, só
+deriva. O portão já deduplica por tema, então basta consultá-lo — não tente
+arbitrar por conta.
+
 ## offer — o caminho principal
 
 1. **Nomeie o ramo.** Duas a quatro palavras, específicas. "Sensor de Deriva",
@@ -64,12 +109,18 @@ Se não precisa, ele não deveria pagar por ele.
 Registre sempre, mesmo antes de perguntar:
 
 ```bash
-python "$CLAUDE_PLUGIN_ROOT/scripts/branch_state.py" add \
-  --name "<Nome do Ramo>" --topic "<tema em uma frase>" --detector claude
+python "$H4C/scripts/branch_state.py" add \
+  --name "<Nome do Ramo>" --topic "<tema em uma frase>" --detector claude \
+  --parent-session "<uuid desta sessão>"
 ```
 
 O `session_id` nasce aí, antes da janela: um ramo `pending` já é endereçável
 por `claude --resume <uuid>` semanas depois.
+
+**`--parent-session` não é opcional na prática.** É o único fio que liga o ramo
+de volta à conversa que o originou — sem ele o registro sabe que existe um ramo
+e não sabe de onde ele veio, e o filho não tem como consultar a mãe. Use o uuid
+desta sessão (o mesmo que aparece nos comandos `--resume`).
 
 ## open — abrir a janela
 
@@ -89,9 +140,9 @@ Seis seções obrigatórias (o renderizador recusa semente incompleta):
 Depois:
 
 ```bash
-python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" write --slug <slug> --seed-file <arquivo.md>
-python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" launch --slug <slug>
-python "$CLAUDE_PLUGIN_ROOT/scripts/branch_state.py" status --slug <slug> --set open
+python "$H4C/scripts/branch_seed.py" write --slug <slug> --seed-file <arquivo.md>
+python "$H4C/scripts/branch_seed.py" launch --slug <slug>
+python "$H4C/scripts/branch_state.py" status --slug <slug> --set open
 ```
 
 A janela abre em Windows Terminal + PowerShell 7, no diretório do projeto, já
@@ -130,7 +181,7 @@ janela.**
 Se ele escolher reancorar, atualize a âncora:
 
 ```bash
-python -c "import sys; sys.path.insert(0,'$CLAUDE_PLUGIN_ROOT/scripts'); \
+python -c "import sys; sys.path.insert(0,'$H4C/scripts'); \
 import branch_sensor as s; s.set_anchor(cwd='.', text='<novo objetivo>', \
 source='reanchor', session_id=None, embedding=s.embed('<novo objetivo>'))"
 ```
