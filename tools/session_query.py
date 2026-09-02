@@ -27,8 +27,12 @@ e devolver a mesma sessao cinco vezes gastaria o top-k inteiro numa conversa so.
 `MIN_COS` e `CONFIDENT_COS` foram herdados do wiki_query como ponto de partida
 declarado, **nao calibrados para este corpus**. Prosa de wiki e transcript de
 conversa tem distribuicoes diferentes de cosseno; herdar numero sem medir foi
-exatamente o erro que deixou o piso do branch-sensor decorativo por meses. Ver
-`--calibrar` para a varredura que produz o numero honesto.
+exatamente o erro que deixou o piso do branch-sensor decorativo por meses.
+
+Nao ha varredura de calibracao ainda — `scripts/calibrate_wiki_floor.py` e o
+molde, e falta o conjunto de pares (pergunta, sessao certa) contra o qual medir.
+Ate la, trate `cos` como ordem relativa e nao como probabilidade; o `*` no
+render diz "acima de um piso herdado", nao "confiavel".
 """
 from __future__ import annotations
 
@@ -41,6 +45,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hooks"))
 import skill_router as sr  # noqa: E402
 
@@ -248,12 +253,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    from console import usar_utf8
+
+    usar_utf8()
     args = build_parser().parse_args()
-    try:
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
 
     if args.recent is not None:
         linhas = recent(args.recent or os.getcwd(), args.top_k, args.catalog)
