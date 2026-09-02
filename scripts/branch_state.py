@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import branch_config
 import harness_paths
 
 SCHEMA_VERSION = 1
@@ -303,7 +304,7 @@ def open_branches(cwd: str | os.PathLike | None = None) -> list[dict]:
 def can_open(cwd: str | os.PathLike | None = None) -> bool:
     """Teto de janelas simultaneas. Estourou, o ramo novo fica `pending`."""
     try:
-        teto = int(os.environ.get("HARNESS_BRANCH_MAX_OPEN", "3"))
+        teto = branch_config.get_int("HARNESS_BRANCH_MAX_OPEN")
     except ValueError:
         teto = 3
     return len(open_branches(cwd)) < teto

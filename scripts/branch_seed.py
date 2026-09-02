@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import branch_config
 import branch_state
 
 #: Secoes que uma semente precisa ter para o ramo comecar andando.
@@ -173,7 +174,7 @@ def launch_command(*, branch: dict, cwd: str, launcher_path: str) -> list[str]:
     `-w -1` forca JANELA nova, nao aba: a aba nasceria escondida atras da aba
     atual e o ramo cairia no mesmo esquecimento que a feature combate.
     """
-    if os.environ.get("HARNESS_BRANCH_HOST", "wt").strip().lower() != "wt":
+    if branch_config.get_str("HARNESS_BRANCH_HOST").strip().lower() != "wt":
         return []
     wt = shutil.which("wt") or shutil.which("wt.exe") or "wt.exe"
     return [

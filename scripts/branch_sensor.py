@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import branch_config
 import branch_state
 
 # ---------------------------------------------------------------------------
@@ -230,6 +231,15 @@ def cosine(a, b) -> float | None:
 
 
 def _f(env: str, default: float) -> float:
+    """Float de um knob. O `default` do chamador vira apenas fallback.
+
+    A fonte da verdade e `branch_config.KNOBS`: enquanto cada default vivia no
+    ponto de leitura, a documentacao divergiu do codigo sem que nada acusasse
+    (o CLAUDE.md listou por semanas quatro nomes que ninguem lia). O parametro
+    continua na assinatura para nao quebrar chamadas com knob nao registrado.
+    """
+    if env in branch_config.KNOBS:
+        return branch_config.get_float(env)
     try:
         return float(os.environ.get(env, default))
     except (TypeError, ValueError):
@@ -237,10 +247,14 @@ def _f(env: str, default: float) -> float:
 
 
 def _i(env: str, default: int) -> int:
+    """Inteiro de um knob. Mesma regra do `_f`."""
+    if env in branch_config.KNOBS:
+        return branch_config.get_int(env)
     try:
         return int(os.environ.get(env, default))
     except (TypeError, ValueError):
         return default
+
 
 
 def verdict(*, hit_a: str | None, sim: float | None, drift_streak: int) -> dict:
