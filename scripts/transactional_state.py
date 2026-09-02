@@ -574,6 +574,37 @@ class HarnessDatabase:
         return [dict(row) for row in rows]
 
     def approve_branch(self, branch_id: str) -> dict[str, Any]:
+        return self.resolve_branch_decision(branch_id, "approve")
+
+    def request_branch_approval(self, branch_id: str) -> dict[str, Any]:
+        now = utc_now()
+        with self._write() as connection:
+            branch = connection.execute("SELECT * FROM branches WHERE branch_id = ?", (branch_id,)).fetchone()
+            if branch is None:
+                raise StateTransitionError(f"branch not found: {branch_id}")
+            if branch["approved_at"]:
+                return dict(branch)
+            gate = connection.execute(
+                "SELECT id FROM gates WHERE task_id = ? AND gate_type = 'branch-open' AND status = 'pending' "
+                "AND subject_id = ? ORDER BY id DESC LIMIT 1",
+                (branch["task_id"], branch_id),
+            ).fetchone()
+            if gate is None:
+                connection.execute(
+                    "INSERT INTO gates(task_id, gate_type, subject_id, status, created_at) "
+                    "VALUES (?, 'branch-open', ?, 'pending', ?)",
+                    (branch["task_id"], branch_id, now),
+                )
+                connection.execute(
+                    "UPDATE tasks SET status = 'awaiting_gate', revision = revision + 1, "
+                    "updated_at = ? WHERE task_id = ?",
+                    (now, branch["task_id"]),
+                )
+        return self.branch(branch_id)
+
+    def resolve_branch_decision(self, branch_id: str, decision: str) -> dict[str, Any]:
+        if decision not in {"approve", "park", "discard"}:
+            raise StateTransitionError(f"invalid branch decision: {decision}")
         now = utc_now()
         with self._write() as connection:
             branch = connection.execute("SELECT * FROM branches WHERE branch_id = ?", (branch_id,)).fetchone()
@@ -587,13 +618,20 @@ class HarnessDatabase:
             if gate is None:
                 raise StateTransitionError("pending branch-open gate not found")
             connection.execute(
-                "UPDATE gates SET status = 'resolved', decision = 'approve', resolved_at = ? WHERE id = ?",
-                (now, gate["id"]),
+                "UPDATE gates SET status = 'resolved', decision = ?, resolved_at = ? WHERE id = ?",
+                (decision, now, gate["id"]),
             )
-            connection.execute(
-                "UPDATE branches SET approved_at = ?, updated_at = ? WHERE branch_id = ?",
-                (now, now, branch_id),
-            )
+            if decision == "approve":
+                connection.execute(
+                    "UPDATE branches SET approved_at = ?, updated_at = ? WHERE branch_id = ?",
+                    (now, now, branch_id),
+                )
+            elif decision == "discard":
+                connection.execute(
+                    "UPDATE branches SET status = 'closed', conclusion = 'discarded', "
+                    "updated_at = ? WHERE branch_id = ?",
+                    (now, branch_id),
+                )
             still_pending = connection.execute(
                 "SELECT 1 FROM gates WHERE task_id = ? AND status = 'pending' LIMIT 1",
                 (branch["task_id"],),

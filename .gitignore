@@ -18,13 +18,11 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.ruff_cache/
 .pytest_tmp_*/
 *.egg-info/
 dist/
 build/
-
-# Cache HTTP do pip criado dentro do repo pelo bootstrap do SessionStart
-pip/
 
 # OS
 .DS_Store

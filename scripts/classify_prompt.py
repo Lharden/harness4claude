@@ -174,7 +174,6 @@ DOCS_PATTERNS = (
     r"\bescreve[r]? (a )?doc\b",
     r"\bwrite (the )?docs?\b",
 )
-
 BUG_PATTERNS = (
     r"\bbug\b",
     r"\bfix\b",

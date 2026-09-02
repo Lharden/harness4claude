@@ -52,6 +52,7 @@ def test_release_version_and_lifecycle_are_synchronized():
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
+        "PostToolUseFailure",
         "PreCompact",
         "PostCompact",
         "SubagentStart",

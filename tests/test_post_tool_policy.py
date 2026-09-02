@@ -22,12 +22,17 @@ def test_edit_uses_real_path_and_shell_uses_non_counting_revision_marker():
     assert policy.counts_as_modified_file("Bash", "") is False
 
 
-def test_post_tool_hook_matches_shell_commands_for_conservative_invalidation():
+def test_post_tool_hooks_route_shell_state_through_one_transactional_handler():
     hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     commands = hooks["hooks"]["PostToolUse"]
     reclassify = next(
         entry for entry in commands
         if any("harness-reclassify.sh" in hook["command"] for hook in entry["hooks"])
     )
+    transactional = next(
+        entry for entry in commands
+        if any("harness-transactional.py" in hook["command"] for hook in entry["hooks"])
+    )
 
-    assert "Bash" in reclassify["matcher"]
+    assert reclassify["matcher"] == "Edit|Write"
+    assert transactional["matcher"] == "Bash|PowerShell"

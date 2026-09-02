@@ -117,6 +117,11 @@ python "$H4C/scripts/branch_state.py" add \
 O `session_id` nasce aí, antes da janela: um ramo `pending` já é endereçável
 por `claude --resume <uuid>` semanas depois.
 
+Depois da resposta, resolva o gate do ramo. Para parkear (inclusive no default
+ambíguo), rode `branch_state.py decision --slug <slug> --decision park`; para
+descartar, use `--decision discard`. A opção de abrir é resolvida atomicamente
+no passo `status --set open` abaixo.
+
 **`--parent-session` não é opcional na prática.** É o único fio que liga o ramo
 de volta à conversa que o originou — sem ele o registro sabe que existe um ramo
 e não sabe de onde ele veio, e o filho não tem como consultar a mãe. Use o uuid
@@ -140,10 +145,14 @@ Seis seções obrigatórias (o renderizador recusa semente incompleta):
 Depois:
 
 ```bash
-python "$H4C/scripts/branch_seed.py" write --slug <slug> --seed-file <arquivo.md>
-python "$H4C/scripts/branch_seed.py" launch --slug <slug>
-python "$H4C/scripts/branch_state.py" status --slug <slug> --set open
+python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" write --slug <slug> --seed-file <arquivo.md>
+python "$CLAUDE_PLUGIN_ROOT/scripts/branch_state.py" status --slug <slug> --set open
+python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" launch --slug <slug>
 ```
+
+`status --set open` é a fronteira de autorização: resolve o gate específico do
+ramo e aplica o teto transacional antes de qualquer janela ser lançada. Se o
+teto estiver cheio, o comando falha e o launcher não deve ser executado.
 
 A janela abre em Windows Terminal + PowerShell 7, no diretório do projeto, já
 rodando `claude --session-id <uuid> -n "<nome>"` com a semente. O launcher fica

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -117,24 +118,70 @@ def _walk(value: Any):
         yield value
 
 
+def _explicit_exit_code(value: Any) -> int | None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = re.sub(r"[^a-z]", "", str(key).casefold())
+            if normalized in {"exitcode", "returncode"}:
+                if isinstance(nested, int) and not isinstance(nested, bool):
+                    return nested
+                if isinstance(nested, str) and re.fullmatch(r"-?\d+", nested.strip()):
+                    return int(nested)
+        for nested in value.values():
+            result = _explicit_exit_code(nested)
+            if result is not None:
+                return result
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            result = _explicit_exit_code(nested)
+            if result is not None:
+                return result
+    return None
+
+
 def _exit_code(payload: dict[str, Any]) -> int | None:
-    for value in _walk(_response(payload)):
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            for pattern in (
-                r"Process exited with code\s+(-?\d+)",
-                r"Exit code:\s*(-?\d+)",
-                r"[\"']?exit_code[\"']?\s*[:=]\s*(-?\d+)",
-            ):
-                match = re.search(pattern, value, re.IGNORECASE)
-                if match:
-                    return int(match.group(1))
+    explicit = _explicit_exit_code(_response(payload))
+    if explicit is not None:
+        return explicit
+    event = _event_name(payload)
+    if event == "PostToolUse":
+        return 0
+    if event == "PostToolUseFailure":
+        text = str(payload.get("error") or "")
+        for pattern in (
+            r"(?:status|exit)\s+code\s*[:=]?\s*(-?\d+)",
+            r"exit(?:ed)?\s+with\s+(?:non-zero\s+)?(?:status\s+)?(?:code\s+)?(-?\d+)",
+            r"exit\s+status\s+(-?\d+)",
+        ):
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return 1
     return None
 
 
 def _response_text(payload: dict[str, Any]) -> str:
-    return "\n".join(value for value in _walk(_response(payload)) if isinstance(value, str))
+    values = [value for value in _walk(_response(payload)) if isinstance(value, str)]
+    error = payload.get("error")
+    if isinstance(error, str) and error:
+        values.append(error)
+    return "\n".join(values)
+
+
+def _write_heartbeat(
+    payload: dict[str, Any], event: str, harness_root: str | Path | None
+) -> None:
+    if not event:
+        return
+    root = Path(harness_root or os.environ.get("HARNESS_DIR") or Path.home() / ".claude" / "harness")
+    try:
+        heartbeats = root / "heartbeats"
+        heartbeats.mkdir(parents=True, exist_ok=True)
+        temporary = heartbeats / f".{event}.tmp"
+        temporary.write_text(str(time.time()), encoding="utf-8")
+        temporary.replace(heartbeats / event)
+    except OSError:
+        pass
 
 
 def _test_counts(payload: dict[str, Any]) -> tuple[int | None, int | None, str | None]:
@@ -248,12 +295,13 @@ def handle_payload(
     payload: dict[str, Any], *, harness_root: str | Path | None = None, event: str | None = None
 ) -> str:
     name = _event_name(payload, event)
+    _write_heartbeat(payload, name, harness_root)
     if name == "Stop" and (payload.get("stop_hook_active") or payload.get("stopHookActive")):
         return ""
     context = _database_for_payload(payload, harness_root)
     if context is None:
         return ""
-    if name == "PostToolUse":
+    if name in {"PostToolUse", "PostToolUseFailure"}:
         return _handle_post_tool(payload, context)
     if name == "Stop":
         return _handle_stop(payload, context)

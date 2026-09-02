@@ -268,6 +268,7 @@ def main() -> int:
             p.error("write exige --seed-file")
         texto = Path(args.seed_file).read_text(encoding="utf-8")
         paths = write_branch_files(cwd=cwd, branch=branch, seed_text=texto)
+        branch_state.attach_files(cwd=cwd, slug=args.slug, **paths)
         print(json.dumps(paths, ensure_ascii=False))
     elif args.acao == "command":
         print(
