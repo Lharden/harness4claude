@@ -128,6 +128,10 @@ PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 #
 # Se o emissor falhar, o texto cru sai mesmo assim: stdout em SessionStart e
 # canal provado. Perder o digest por causa do mensageiro repetiria a falha.
+# `|| true` em cada uso nao e paranoia: `set -euo pipefail` faz qualquer erro
+# dentro do bloco python — um import que falta, um state.json ilegivel — matar
+# o hook com exit 1 e stderr vazio. O SessionStart morreria em silencio, que e
+# a mesma classe de falha que o canal morto: roda, nao avisa, nao entrega.
 _harness_emit() {
     local kind="${1:-session_start}"
     local texto
@@ -306,7 +310,7 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 partes_saida = [x for x in (digest, arsenal) if x]
 if partes_saida:
     print((chr(10) * 2).join(partes_saida))
-" 2>/dev/null | _harness_emit digest
+" 2>/dev/null | _harness_emit digest || true
     exit 0
 fi
 
@@ -350,7 +354,7 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 if arsenal:
     partes.append(arsenal)
 print('\n\n'.join(partes))
-" 2>/dev/null | _harness_emit resuming
+" 2>/dev/null | _harness_emit resuming || true
     exit 0
 fi
 
@@ -394,6 +398,6 @@ if arsenal:
 
 if parts:
     print('\n\n'.join(parts))
-" 2>/dev/null | _harness_emit session_start
+" 2>/dev/null | _harness_emit session_start || true
 
 exit 0
