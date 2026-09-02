@@ -69,7 +69,12 @@ def test_science_intent_routes_evidence_prompts(monkeypatch, capsys):
     assert hook.main() == 0
 
     response = json.loads(capsys.readouterr().out)
-    message = response["systemMessage"]
+    # A chave mudou em 2026-09-01: `systemMessage` e canal de UI e nao entra no
+    # contexto do modelo — nos 343 transcripts, 100% das linhas com ele no
+    # stdout tem `content` vazio. Este assert le so a chave nova de proposito:
+    # aceitar as duas deixaria a regressao passar despercebida.
+    assert "systemMessage" not in response
+    message = response["hookSpecificOutput"]["additionalContext"]
     assert "science-evidence" in message
     assert "read-only" in message
     assert "provenance" in message
