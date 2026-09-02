@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import branch_config
 import branch_state
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,31 @@ def _router():
             return None
         _ROUTER = mod
     return _ROUTER
+
+
+_EMIT = None
+
+
+def _emit_mod():
+    """Emissor unico, carregado como o `_router()` — hooks/ nao entra no path.
+
+    Devolve None se nao carregar; `main` cai no canal provado escrevendo o
+    JSON a mao. Perder o sinal por causa do mensageiro seria repetir, com
+    outra causa, exatamente a falha que este modulo veio consertar.
+    """
+    global _EMIT
+    if _EMIT is None:
+        path = Path(__file__).resolve().parent.parent / "hooks" / "emit.py"
+        spec = importlib.util.spec_from_file_location("harness_emit", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            return None
+        _EMIT = mod
+    return _EMIT
 
 
 def embed(text: str) -> list[float] | None:
@@ -96,6 +122,27 @@ def embed(text: str) -> list[float] | None:
 
 #: Marcadores de tangente. Sao formas de ABRIR assunto, nao temas — por isso
 #: envelhecem devagar e valem em qualquer projeto.
+#:
+#: MEDIDO EM 2026-09-02 (scripts/calibrate_branch_layer_a.py, 702 pares:
+#: 40 positivos por supervisao distante, 662 negativos). O resultado nao
+#: recomenda ajuste, recomenda revisao da premissa:
+#:
+#:   - `e se` e o UNICO padrao que ja acertou: 20 disparos, 2 positivos e
+#:     18 negativos. Precisao 0.10.
+#:   - os outros 15 tem precisao 0.000 ou nunca disparam.
+#:   - 12 dos 16 NUNCA dispararam em 702 pares reais.
+#:   - 19 candidatos estruturais foram testados na mesma peneira. Nenhum passou.
+#:
+#: Ressalva metodologica, e ela importa: o rotulo positivo e o primeiro prompt
+#: de uma sessao NOVA, escrito em contexto limpo — ninguem abre conversa com
+#: "alias, e se". Isso invalida o RECALL por construcao. A PRECISAO nao sofre
+#: disso: ela mede se, quando a frase aparece no meio de uma sessao, o usuario
+#: de fato ramifica depois. A resposta medida e nao.
+#:
+#: Consequencia de projeto: `verdict()` exige `hit_a` para emitir `ramo`, entao
+#: esta lista e o portao. Um portao com precisao 0.10 nao e um detector com
+#: ajuste pendente — e a premissa de que tangente se anuncia por frase-marcador
+#: nao se sustentando nos dados deste usuario.
 LAYER_A_PATTERNS = (
     r"\be se\b",
     r"\boutra ideia\b",
@@ -205,6 +252,15 @@ def cosine(a, b) -> float | None:
 
 
 def _f(env: str, default: float) -> float:
+    """Float de um knob. O `default` do chamador vira apenas fallback.
+
+    A fonte da verdade e `branch_config.KNOBS`: enquanto cada default vivia no
+    ponto de leitura, a documentacao divergiu do codigo sem que nada acusasse
+    (o CLAUDE.md listou por semanas quatro nomes que ninguem lia). O parametro
+    continua na assinatura para nao quebrar chamadas com knob nao registrado.
+    """
+    if env in branch_config.KNOBS:
+        return branch_config.get_float(env)
     try:
         return float(os.environ.get(env, default))
     except (TypeError, ValueError):
@@ -212,14 +268,33 @@ def _f(env: str, default: float) -> float:
 
 
 def _i(env: str, default: int) -> int:
+    """Inteiro de um knob. Mesma regra do `_f`."""
+    if env in branch_config.KNOBS:
+        return branch_config.get_int(env)
     try:
         return int(os.environ.get(env, default))
     except (TypeError, ValueError):
         return default
 
 
+
 def verdict(*, hit_a: str | None, sim: float | None, drift_streak: int) -> dict:
-    """Decide entre ramo, deriva e silencio. Funcao pura — o resto e IO."""
+    """Decide entre ramo, deriva e silencio. Funcao pura — o resto e IO.
+
+    AVISO DE CALIBRACAO (medido 2026-09-01, ancora real desta maquina):
+    os cossenos observados vivem entre 0.28 e 0.44 — abaixo do
+    HARNESS_BRANCH_FLOOR de 0.55 em 100% dos casos. Logo `sim <
+    branch_floor` e sempre verdade e o segundo ramo abaixo equivale a
+    `hit_a` sozinho: hoje a camada B nao veta nada, so reporta se o
+    Ollama respondeu. Pior, a medicao saiu anticorrelacionada — o mesmo
+    assunto pontuou 0.33 e uma tangente clara pontuou 0.44, sinal de que
+    o cosseno contra o primeiro prompt esta dominado por comprimento e
+    estilo, nao por tema.
+
+    Nao troque 0.55 por outro numero a olho: seria repetir o chute com
+    outro digito. O piso certo (e a metrica certa) saem de
+    scripts/calibrate_branch_floor.py contra rotulos reais.
+    """
     branch_floor = _f("HARNESS_BRANCH_FLOOR", 0.55)
     drift_floor = _f("HARNESS_BRANCH_DRIFT_FLOOR", 0.35)
     drift_turns = _i("HARNESS_BRANCH_DRIFT_TURNS", 3)
@@ -261,6 +336,60 @@ def _save_budget(cwd, data: dict) -> None:
         pass
 
 
+def _pending_path(cwd) -> Path:
+    return Path(str(branch_state.harness_paths.state_dir(cwd=cwd) / "pending-signal.json"))
+
+
+def stash_pending(*, cwd, session_id, text: str, turn: int) -> None:
+    """Guarda um sinal nascido no Stop para o proximo UserPromptSubmit entregar.
+
+    No Stop o turno acabou: a instrucao "invoque a skill AGORA, antes de
+    responder" chega depois da resposta, o que a torna inexecutavel. Os 4
+    BRANCH SIGNAL da historia inteira vieram desse evento, e nenhum virou
+    oferta.
+
+    Descartar tambem nao serve, e a medicao mostrou por que: `evaluate` chama
+    `record_offer` ANTES de saber se a entrega e possivel, entao um sinal
+    perdido no Stop ainda queima uma das 2 ofertas da sessao. Em 2026-09-01
+    isto foi observado ao vivo — `offers: 1` gasto por um sinal que ninguem
+    leu. Guardar fecha os dois buracos com o mesmo arquivo.
+    """
+    try:
+        p = _pending_path(cwd)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({
+            "session_id": session_id or "",
+            "text": text,
+            "turn": turn,
+            "stashed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def take_pending(*, cwd, session_id) -> str:
+    """Consome o sinal guardado, se for da sessao corrente. Le uma vez so.
+
+    Sinal de outra sessao e descartado sem entregar: o objetivo mudou, e
+    oferecer um ramo sobre a conversa de ontem seria ruido com cara de
+    memoria.
+    """
+    p = _pending_path(cwd)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    try:
+        p.unlink()
+    except OSError:
+        pass
+    if not isinstance(data, dict):
+        return ""
+    if session_id and data.get("session_id") and data["session_id"] != session_id:
+        return ""
+    return str(data.get("text") or "")
+
+
 def budget_allows(*, cwd, turn: int) -> bool:
     """Teto de ofertas por sessao mais cooldown entre elas.
 
@@ -281,16 +410,89 @@ def record_offer(*, cwd, turn: int) -> None:
     _save_budget(cwd, b)
 
 
-def bump_drift(*, cwd, sim: float | None) -> int:
-    """Conta turnos consecutivos longe da ancora. Sem medida, nao conta nada."""
+#: Quantas medicoes de cosseno ficam guardadas por projeto.
+SIMS_RING = 12
+
+
+def bump_drift(*, cwd, sim: float | None, turn: int = 0) -> int:
+    """Conta medicoes consecutivas longe da ancora. Sem medida, nao conta nada.
+
+    A semantica do streak NAO mudou, e isso e deliberado. O diagnostico de
+    2026-09-01 acusou esta funcao de congelar o streak quando `sim is None`
+    (turno fora da amostragem), impedindo `deriva` de fechar. A acusacao esta
+    errada: medido com DRIFT_SAMPLE=2 e sim=0.10, o streak vai a 1 no turno 2,
+    2 no turno 4 e 3 no turno 6, e o veredicto sai. Sem medida a funcao devolve
+    o streak intacto — nao o zera.
+
+    `offered_deriva` nunca disparou por outro motivo: as sessoes observadas
+    terminaram nos turnos 2, 3, 5 e 9, e duas das cinco ancoras em disco
+    tinham `embedding: null` (ver o backfill em `main`), o que fazia `sim` ser
+    sempre None e o streak nunca sair de zero.
+
+    O que E novo aqui e o anel `sims`: cada medicao fica registrada com o
+    turno. Isso nao muda decisao nenhuma — e materia-prima de calibracao,
+    coletada de graca em producao. Os pisos 0.55/0.35 sao chutes admitidos no
+    proprio design doc, e a medicao avulsa que existe saiu anticorrelacionada
+    (mesmo assunto 0.33, tangente 0.44). Escolher numero melhor exige dados de
+    uso real, e este e o lugar mais barato de junta-los.
+    """
     b = _budget(cwd)
     if sim is None:
         return int(b.get("drift_streak", 0))
+
+    anel = b.get("sims")
+    if not isinstance(anel, list):
+        anel = []
+    anel.append({"turn": int(turn), "sim": round(float(sim), 4)})
+    b["sims"] = anel[-SIMS_RING:]
+
     b["drift_streak"] = (
         int(b.get("drift_streak", 0)) + 1 if sim < _f("HARNESS_BRANCH_DRIFT_FLOOR", 0.35) else 0
     )
     _save_budget(cwd, b)
     return b["drift_streak"]
+
+
+#: Resultados possiveis de `may_offer`, do mais permissivo ao mais restritivo.
+OK = "ok"
+DUPLICATE = "duplicate"
+BUDGET = "budget"
+MAX_OPEN = "max_open"
+
+
+def may_offer(*, cwd, topic: str, turn: int = 0, explicito: bool = False) -> str:
+    """Um unico portao para os quatro caminhos de deteccao.
+
+    A decisao do usuario em 2026-09-01 foi manter os quatro juntos: autocheck
+    do modelo, `/branch` explicito, camada A e camada B. O risco obvio disso e
+    quatro detectores oferecendo o MESMO tema no mesmo turno — o sensor viraria
+    a interrupcao que veio evitar. As camadas A e B ja passavam por
+    `already_seen` e `budget_allows` dentro do `evaluate`; os outros dois
+    caminhos nao consultavam nada, porque nao havia o que consultar.
+
+    Precedencia, do mais forte ao mais fraco:
+
+      0. `/branch` explicito — o usuario pediu. Ignora orcamento e cooldown
+         (`explicito=True`), mas NAO ignora duplicata: reoferecer um ramo que
+         ja existe e ruido mesmo quando pedido, e o caminho certo ali e
+         `recall`, nao um segundo registro do mesmo tema.
+      1. autocheck do modelo — passa por tudo.
+      2. camada A — passa por tudo.
+      3. camada B — nunca oferece ramo sozinha; so deriva.
+
+    Devolve `ok`, `duplicate`, `budget` ou `max_open`. Nunca levanta: um
+    portao que quebra cala o sensor, e silencio foi o modo de falha original.
+    """
+    try:
+        if branch_state.already_seen(cwd=cwd, topic=topic):
+            return DUPLICATE
+        if not branch_state.can_open(cwd):
+            return MAX_OPEN
+        if not explicito and not budget_allows(cwd=cwd, turn=turn):
+            return BUDGET
+    except Exception:
+        return OK
+    return OK
 
 
 def reset_session(cwd) -> None:
@@ -359,7 +561,7 @@ def enabled() -> bool:
 def evaluate(
     *, cwd, text: str, session_id: str | None = None, turn: int = 0
 ) -> str:
-    """Roda as camadas e devolve o `systemMessage`, ou string vazia.
+    """Roda as camadas e devolve o texto do sinal, ou string vazia.
 
     Contrato: nunca levanta. Todo caminho de erro vira silencio, porque este
     codigo roda em UserPromptSubmit e em Stop — quebrar aqui e quebrar a sessao.
@@ -376,7 +578,12 @@ def evaluate(
     # - amostragem periodica  -> deriva exige streak, entao medir turno sim,
     #   turno nao apenas atrasa o alarme em alguns turnos, nao o impede.
     sample = _i("HARNESS_BRANCH_DRIFT_SAMPLE", 2)
-    precisa_b = bool(hit) or (sample > 0 and turn % sample == 0)
+    # Camada B desligada por default desde 2026-09-02: das 4 metricas medidas
+    # contra 703 pares rotulados, o melhor F1 foi 0.209 contra 0.108 do acaso,
+    # e a direcao do sinal saiu invertida. Ver HARNESS_BRANCH_LAYER_B.
+    precisa_b = branch_config.get_bool("HARNESS_BRANCH_LAYER_B") and (
+        bool(hit) or (sample > 0 and turn % sample == 0)
+    )
 
     sim = None
     if anchor and precisa_b:
@@ -387,7 +594,7 @@ def evaluate(
             vec = None
         sim = cosine(vec, anchor.get("embedding")) if vec else None
 
-    streak = bump_drift(cwd=cwd, sim=sim)
+    streak = bump_drift(cwd=cwd, sim=sim, turn=turn)
     v = verdict(hit_a=hit, sim=sim, drift_streak=streak)
     if v["kind"] is None:
         return ""
@@ -398,17 +605,27 @@ def evaluate(
     tema = " ".join(text.split())[:160]
 
     if v["kind"] == "ramo":
-        if branch_state.already_seen(cwd=cwd, topic=tema):
+        # Mesmo portao que o autocheck e o /branch consultam. Sem isso os
+        # quatro caminhos de deteccao oferecem o mesmo tema no mesmo turno.
+        if may_offer(cwd=cwd, topic=tema, turn=turn) != OK:
             return ""
         record_offer(cwd=cwd, turn=turn)
         branch_state.signal("offered_ramo_degradado" if v["degraded"] else "offered_ramo")
-        grau = "degradado (sem camada B)" if v["degraded"] else f"sim={v['sim']:.2f}"
+        # "degradado" descrevia excecao; desde que a camada B saiu desligada por
+        # default (medicao de 2026-09-02) o estado sem cosseno e o NORMAL.
+        grau = "so camada A" if v["degraded"] else f"sim={v['sim']:.2f}"
         return (
-            f"HARNESS v3 BRANCH SIGNAL: ramo — marcador '{v['marker']}' [{grau}]. "
-            f'Tema: "{tema}". '
-            f"Invoque a skill 'branch-out' com acao=offer AGORA, antes de responder "
-            f"ao conteudo: nomeie o ramo, justifique em ate 3 linhas e pergunte se "
-            f"abre, parkeia ou descarta. Se o usuario nao decidir, parkeie."
+            f"HARNESS v3 BRANCH SIGNAL: marcador fraco '{v['marker']}' [{grau}]. "
+            f'Trecho: "{tema}". '
+            f"ESTE SINAL NAO MANDA OFERECER. A camada A foi medida em 2026-09-02 "
+            f"contra 703 pares reais e o marcador tem precisao ~0.10 — erra cerca "
+            f"de 9 em 10. Ele serve para voce OLHAR, nao para agir. "
+            f"Julgue: o que apareceu aqui tem vida propria e comecaria sem o "
+            f"contexto acumulado nesta conversa? Se sim, consulte "
+            f"`branch_sensor.py may-offer --topic \"<tema>\"` e so entao ofereca "
+            f"pela skill branch-out. Se nao, ignore EM SILENCIO: nao mencione "
+            f"este sinal ao usuario — comentar um falso positivo custa o mesmo "
+            f"foco que a tangente que ele tentava evitar."
         )
 
     record_offer(cwd=cwd, turn=turn)
@@ -428,9 +645,53 @@ def evaluate(
 # ---------------------------------------------------------------------------
 
 
-def main() -> int:
+def cli_may_offer(argv: list[str]) -> int:
+    """`branch_sensor.py may-offer --topic "..."` — o portao, pela linha de comando.
+
+    A skill `branch-out` consulta isto ANTES de oferecer. Sem esse passo o
+    autocheck do modelo e o `/branch` explicito nao veem o orcamento que as
+    camadas A e B ja respeitavam, e o usuario leva duas ofertas do mesmo tema
+    no mesmo turno — o cenario que a decisao de manter os quatro caminhos
+    juntos torna provavel.
+
+    Imprime uma palavra: ok | duplicate | budget | max_open.
+    """
+    import argparse as _ap
+
+    ap = _ap.ArgumentParser(prog="branch_sensor.py may-offer")
+    ap.add_argument("--topic", required=True)
+    ap.add_argument("--cwd", default=None)
+    ap.add_argument("--turn", type=int, default=None)
+    ap.add_argument("--explicito", action="store_true",
+                    help="/branch pedido pelo usuario: ignora orcamento, nao duplicata")
+    a = ap.parse_args(argv)
+
+    cwd = a.cwd or os.getcwd()
+    turn = a.turn if a.turn is not None else int(_budget(cwd).get("turn", 0))
     try:
-        payload = json.load(sys.stdin)
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    print(may_offer(cwd=cwd, topic=a.topic, turn=turn, explicito=a.explicito))
+    return 0
+
+
+def main() -> int:
+    # Le os bytes e decodifica em UTF-8 a mao. `json.load(sys.stdin)` usa o
+    # encoding do processo, que no Windows nasce cp1252: sem PYTHONIOENCODING
+    # o prompt "alias" com acento chega como "aliÃ¡s" e a camada A erra o
+    # marcador. O wrapper .sh exporta as duas variaveis, mas depender disso
+    # deixa o sensor quebrado para qualquer outro chamador.
+    try:
+        raw = sys.stdin.buffer.read()
+    except (AttributeError, OSError, ValueError):
+        raw = None
+    try:
+        if raw is None:
+            payload = json.load(sys.stdin)
+        else:
+            payload = json.loads(raw.decode("utf-8", "replace"))
     except (ValueError, OSError):
         return 0
     if not isinstance(payload, dict):
@@ -475,7 +736,8 @@ def main() -> int:
 
     # Ancora: nasce no primeiro turno substantivo da sessao. Se ja houver
     # pipeline com spec, a skill sobrescreve com o objetivo formal.
-    if load_anchor(cwd, session_id) is None and not (
+    _anchor = load_anchor(cwd, session_id)
+    if _anchor is None and not (
         payload.get("hook_event_name") or ""
     ).lower().startswith("stop"):
         vec = None
@@ -492,6 +754,26 @@ def main() -> int:
         )
         return 0
 
+    # Ancora nascida com o Ollama fora ficava com embedding nulo e, por nao
+    # ser None, nunca era recriada: cosine(vec, None) devolvia None e a
+    # camada B ficava cega pelo resto da vida daquele projeto. Medido em
+    # 2026-09-01: 2 de 5 ancoras em disco estavam nesse estado.
+    # Backfill so do vetor — o texto nao muda, o zero da regua nao se move.
+    if _anchor is not None and not _anchor.get("embedding"):
+        _vec = None
+        try:
+            _vec = embed(_anchor["text"])
+        except Exception:
+            _vec = None
+        if _vec:
+            set_anchor(
+                cwd=cwd,
+                text=_anchor["text"],
+                source=_anchor.get("source") or "first-prompt",
+                session_id=_anchor.get("session_id"),
+                embedding=_vec,
+            )
+
     b = _budget(cwd)
     turn = int(b.get("turn", 0)) + 1
     b["turn"] = turn
@@ -500,21 +782,52 @@ def main() -> int:
     msg = evaluate(cwd=cwd, text=texto, session_id=session_id, turn=turn)
     parked = branch_state.parked_block(cwd)
 
-    out: dict = {}
-    if msg:
-        out["systemMessage"] = msg
-    if parked:
-        out["hookSpecificOutput"] = {
-            "hookEventName": payload.get("hook_event_name") or "UserPromptSubmit",
-            "additionalContext": parked,
-        }
-    if out:
-        print(json.dumps(out, ensure_ascii=False))
+    # Ate 2026-09-01 o sinal saia por `systemMessage` e o parking por
+    # `additionalContext`. So o segundo chegava ao modelo — e como o parking
+    # depende de `branches.json`, que nunca nasceu porque nenhuma oferta foi
+    # aceita, na pratica o hook falava sozinho. O emissor resolve as duas
+    # metades: escolhe o canal pelo evento e junta os blocos num so, porque o
+    # host aceita um `hookSpecificOutput` por saida.
+    evento = payload.get("hook_event_name") or "UserPromptSubmit"
+
+    # O Stop nao fala: guarda e sai. O UserPromptSubmit seguinte entrega, num
+    # momento em que "antes de responder" ainda quer dizer alguma coisa.
+    if str(evento).lower().startswith("stop"):
+        if msg:
+            stash_pending(cwd=cwd, session_id=session_id, text=msg, turn=turn)
+        mod = _emit_mod()
+        if mod is not None:
+            mod.Emitter(evento, hook="branch_sensor", session_id=session_id,
+                        cwd=cwd).add("branch", msg).flush()
+        return 0
+
+    # Um sinal guardado vem primeiro: ele nasceu no turno anterior e envelhece.
+    pendente = take_pending(cwd=cwd, session_id=session_id)
+
+    mod = _emit_mod()
+    if mod is not None:
+        em = mod.Emitter(evento, hook="branch_sensor", session_id=session_id, cwd=cwd)
+        em.add("branch_pendente", pendente).add("branch", msg).add("parked", parked)
+        em.flush()
+        return 0
+
+    # Fallback sem o emissor: so o canal provado, e nunca no Stop (ali o turno
+    # ja acabou e a instrucao chegaria tarde por construcao).
+    corpo = "\n\n".join(x for x in (pendente, msg, parked) if x)
+    if corpo:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": evento,
+                "additionalContext": corpo,
+            }
+        }, ensure_ascii=False))
     return 0
 
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) > 1 and sys.argv[1] == "may-offer":
+            raise SystemExit(cli_may_offer(sys.argv[2:]))
         raise SystemExit(main())
     except SystemExit:
         raise

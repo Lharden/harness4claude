@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # harness-session-start.sh — SessionStart hook for Harness v3
-# Checks for active pipeline and emits systemMessage to resume.
+# Checks for active pipeline and emits the resume block via hooks/emit.py.
 
 set -euo pipefail
 
@@ -112,6 +112,34 @@ else
     HARNESS_DIR_PY="$HARNESS_DIR"
 fi
 PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+# ---------------------------------------------------------------------------
+# Emissao
+# ---------------------------------------------------------------------------
+# Ate 2026-09-01 os tres pontos de saida deste hook usavam `systemMessage`,
+# que e canal de UI: RESUMING, CONTINUING, o digest do vault e o do arsenal
+# nunca chegaram ao modelo.
+#
+# A migracao passa por CLI em vez de import inline de proposito. Os blocos que
+# emitem aqui vivem dentro de `python -c` numa string de aspas duplas do bash,
+# onde escape de quebra de linha vira quebra real e crase vira substituicao de
+# comando — os dois quebraram este arquivo em 2026-08-13, com exit 1 e stderr
+# vazio. Um pipe de texto cru nao mexe nesse terreno.
+#
+# Se o emissor falhar, o texto cru sai mesmo assim: stdout em SessionStart e
+# canal provado. Perder o digest por causa do mensageiro repetiria a falha.
+# `|| true` em cada uso nao e paranoia: `set -euo pipefail` faz qualquer erro
+# dentro do bloco python — um import que falta, um state.json ilegivel — matar
+# o hook com exit 1 e stderr vazio. O SessionStart morreria em silencio, que e
+# a mesma classe de falha que o canal morto: roda, nao avisa, nao entrega.
+_harness_emit() {
+    local kind="${1:-session_start}"
+    local texto
+    texto="$(cat)"
+    [ -z "$texto" ] && return 0
+    printf '%s' "$texto" | python "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
+}
+
 MIGRATE_PY="$PLUGIN_DIR/scripts/migrate_state.py"
 if [ -f "$MIGRATE_PY" ] && command -v python >/dev/null 2>&1; then
     export PYTHONUTF8=1
@@ -258,6 +286,25 @@ print(f'ARSENAL: {n} candidato(s) ainda sem decisao ({ids}). '
 fi
 export ARSENAL_DIGEST
 
+# ---------------------------------------------------------------------------
+# Sessoes anteriores neste diretorio
+# ---------------------------------------------------------------------------
+# Pelo CATALOGO, nao pelo indice semantico: e leitura de um json, custo zero de
+# Ollama. Pagar ~1s de embedding no inicio de toda sessao para mostrar tres
+# linhas seria taxar o comeco do trabalho para lembrar do trabalho. A busca
+# semantica fica para quando alguem perguntar (tools/session_query.py).
+#
+# So sugere; nunca carrega. A decisao do usuario em 2026-09-01 foi hibrida: o
+# hook aponta, e quem escolhe o que entra no contexto e ele.
+SESSIONS_DIGEST=""
+if [ -f "$PLUGIN_DIR/tools/session_query.py" ]; then
+    SESSIONS_DIGEST="$(python "$PLUGIN_DIR/tools/session_query.py" --recent "$PWD" --top-k 3 2>/dev/null | tr -d '' || true)"
+    case "$SESSIONS_DIGEST" in
+        "nenhuma sessao"*) SESSIONS_DIGEST="" ;;
+    esac
+fi
+export SESSIONS_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     python -c "
@@ -279,10 +326,11 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 # numa string de aspas duplas do bash: escape de quebra de linha vira
 # quebra real e quebra a sintaxe, e crase vira substituicao de comando.
 # Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
-partes_saida = [x for x in (digest, arsenal) if x]
+sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
+partes_saida = [x for x in (digest, arsenal, sessoes) if x]
 if partes_saida:
-    print(json.dumps({'systemMessage': (chr(10) * 2).join(partes_saida)}))
-" 2>/dev/null
+    print((chr(10) * 2).join(partes_saida))
+" 2>/dev/null | _harness_emit digest || true
     exit 0
 fi
 
@@ -325,8 +373,11 @@ if digest:
 arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 if arsenal:
     partes.append(arsenal)
-print(json.dumps({'systemMessage': '\n\n'.join(partes)}))
-" 2>/dev/null
+sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
+if sessoes:
+    partes.append(sessoes)
+print('\n\n'.join(partes))
+" 2>/dev/null | _harness_emit resuming || true
     exit 0
 fi
 
@@ -367,9 +418,12 @@ if digest:
 arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 if arsenal:
     parts.append(arsenal)
+sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
+if sessoes:
+    parts.append(sessoes)
 
 if parts:
-    print(json.dumps({'systemMessage': '\n\n'.join(parts)}))
-" 2>/dev/null
+    print('\n\n'.join(parts))
+" 2>/dev/null | _harness_emit session_start || true
 
 exit 0

@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -268,3 +269,139 @@ class TestPersistencia:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{lixo", encoding="utf-8")
         assert bs.load(cwd=str(tmp_path))["branches"] == []
+
+
+class TestComandosDaSkillRodamMesmo:
+    """Os comandos escritos na SKILL.md tem que funcionar como escritos.
+
+    A skill mandava `python "$CLAUDE_PLUGIN_ROOT/scripts/branch_state.py" add`.
+    Essa variavel so existe no ambiente dos HOOKS: quando o modelo roda o
+    comando pela ferramenta de shell ela esta vazia, e o caminho vira
+    `/scripts/branch_state.py`. No PowerShell, que e o shell primario desta
+    maquina, `$CLAUDE_PLUGIN_ROOT/...` nem e sintaxe valida de caminho.
+
+    Isso e uma das razoes pelas quais `branches.json` nunca nasceu em nenhum
+    dos 35 buckets: mesmo que a skill fosse invocada, o comando dela falharia.
+    Estes testes rodam os comandos como um subprocesso de verdade, com o path
+    resolvido do jeito que a skill agora manda resolver.
+    """
+
+    def _plugin_root(self):
+        configured = Path(os.environ.get("HARNESS_PLUGIN_ROOT", ""))
+        if (configured / "scripts" / "branch_state.py").exists():
+            return configured
+        marcador = Path.home() / ".claude" / "harness" / "plugin-root"
+        if marcador.exists():
+            alvo = Path(marcador.read_text(encoding="utf-8").strip())
+            if (alvo / "scripts" / "branch_state.py").exists():
+                return alvo
+        return Path(os.environ["HARNESS_PLUGIN_ROOT"])
+
+    def _rodar(self, args, cwd_projeto, harness_dir):
+        env = {**os.environ, "HARNESS_DIR": str(harness_dir), "PYTHONUTF8": "1"}
+        script = self._plugin_root() / "scripts" / "branch_state.py"
+        return subprocess.run(
+            [sys.executable, str(script), *args, "--cwd", str(cwd_projeto)],
+            capture_output=True, text=True, encoding="utf-8", env=env, timeout=60,
+        )
+
+    def test_o_marcador_plugin_root_resolve(self):
+        """A skill le o caminho daqui. Se o arquivo mentir, tudo cai junto."""
+        raiz = self._plugin_root()
+        assert (raiz / "scripts" / "branch_state.py").exists()
+        assert (raiz / "scripts" / "branch_sensor.py").exists()
+
+    def test_add_pela_linha_de_comando_cria_o_registro(self, tmp_path):
+        projeto = tmp_path / "proj"
+        projeto.mkdir()
+        proc = self._rodar(
+            ["add", "--name", "Indice de Sessoes",
+             "--topic", "indexar transcripts para busca cross-sessao",
+             "--parent-session", "sessao-mae-uuid", "--origin-turn", "42"],
+            projeto, tmp_path / "h",
+        )
+        assert proc.returncode == 0, proc.stderr
+        criado = json.loads(proc.stdout)
+        assert criado["slug"] == "indice-de-sessoes"
+        assert criado["origin_turn"] == 42
+
+        achados = list((tmp_path / "h").rglob("branches.json"))
+        assert achados, "branches.json nao nasceu — o defeito historico"
+        registro = json.loads(achados[0].read_text(encoding="utf-8"))
+        assert registro["parent_session"] == "sessao-mae-uuid"
+
+    def test_sem_parent_session_o_ramo_fica_orfao(self, tmp_path):
+        """Documenta o custo de omitir a flag, para o teste acima ter contraste."""
+        projeto = tmp_path / "proj"
+        projeto.mkdir()
+        proc = self._rodar(["add", "--name", "Ramo Solto", "--topic", "tema qualquer"],
+                           projeto, tmp_path / "h")
+        assert proc.returncode == 0, proc.stderr
+        registro = json.loads(
+            list((tmp_path / "h").rglob("branches.json"))[0].read_text(encoding="utf-8"))
+        assert registro["parent_session"] is None
+
+
+class TestConclusaoVoltaParaAMae:
+    """O ramo existe para tirar um assunto do pai — mas o resultado tem que voltar.
+
+    Sem isso, ramificar vira PERDER o assunto em vez de organiza-lo: a proxima
+    vez que alguem tocar no tema na conversa pai comeca do zero, e o ramo virou
+    um buraco em vez de uma gaveta.
+
+    Entrega UMA vez. Reinjetar a cada turno transformaria a conclusao no ruido
+    de fundo que o proprio parking existe para evitar.
+    """
+
+    def _ramo_fechado(self, bs, cwd, conclusao="o piso 0.55 nunca vetava nada"):
+        b = bs.add(cwd=str(cwd), name="Calibrar Piso",
+                      topic="calibrar os pisos do sensor de ramo")
+        bs.set_status(cwd=str(cwd), slug=b["slug"], status="closed",
+                         conclusion=conclusao)
+        return b
+
+    def test_conclusao_aparece_no_bloco(self, bs, tmp_path):
+        self._ramo_fechado(bs, tmp_path)
+        bloco = bs.parked_block(str(tmp_path))
+        assert "FECHOU" in bloco and "0.55 nunca vetava" in bloco
+
+    def test_entrega_uma_vez_so(self, bs, tmp_path):
+        self._ramo_fechado(bs, tmp_path)
+        assert "FECHOU" in bs.parked_block(str(tmp_path))
+        assert "FECHOU" not in bs.parked_block(str(tmp_path))
+
+    def test_ramo_fechado_sem_conclusao_nao_entrega(self, bs, tmp_path):
+        b = bs.add(cwd=str(tmp_path), name="Sem Nada", topic="tema qualquer")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed")
+        assert "FECHOU" not in bs.parked_block(str(tmp_path))
+
+    def test_conclusao_longa_e_truncada(self, bs, tmp_path):
+        self._ramo_fechado(bs, tmp_path, conclusao="x" * 900)
+        bloco = bs.parked_block(str(tmp_path))
+        assert len(bloco) < 600 and "..." in bloco
+
+    def test_sem_ramo_nenhum_o_bloco_e_vazio(self, bs, tmp_path):
+        assert bs.parked_block(str(tmp_path)) == ""
+
+
+class TestRegistroEPorProjeto:
+    """`branches.json` fica no bucket do PROJETO, nunca no da sessao.
+
+    O escopo por sessao (`projects/<slug>/sessions/<uuid>/`) e certo para o
+    pipeline SDD, e errado para o parking: se cada sessao tivesse o seu
+    registro, a conversa pai nao veria o ramo que ela mesma abriu no turno
+    anterior, e o parking — que existe para atravessar sessoes — deixaria de
+    funcionar em silencio.
+
+    Hoje `branch_sensor` chama `state_dir(cwd=cwd)` sem `session_id` e o
+    caminho sai certo. Este teste existe para que propagar o `session_id` para
+    ca vire vermelho, e nao uma regressao invisivel.
+    """
+
+    def test_caminho_ignora_session_id(self, bs, tmp_path):
+        import harness_paths
+
+        sem = harness_paths.state_dir(cwd=str(tmp_path))
+        com = harness_paths.state_dir(cwd=str(tmp_path), session_id="uma-sessao-qualquer")
+        assert str(bs.branches_path(str(tmp_path))).startswith(str(sem))
+        assert str(sem) != str(com), "premissa do teste: o session_id muda o bucket"

@@ -125,6 +125,18 @@ def test_main_gates_layer_b_on_layer_a_hit(tmp_path, monkeypatch, capsys):
 
 
 def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch):
+    """Camada A vazia => camada B roda.
+
+    `ollama_reachable` e mockado de proposito. Isto e um teste da LOGICA de
+    roteamento, nao da disponibilidade do Ollama: sem o mock ele falhava toda
+    vez que o Ollama estivesse desligado, porque `route()` faz o pre-check de
+    porta antes de chamar `embed_query` — e o mock de `embed_query` sozinho
+    nunca era alcancado. Observado em 2026-09-02 com o Ollama fora.
+
+    A alternativa seria marcar `integration`, mas ai a logica de gating deixaria
+    de ser testada nas rodadas normais, que e justamente o que este teste cobre.
+    """
+    monkeypatch.setattr(sr, "ollama_reachable", lambda *a, **k: True)
     idx = {"skills": [_skill("p:foo")], "dim": 2}
     idx["skills"][0]["vec_row"] = 0
     monkeypatch.setattr(sr, "load_index", lambda *a, **k: (idx, [(1.0, 0.0)]))

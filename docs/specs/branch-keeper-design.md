@@ -76,7 +76,7 @@ Falso positivo aqui **é** o problema que a feature resolve. Por isso o orçamen
 tem mais lógica que a detecção:
 
 - 2 ofertas por sessão (`HARNESS_BRANCH_MAX_OFFERS`)
-- cooldown de 5 turnos entre ofertas (`HARNESS_BRANCH_COOLDOWN_TURNS`)
+- cooldown de 8 chamadas de hook entre ofertas (`HARNESS_BRANCH_COOLDOWN_TURNS`). Uma troca completa gera duas chamadas, entao 8 vale ~4 trocas
 - dedupe contra temas já registrados
 - teto de 3 ramos abertos (`HARNESS_BRANCH_MAX_OPEN`)
 - bloco de parking limitado a 5 itens, tema truncado em 80 chars

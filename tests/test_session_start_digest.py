@@ -1,8 +1,14 @@
 """O SessionStart precisa injetar o digest do vault sem quebrar o resume do pipeline.
 
-Os dois textos dividem um unico systemMessage: se o hook imprimir dois objetos JSON, ou
-quebrar quando o vault nao existe, o harness perde o resume — que e comportamento
-historico e mais importante que o digest.
+Os dois textos dividem um unico `additionalContext`: se o hook imprimir dois
+objetos JSON, ou quebrar quando o vault nao existe, o harness perde o resume —
+comportamento historico e mais importante que o digest.
+
+A chave mudou em 2026-09-01. Antes era `systemMessage`, canal de UI que nunca
+entrou no contexto do modelo: nos 343 transcripts desta maquina, 100% das
+linhas com systemMessage no stdout tem `content` vazio. O digest existia,
+saia, e ninguem lia. `mensagem()` le so a chave nova de proposito — aceitar as
+duas deixaria a regressao passar despercebida, que e como o bug durou meses.
 """
 
 import json
@@ -17,6 +23,18 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK = PLUGIN_ROOT / "hooks" / "harness-session-start.sh"
+
+
+def mensagem(saida: str) -> str:
+    """Texto entregue ao modelo. Falha se o hook voltar ao canal morto."""
+    payload = json.loads(saida)  # falha se houver mais de um objeto JSON
+    assert "systemMessage" not in payload, (
+        "regressao: systemMessage e canal de UI e nao chega ao modelo"
+    )
+    bloco = payload["hookSpecificOutput"]
+    assert bloco["hookEventName"] == "SessionStart"
+    return bloco["additionalContext"]
+
 
 needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash ausente no PATH")
 
@@ -94,9 +112,9 @@ def test_hook_emite_um_unico_json_com_o_digest(tmp_path: Path) -> None:
 
     saida = run_hook(tmp_path, AI_BRAIN_PATH=str(raiz))
 
-    payload = json.loads(saida)  # falha se houver mais de um objeto
-    assert "VAULT AI-Brain disponivel" in payload["systemMessage"]
-    assert "[[decisions/assimilacoes]]" in payload["systemMessage"]
+    texto = mensagem(saida)
+    assert "VAULT AI-Brain disponivel" in texto
+    assert "[[decisions/assimilacoes]]" in texto
 
 
 @needs_bash
@@ -104,9 +122,9 @@ def test_digest_nao_vaza_carriage_return(tmp_path: Path) -> None:
     """CRLF do print() do Windows vazando para dentro do JSON — bug silencioso."""
     raiz = montar_vault(tmp_path)
 
-    payload = json.loads(run_hook(tmp_path, AI_BRAIN_PATH=str(raiz)))
+    texto = mensagem(run_hook(tmp_path, AI_BRAIN_PATH=str(raiz)))
 
-    assert "\r" not in payload["systemMessage"]
+    assert "\r" not in texto
 
 
 @needs_bash
@@ -116,10 +134,10 @@ def test_bucket_novo_ainda_recebe_o_digest(tmp_path: Path) -> None:
     projeto_novo = tmp_path / "projeto-inedito"
     projeto_novo.mkdir()
 
-    payload = json.loads(run_hook(tmp_path, cwd=str(projeto_novo), AI_BRAIN_PATH=str(raiz)))
+    texto = mensagem(run_hook(tmp_path, cwd=str(projeto_novo), AI_BRAIN_PATH=str(raiz)))
 
-    assert "VAULT AI-Brain disponivel" in payload["systemMessage"]
-    assert "HARNESS v3" not in payload["systemMessage"]  # nao ha pipeline a retomar
+    assert "VAULT AI-Brain disponivel" in texto
+    assert "HARNESS v3" not in texto  # nao ha pipeline a retomar
 
 
 @needs_bash
@@ -129,12 +147,11 @@ def test_resume_do_pipeline_sobrevive_ao_digest(tmp_path: Path) -> None:
     Path(projeto).mkdir(exist_ok=True)
     semear_pipeline(tmp_path, projeto, started_at=agora_iso())
 
-    payload = json.loads(run_hook(tmp_path, cwd=projeto, AI_BRAIN_PATH=str(raiz)))
-    mensagem = payload["systemMessage"]
+    texto = mensagem(run_hook(tmp_path, cwd=projeto, AI_BRAIN_PATH=str(raiz)))
 
-    assert "HARNESS v3 RESUMING" in mensagem
-    assert "VAULT AI-Brain disponivel" in mensagem
-    assert mensagem.index("HARNESS v3 RESUMING") < mensagem.index("VAULT AI-Brain")
+    assert "HARNESS v3 RESUMING" in texto
+    assert "VAULT AI-Brain disponivel" in texto
+    assert texto.index("HARNESS v3 RESUMING") < texto.index("VAULT AI-Brain")
 
 
 @needs_bash
@@ -145,7 +162,7 @@ def test_pipeline_expirado_tambem_carrega_o_digest(tmp_path: Path) -> None:
     Path(projeto).mkdir(exist_ok=True)
     semear_pipeline(tmp_path, projeto, started_at=None)
 
-    mensagem = json.loads(run_hook(tmp_path, cwd=projeto, AI_BRAIN_PATH=str(raiz)))["systemMessage"]
+    texto = mensagem(run_hook(tmp_path, cwd=projeto, AI_BRAIN_PATH=str(raiz)))
 
-    assert "HARNESS v3 EXPIRED" in mensagem
-    assert "VAULT AI-Brain disponivel" in mensagem
+    assert "HARNESS v3 EXPIRED" in texto
+    assert "VAULT AI-Brain disponivel" in texto

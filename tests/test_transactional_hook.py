@@ -215,3 +215,71 @@ def test_hook_manifest_wires_transactional_handler_to_tool_outcomes_and_stop():
         for command in failure_commands
     )
     assert any("harness-transactional.py" in command and "Stop" in command for command in stop_commands)
+
+
+def test_state_cli_nao_invalida_a_evidencia(tmp_path: Path):
+    """Rodar o CLI de estado nao e alteracao de codigo.
+
+    `_handle_post_tool` trata todo comando de shell como possivel alteracao e
+    chama `touch_file`, que zera `verified` e sobe `code_revision`. A
+    heuristica e certa para `sed -i` ou `npm install` — e criava um deadlock
+    estrutural: `state_cli.py complete` so pode ser invocado por shell, e a
+    invocacao invalidava, no mesmo PostToolUse, a evidencia que o `complete`
+    exige. Nenhuma task podia ser concluida pelo caminho previsto.
+
+    Medido em 2026-09-02 nesta maquina: `code_revision` foi 501 -> 507 -> 511
+    entre gravar a evidencia e tentar fechar, sem uma linha de codigo mudar.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=10, tests_passed=10, output_hash=None,
+    )
+    antes = database.task(task["task_id"])
+    assert antes["verified"] is True
+
+    hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": 'python "/plugin/scripts/state_cli.py" --home /h complete --task t-1 --expect-revision 3'},
+    ), harness_root=tmp_path / "harness")
+
+    depois = database.task(task["task_id"])
+    assert depois["verified"] is True, "o CLI de estado invalidou a evidencia"
+    assert depois["code_revision"] == antes["code_revision"]
+
+
+def test_comando_comum_continua_invalidando(tmp_path: Path):
+    """Contraste: a protecao original nao pode ter sido afrouxada em geral."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=10, tests_passed=10, output_hash=None,
+    )
+    assert database.task(task["task_id"])["verified"] is True
+
+    hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": "sed -i s/a/b/ src/app.py"},
+    ), harness_root=tmp_path / "harness")
+    assert database.task(task["task_id"])["verified"] is False
+
+
+def test_isencao_nao_vale_com_composicao_de_shell(tmp_path: Path):
+    """`state_cli.py ... && sed -i ...` altera codigo na segunda metade."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=10, tests_passed=10, output_hash=None,
+    )
+    hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": "python scripts/state_cli.py --home /h complete && sed -i s/a/b/ x.py"},
+    ), harness_root=tmp_path / "harness")
+    assert database.task(task["task_id"])["verified"] is False

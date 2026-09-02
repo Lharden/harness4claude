@@ -162,3 +162,85 @@ class TestComandoDeAbertura:
         assert seed.launch_command(
             branch=branch, cwd=str(tmp_path), launcher_path=str(tmp_path / "l.ps1")
         ) == []
+
+
+class TestSementeSabeVoltar:
+    """O ramo nasce com contexto limpo — mas nao pode nascer sem endereco.
+
+    Ate 2026-09-02 a semente dizia de qual sessao o ramo veio e nada mais. Na
+    pratica isso deixava duas coisas quebradas:
+
+    - para consultar o pai, o unico caminho documentado era `--resume`, que
+      carrega a sessao inteira e substitui a atual: exatamente o custo que
+      ramificar existe para nao pagar;
+    - as irmas ja estavam no registro desde 2026-08-27 e nada as renderizava,
+      entao cada ramo nascia achando-se filho unico e dois irmaos podiam
+      refazer o mesmo trabalho sem se ver.
+    """
+
+    def test_semente_ensina_a_consultar_o_pai_sem_carregar(self, seed, branch):
+        texto = _render(seed, branch)
+        assert "session_query.py" in texto
+        assert "--session 99999999-8888-7777-6666-555555555555" in texto
+
+    def test_semente_lista_as_irmas(self, seed, branch):
+        irmas = [
+            {"slug": "calibrar-piso", "status": "open"},
+            {"slug": "indice-sessoes", "status": "pending"},
+        ]
+        texto = _render(seed, branch, siblings=irmas)
+        assert "calibrar-piso" in texto and "indice-sessoes" in texto
+
+    def test_o_proprio_ramo_nao_aparece_como_irma(self, seed, branch):
+        branch["slug"] = "sensor-de-deriva"
+        texto = _render(seed, branch, siblings=[{"slug": "sensor-de-deriva", "status": "open"}])
+        assert "Irmas deste pai" not in texto
+
+    def test_sem_irmas_nao_deixa_secao_vazia(self, seed, branch):
+        assert "Irmas deste pai" not in _render(seed, branch)
+
+    def test_semente_longa_nao_perde_as_irmas(self, seed, branch):
+        """O re-render por excesso de tamanho descartava `siblings` em silencio."""
+        texto = _render(
+            seed, branch,
+            siblings=[{"slug": "calibrar-piso", "status": "open"}],
+            context_items=[f"caminho/muito/longo/numero/{i}.py" for i in range(40)],
+            summary="x " * 3000,
+        )
+        assert "calibrar-piso" in texto
+
+    def test_close_explica_que_a_conclusao_volta_sozinha(self, seed, branch):
+        texto = _render(seed, branch)
+        assert "harness-parked" in texto
+
+
+class TestSementeNaoRecursionaAteEstourar:
+    """Excesso fora do contexto travava a recursao.
+
+    `render_seed` encolhia `context_items` pela metade ate caber. Mas
+    `max(1, len // 2)` estabiliza em 1, e cortar contexto nao encolhe texto que
+    nao esta no contexto: um `summary` longo fazia a funcao recursionar ate
+    estourar a pilha. Abrir ramo com resumo grande derrubava a skill inteira
+    com RecursionError, sem dizer por que — e nenhum teste cobria o caminho.
+
+    Bug pre-existente, exposto em 2026-09-02 ao testar que a semente longa nao
+    perde as irmas.
+    """
+
+    def test_resumo_longo_nao_estoura_a_pilha(self, seed, branch):
+        import sys as _sys
+
+        limite = _sys.getrecursionlimit()
+        _sys.setrecursionlimit(200)
+        try:
+            texto = _render(seed, branch, summary="x " * 3000, context_items=["a.py"])
+        finally:
+            _sys.setrecursionlimit(limite)
+        assert texto and len(texto) <= seed.MAX_SEED_CHARS
+
+    def test_semente_truncada_avisa_que_foi(self, seed, branch):
+        texto = _render(seed, branch, summary="x " * 3000, context_items=["a.py"])
+        assert "truncada" in texto.lower()
+
+    def test_semente_normal_nao_e_truncada(self, seed, branch):
+        assert "truncada" not in _render(seed, branch).lower()

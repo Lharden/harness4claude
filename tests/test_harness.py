@@ -803,8 +803,11 @@ class TestSDDInfrastructure(HarnessTestBase):
                       "L2-feature deve usar write-spec")
         self.assertIn("design-doc", l2_feat_line,
                       "L2-feature deve ter design-doc")
-        self.assertIn("verify-against-spec", l2_feat_line,
-                      "L2-feature deve terminar em verify-against-spec")
+        # Desde `d7fa6d8` o passo final do L2 e o Workflow `wf-verify-multimodel`
+        # (5 dimensoes em paralelo + adjudicacao adversarial), nao a skill
+        # `verify-against-spec` — que segue sendo o passo final do L1.
+        self.assertIn("verify-multimodel", l2_feat_line,
+                      "L2-feature deve terminar em verify-multimodel")
 
     def test_classify_emits_v3_pipelines_for_l2(self):
         """harness-classify.sh deve emitir pipelines v3 para L2-feature."""
@@ -821,8 +824,15 @@ class TestSDDInfrastructure(HarnessTestBase):
                       f"L2 pipeline deve ter write-spec. Got: {state['pipeline']}")
         self.assertIn("design-doc", state["pipeline"],
                       f"L2 pipeline deve ter design-doc. Got: {state['pipeline']}")
-        self.assertIn("verify-against-spec", state["pipeline"],
-                      f"L2 pipeline deve ter verify-against-spec. Got: {state['pipeline']}")
+        self.assertIn("verify-multimodel", state["pipeline"],
+                      f"L2 pipeline deve terminar em verify-multimodel. "
+                      f"Got: {state['pipeline']}")
+        # Contraste deliberado: a assimetria L1/L2 e o ponto. L1 verifica
+        # cobertura item-por-item contra a spec; L2 paga review multi-perspectiva
+        # porque o custo de errar e maior. Um teste que aceitasse os dois nos
+        # dois niveis deixaria a distincao apagar-se sem ninguem notar.
+        self.assertNotIn("verify-against-spec", state["pipeline"],
+                         "L2 nao deve carregar os dois verificadores")
 
     def test_classify_emits_v3_pipelines_for_l1(self):
         """harness-classify.sh deve emitir pipelines v3 para L1-feature."""

@@ -248,3 +248,71 @@ class TestHooksGravamHeartbeat:
         assert registrados <= cobertos, (
             f"eventos sem heartbeat nem teste: {sorted(registrados - cobertos)}"
         )
+
+
+class TestRelatorioDeEntrega:
+    """O heartbeat prova a CHAMADA. Isto prova a ENTREGA.
+
+    Entre 2026-08 e 2026-09 o heartbeat ficou verde o tempo todo enquanto
+    `HARNESS v3 CLASSIFIED` era emitido 81 vezes em 47 sessoes e
+    `Skill(harness-workflow)` era invocada zero vezes. O canal aceitava a
+    escrita e nao entregava, e nenhuma verificacao existente conseguia ver
+    isso. Emissoes > 0 com entregas == 0 e a assinatura dessa falha.
+    """
+
+    def _extrato(self, tmp_path, linhas):
+        import json as _json
+
+        p = tmp_path / "emissions.jsonl"
+        p.write_text("".join(_json.dumps(x) + "\n" for x in linhas), encoding="utf-8")
+        return p
+
+    def _home_com_transcript(self, tmp_path, session_id):
+        d = tmp_path / "home" / ".claude" / "projects" / "proj"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{session_id}.jsonl").write_text(
+            '{"type":"user","hookEvent":"UserPromptSubmit","content":"hook ok"}\n',
+            encoding="utf-8")
+        return tmp_path / "home"
+
+    def test_sem_extrato_nao_acusa(self, hl, tmp_path):
+        code, linhas = hl.delivery_report(tmp_path, tmp_path)
+        assert code == 0 and "sem extrato" in linhas[0]
+
+    def test_emissao_entregue_conta_como_entregue(self, hl, tmp_path):
+        self._extrato(tmp_path, [
+            {"kind": "classify", "channel": "additionalContext", "session_id": "s1"},
+        ])
+        home = self._home_com_transcript(tmp_path, "s1")
+        code, linhas = hl.delivery_report(tmp_path, home)
+        assert code == 0
+        assert "classify: 1/1 entregues" in "\n".join(linhas)
+
+    def test_emissao_sem_transcript_e_alarme(self, hl, tmp_path):
+        """A assinatura exata da falha de 2026: emitiu, ninguem recebeu."""
+        self._extrato(tmp_path, [
+            {"kind": "classify", "channel": "additionalContext", "session_id": "fantasma"},
+        ])
+        code, linhas = hl.delivery_report(tmp_path, tmp_path / "home-vazio")
+        assert code == 1
+        texto = "\n".join(linhas)
+        assert "classify: 0/1" in texto and "ALERTA" in texto
+
+    def test_silenciosa_nao_e_cobrada(self, hl, tmp_path):
+        """Sinal suprimido de proposito (Stop) nao e entrega falhada."""
+        self._extrato(tmp_path, [
+            {"kind": "branch", "channel": "silent", "session_id": "s1"},
+        ])
+        code, linhas = hl.delivery_report(tmp_path, tmp_path / "vazio")
+        assert code == 0
+        assert "so tem emissoes silenciosas" in "\n".join(linhas)
+
+    def test_linha_corrompida_nao_quebra(self, hl, tmp_path):
+        p = self._extrato(tmp_path, [
+            {"kind": "classify", "channel": "additionalContext", "session_id": "s1"},
+        ])
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write("{lixo}\n")
+        home = self._home_com_transcript(tmp_path, "s1")
+        code, _ = hl.delivery_report(tmp_path, home)
+        assert code == 0

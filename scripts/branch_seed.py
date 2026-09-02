@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import branch_config
 import branch_state
 
 #: Secoes que uma semente precisa ter para o ramo comecar andando.
@@ -53,6 +54,14 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 
+_AVISO_CORTE = (
+    chr(10) * 2 + "---" + chr(10)
+    + "**Semente truncada** por exceder o teto. O que ficou de fora estava no "
+    + "resumo ou na justificativa, nao nos paths. Consulte o pai com "
+    + "`session_query.py --session <parent>` se faltar contexto." + chr(10)
+)
+
+
 def render_seed(
     *,
     branch: dict,
@@ -63,6 +72,7 @@ def render_seed(
     why_split: str,
     context_items: list[str] | tuple[str, ...],
     first_action: str,
+    siblings: list | tuple = (),
 ) -> str:
     """Monta o prompt-semente. Falta de acao concreta e erro, nao aviso."""
     if not str(first_action).strip():
@@ -73,13 +83,35 @@ def render_seed(
     itens = [str(i).strip() for i in context_items if str(i).strip()][:MAX_CONTEXT_ITEMS]
     bloco_contexto = "\n".join(f"- `{i}`" for i in itens) or "- (nenhum path relevante)"
 
+    # Irmas: ramos vivos do mesmo pai. O registro ja os lista desde 2026-08-27 e
+    # nada os renderizava — entao cada ramo nascia achando-se filho unico, e dois
+    # irmaos podiam refazer o mesmo trabalho sem nunca se ver.
+    nomes = [
+        f"`{b.get('slug')}` ({b.get('status')})"
+        for b in siblings
+        if b.get("slug") and b.get("slug") != branch.get("slug")
+    ][:MAX_CONTEXT_ITEMS]
+    bloco_irmas = (
+        "\n- Irmas deste pai: " + ", ".join(nomes) +
+        "\n  Elas saem do mesmo contexto e podem ter tocado no que voce precisa."
+        if nomes else ""
+    )
+
     texto = f"""# {branch['name']}
 
 ## Origem
 - Conversa pai: **{parent_name}** (`{parent_session}`)
 - Projeto: `{project}`
 - Este ramo: `{branch['session_id']}` — retome com `claude --resume {branch['session_id']}`
-- Criado em: {_now()}
+- Criado em: {_now()}{bloco_irmas}
+
+### Consultar a conversa pai sem carrega-la
+```
+python "$H4C/tools/session_query.py" "<o que voce precisa saber>" --session {parent_session}
+```
+Devolve o trecho e o turno, nao a sessao inteira. `claude --resume
+{parent_session}` carrega tudo e substitui esta sessao — e o caminho caro, e
+raramente o certo: este ramo existe justamente para nao pagar aquele contexto.
 
 ## O ramo
 {summary.strip()}
@@ -103,11 +135,18 @@ Ao concluir (ou ao decidir que nao vale seguir), rode aqui:
 
     /branch close {branch['slug']}
 
-A conclusao fica no registro do projeto e aparece para a conversa pai no
-proximo `/branch list`.
+A conclusao volta sozinha para a conversa pai: ela entra no bloco
+`<harness-parked>` do proximo turno de la, UMA vez. Sem `close`, o que voce
+descobriu aqui morre nesta sessao — e ramificar vira perder o assunto em vez
+de organiza-lo.
 """
-    if len(texto) > MAX_SEED_CHARS:
-        corte = max(1, len(itens) // 2)
+    if len(texto) > MAX_SEED_CHARS and len(itens) > 1:
+        # So recursiona enquanto ha o que cortar. `max(1, len // 2)` travava em
+        # 1 e recursionava para sempre quando o excesso vinha do `summary` ou do
+        # `why_split` — cortar contexto nao encolhe texto que nao esta no
+        # contexto. Abrir ramo com resumo longo derrubava a skill inteira com
+        # RecursionError, e nao havia teste cobrindo esse caminho.
+        corte = len(itens) // 2
         return render_seed(
             branch=branch,
             parent_name=parent_name,
@@ -117,7 +156,14 @@ proximo `/branch list`.
             why_split=why_split,
             context_items=itens[:corte],
             first_action=first_action,
+            siblings=siblings,
         )
+    if len(texto) > MAX_SEED_CHARS:
+        # Ultimo recurso: o excesso nao esta no contexto, entao trunca o texto.
+        # Semente cortada e ruim; semente que nao abre e pior — e uma que
+        # recursiona ate estourar a pilha nao abre nem avisa por que.
+        corte = MAX_SEED_CHARS - len(_AVISO_CORTE)
+        texto = texto[:corte].rstrip() + _AVISO_CORTE
     return texto
 
 
@@ -173,7 +219,7 @@ def launch_command(*, branch: dict, cwd: str, launcher_path: str) -> list[str]:
     `-w -1` forca JANELA nova, nao aba: a aba nasceria escondida atras da aba
     atual e o ramo cairia no mesmo esquecimento que a feature combate.
     """
-    if os.environ.get("HARNESS_BRANCH_HOST", "wt").strip().lower() != "wt":
+    if branch_config.get_str("HARNESS_BRANCH_HOST").strip().lower() != "wt":
         return []
     wt = shutil.which("wt") or shutil.which("wt.exe") or "wt.exe"
     return [

@@ -116,15 +116,18 @@ fi
 # ---------------------------------------------------------------------------
 # Convert MSYS paths to Windows paths for Python
 SCRIPTS_DIR="${HOOK_DIR_REL}/../scripts"
+HOOKS_DIR="${HOOK_DIR_REL}"
 if command -v cygpath &>/dev/null; then
     export HARNESS_STATE_FILE="$(cygpath -w "$STATE_FILE")"
     export HARNESS_COUNTER_FILE="$(cygpath -w "$COUNTER_FILE")"
     export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
+    export HARNESS_HOOKS_DIR="$(cygpath -w "$HOOKS_DIR")"
     export HARNESS_ROOT_DIR="$(cygpath -w "$HARNESS_DIR")"
 else
     export HARNESS_STATE_FILE="$STATE_FILE"
     export HARNESS_COUNTER_FILE="$COUNTER_FILE"
     export HARNESS_SCRIPTS_DIR="$SCRIPTS_DIR"
+    export HARNESS_HOOKS_DIR="$HOOKS_DIR"
     export HARNESS_ROOT_DIR="$HARNESS_DIR"
 fi
 export HARNESS_MSG_LOWER="$MSG_LOWER"
@@ -150,6 +153,35 @@ def _atomic_write_json(path, data):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+def _falar(kind, texto):
+    """Emite pelo canal que chega ao modelo.
+
+    Ate 2026-09-01 tudo aqui saia por `systemMessage`, que e canal de UI:
+    `HARNESS v3 CLASSIFIED` foi emitido 81 vezes em 47 sessoes e
+    `Skill(harness-workflow)` foi invocada em zero. O emissor central resolve
+    o canal pelo evento e registra em emissions.jsonl.
+    """
+    try:
+        import importlib.util
+        _hooks = os.environ.get("HARNESS_HOOKS_DIR") or ""
+        spec = importlib.util.spec_from_file_location(
+            "harness_emit", os.path.join(_hooks, "emit.py"))
+        if spec is None or spec.loader is None:
+            raise ImportError
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.Emitter("UserPromptSubmit", hook="classify",
+                    session_id=os.environ.get("HARNESS_SESSION_ID") or "",
+                    cwd=os.environ.get("HARNESS_SESSION_CWD") or "").add(kind, texto).flush()
+    except Exception:
+        # Sem o emissor, o canal provado escrito a mao. Perder a classificacao
+        # por causa do mensageiro repetiria a falha que isto veio consertar.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": texto,
+        }}, ensure_ascii=False))
 
 
 msg = os.environ["HARNESS_MSG_LOWER"]
@@ -263,14 +295,11 @@ if has_active and not is_task_switch:
         if gate_display else
         " Continue the active pipeline by invoking skill='harness-workflow'."
     )
-    output = json.dumps({
-        "systemMessage": (
-            f"HARNESS v3 CONTINUING: {classification} (task {task_id}). "
-            f"Current step: {step_display}. Pipeline: {pipe_display}. "
-            f"{gate_instruction}"
-        )
-    })
-    print(output)
+    _falar("continuing", (
+        f"HARNESS v3 CONTINUING: {classification} (task {task_id}). "
+        f"Current step: {step_display}. Pipeline: {pipe_display}. "
+        f"{gate_instruction}"
+    ))
     raise SystemExit(0)
 
 # ============================================================================
@@ -514,24 +543,25 @@ started_at: {started_at}
 </harness-classification>""")
 elif pipeline_unmapped:
     # Classificado L1+ porem sem pipeline mapeado: avisa em vez de seguir vazio.
-    print(json.dumps({
-        "systemMessage": (
-            f"HARNESS v3 WARNING: classificacao '{classification}' (task {task_id}) "
-            f"nao tem pipeline mapeado. Trate como L1-feature ou confirme o tipo "
-            f"manualmente — nao ha fases a executar. Nao prossiga em silencio."
-        )
-    }))
+    _falar("warning", (
+        f"HARNESS v3 WARNING: classificacao '{classification}' (task {task_id}) "
+        f"nao tem pipeline mapeado. Trate como L1-feature ou confirme o tipo "
+        f"manualmente — nao ha fases a executar. Nao prossiga em silencio."
+    ))
 else:
-    # L1+: emit systemMessage JSON to force workflow activation
-    output = json.dumps({
-        "systemMessage": (
-            f"HARNESS v3 CLASSIFIED: {classification}. "
-            f"Pipeline: {pipeline_display}. "
-            f"Task ID: {task_id}. "
-            f"You MUST invoke the harness-workflow skill NOW using the Skill tool "
-            f"with skill='harness-workflow'. Do NOT skip this step. "
-            f"Do NOT answer the user directly — invoke the skill FIRST."
-        )
-    })
-    print(output)
+    # L1+: ativa o workflow. O texto manda CONFIRMAR antes de executar porque
+    # o classificador aqui e regex: `aggregates.classify` desta maquina mede
+    # proxy_regex_vs_observado = 0.297, ou seja ele acerta o nivel observado em
+    # ~30% dos casos, com 64 tasks sem confirmacao. Enquanto o canal estava
+    # morto isso nao custava nada; com o canal vivo, mandar executar direto
+    # seria auto-disparar pipeline sobre um palpite.
+    _falar("classified", (
+        f"HARNESS v3 CLASSIFIED: {classification}. "
+        f"Pipeline: {pipeline_display}. "
+        f"Task ID: {task_id}. "
+        f"Invoque a skill 'harness-workflow' antes de responder ao usuario. "
+        f"A classificacao acima vem de regex e acerta ~30% das vezes: a skill "
+        f"deve CONFIRMAR ou CORRIGIR o nivel semanticamente antes de executar "
+        f"qualquer fase do pipeline. Se o nivel real for L0, diga e siga direto."
+    ))
 PYEOF
