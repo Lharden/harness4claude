@@ -72,3 +72,15 @@ pythonVersion = "3.10"
 # reclama de todo import irmao.
 extraPaths = ["tools", "scripts", "hooks"]
 reportMissingImports = "warning"
+
+[tool.pytest.ini_options]
+# Ha worktrees git aninhados dentro do repo (`worktrees/`, criados por
+# `EnterWorktree`/`git worktree add`). Eles carregam uma copia completa de
+# `tests/`, com os MESMOS nomes de modulo — `pytest` puro coleta as duas e
+# aborta com "import file mismatch" antes de rodar um unico teste.
+#
+# Sem isto, o portao de verificacao depende de lembrar de escrever
+# `pytest tests/`. Um portao que so funciona quando invocado do jeito certo
+# nao e um portao.
+testpaths = ["tests"]
+norecursedirs = ["worktrees", ".git", "__pycache__", "*.egg-info", "graphify-out"]
