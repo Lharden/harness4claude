@@ -85,7 +85,9 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 | **L2-review** | graph-context → code-review → verify-multimodel |
 | **L2-docs** | source-selection → graph-context → documentation → verify-against-spec |
 
-> **Zero skills fantasma:** removidos `triage-issue`, `request-refactor-plan`, `improve-codebase-architecture`, `prd-to-plan`, `write-a-prd`, `execucao`. Cada fase mapeia a um mecanismo real.
+> **Zero skills fantasma:** removidos `triage-issue`, `request-refactor-plan`, `improve-codebase-architecture`, `prd-to-plan`, `write-a-prd`, `execucao`. Cada fase mapeia a um mecanismo real — ver "Mapa fase → mecanismo" abaixo, que agora cobre as 18.
+>
+> Essa afirmação foi **falsa entre 2026-08-28 e 2026-09-02**. As pipelines de `review` e `docs` entraram em `d7fa6d8` por paridade de contrato com o harness4codex, declarando `source-selection`, `documentation` e `code-review` sem que nenhum existisse — e o mapa abaixo pulava justamente esses três. Pior, eram inalcançáveis: `classify_prompt.py` só emitia `{bug, refactor, architecture, feature}`, então nenhum prompt jamais chegava lá. As duas skills foram escritas, `code-review` foi mapeado ao comando built-in, e o classificador ganhou `DOCS_PATTERNS` e `REVIEW_PATTERNS`. Fica registrado porque uma linha que declara ausência de fantasma três linhas abaixo de três fantasmas é o tipo de erro que se repete.
 > **autoresearch (acelerador opcional, não obrigatório):** em bugs, `tdd`/`verify` podem usar `autoresearch:debug`/`autoresearch:fix` (loops com guard pytest); em L2 com auth/dados/API, rodar `autoresearch:security`; em L2-architecture, `autoresearch:predict` para pré-análise. Se o plugin estiver indisponível, seguir sem ele (degradação graceful).
 
 ## Motor de Execução: Workflows + Gates
@@ -104,11 +106,15 @@ Os nomes abaixo são **fases** (espelham `PIPELINES` em `harness-classify.sh`). 
 | `grill-me` | skill + **Workflow** | `Skill(skill="grill-me")` — o passo 0 dela chama `wf-grill` para gerar o conjunto adversarial em contexto limpo; o loop com o humano segue na skill, sem limite |
 | `design-doc` | skill | `Skill(skill="design-doc")` |
 | `validate-plan` | skill | `Skill(skill="validate-plan")` |
+| `systematic-debugging` | skill | `Skill(skill="superpowers:systematic-debugging")` — primeira fase dos pipelines de bug |
 | `tdd` | skill | `Skill(skill="superpowers:test-driven-development")` |
 | `approve-spec` / `approve-plan` | gate humano | gravar gate, obter decisão explícita e resolver antes de avançar |
 | `verify-multimodel` | **Workflow** | `wf-verify-multimodel` (review multi-perspectiva + adversarial) |
 | `verify-against-spec` (L1) | skill | `Skill(skill="verify-against-spec")` (Workflow opcional) |
 | `verify` (bug) | skill | `Skill(skill="superpowers:verification-before-completion")` |
+| `source-selection` | skill | `Skill(skill="source-selection")` — decide qual fonte manda antes de escrever doc |
+| `documentation` | skill | `Skill(skill="documentation")` — escreve a partir da tabela de fontes |
+| `code-review` | comando | `/code-review` (built-in do Claude Code). Sem argumento revisa o diff atual; aceita PR, branch ou path |
 
 ### Invocando um Workflow
 

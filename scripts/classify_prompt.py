@@ -127,6 +127,54 @@ L2_PATTERNS = (
     r"schema.*endpoint",
 )
 
+#: Revisao de codigo ja escrito. Vem ANTES de bug e refactor na ordem de
+#: decisao porque "revisa isso" e um pedido de leitura, nao de mudanca — quem
+#: Revisao de codigo ja escrito. Vem ANTES de bug e refactor na ordem de
+#: decisao porque "revisa isso" e um pedido de leitura, nao de mudanca — quem
+#: pede review nao autorizou edicao, e tratar como refactor inverteria isso.
+REVIEW_PATTERNS = (
+    r"\brevisa\b",
+    r"\brevise\b",
+    r"\brevisar\b",
+    r"\breview\b",
+    r"\bcode review\b",
+    r"\bavalia o codigo\b",
+    r"\bavaliar o codigo\b",
+    r"\bda uma olhada n[oa]\b",
+    r"\bcritica\b",
+    r"\bcritique\b",
+    r"\bauditar?\b",
+    r"\baudit\b",
+    r"\bo que voce acha d[oa]\b",
+    r"\bwhat do you think of\b",
+    r"\besta bom\b",
+    r"\blooks? good\b",
+)
+
+#: Documentacao. `source-selection` abre esses pipelines de proposito:
+#: escrever doc sem decidir antes qual fonte manda produz texto plausivel e
+#: errado, que e pior que doc ausente — foi o que aconteceu com o README
+#: deste repo, que afirmou por semanas que todo pipeline termina em
+#: verify-against-spec.
+DOCS_PATTERNS = (
+    r"\bdocumenta\b",
+    r"\bdocumentar\b",
+    r"\bdocument\b",
+    r"\bdocumentacao\b",
+    r"\bdocumentation\b",
+    r"\bdocs\b",
+    r"\breadme\b",
+    r"\bchangelog\b",
+    r"\bdocstring\b",
+    r"\bcomenta o codigo\b",
+    r"\bguia de uso\b",
+    r"\busage guide\b",
+    r"\btutorial\b",
+    r"\bexplica no (readme|doc)\b",
+    r"\bescreve[r]? (a )?doc\b",
+    r"\bwrite (the )?docs?\b",
+)
+
 BUG_PATTERNS = (
     r"\bbug\b",
     r"\bfix\b",
@@ -210,7 +258,15 @@ def classify_prompt(prompt: str) -> tuple[str, str]:
     else:
         level = "L1"
 
-    if _matches(BUG_PATTERNS, normalized):
+    # Ordem importa. `docs` vem primeiro porque "documenta o modulo novo" tem
+    # marcador de feature e o pedido e doc. `review` vem antes de bug/refactor
+    # porque "revisa o fix" pede leitura, nao conserto: classificar como bug
+    # autorizaria edicao que ninguem pediu.
+    if _matches(DOCS_PATTERNS, normalized):
+        kind = "docs"
+    elif _matches(REVIEW_PATTERNS, normalized):
+        kind = "review"
+    elif _matches(BUG_PATTERNS, normalized):
         kind = "bug"
     elif _matches(REFACTOR_PATTERNS, normalized):
         kind = "refactor"

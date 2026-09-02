@@ -190,7 +190,7 @@ Como saberemos que a feature está completa e funcionando:
 - [ ] Todos os AC (P1) passando em testes automatizados
 - [ ] Cobertura de testes >= 80% para novos código
 - [ ] Zero findings críticos em `verify-against-spec`
-- [ ] Zero findings críticos em review multi-modelo (Claude + Codex + Gemini)
+- [ ] Zero findings críticos em `wf-verify-multimodel` (L2; 5 dimensões + adjudicação)
 - [ ] Performance dentro de REQ-NF1
 - [ ] Documentação atualizada (README, CLAUDE.md se aplicável)
 - [ ] Todos os `[NEEDS CLARIFICATION]` resolvidos

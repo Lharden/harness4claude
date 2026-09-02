@@ -34,8 +34,11 @@ human gates and revision-bound evidence.
 | L2 | architecture/refactor | `discuss` -> `graph-context` -> `write-spec` -> `grill-me` -> `approve-spec` -> `design-doc` -> `validate-plan` -> `approve-plan` -> `tdd` -> `verify-multimodel` |
 | L2 | bug | `systematic-debugging` -> `graph-context` -> `grill-me` -> `tdd` -> `verify` |
 
-Each pipeline ends with `verify-against-spec`, which ensures nothing ships without
-evidence that the implementation satisfies every requirement in the spec.
+L1 pipelines end with `verify-against-spec`, which checks coverage item by item
+against the spec. L2 pipelines end with the `wf-verify-multimodel` Workflow:
+five review dimensions in parallel, then an adversarial adjudication pass that
+tries to refute each finding. Neither ships without evidence; L2 simply pays for
+a wider net, because the cost of being wrong there is higher.
 
 ---
 
