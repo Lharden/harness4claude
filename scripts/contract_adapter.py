@@ -22,7 +22,7 @@ EVIDENCE = {
     "state.ttl-signals": ["tests/test_transactional_state.py#test_stale_task_ttl_abandons_pipeline_and_releases_scope"],
     "workflow.sdd-v3": ["tests/test_contract_adapter.py#test_claude_pipelines_are_the_canonical_contract_pipelines"],
     "workflow.human-gates": [
-        "tests/test_transactional_branches.py#test_each_branch_approval_resolves_only_its_subject_gate"
+        "tests/test_branch_state.py#test_park_resolve_gate_e_abertura_posterior_cria_nova_aprovacao"
     ],
     "workflow.adversarial-agents": ["tests/test_workflow_returns.py#test_todo_fan_out_tem_censo_de_nos"],
     "workflow.spec-verification": ["tests/test_workflow_returns.py#test_verify_nao_aprova_com_cobertura_incompleta"],
@@ -32,7 +32,7 @@ EVIDENCE = {
     "memory.wiki-vault": ["tests/test_vault_sync.py#test_spec_crua_chega_ao_vault_com_frontmatter"],
     "memory.operational-search": ["tests/test_wiki_query.py#test_camada_a_acha_por_alias_curado_e_e_confiavel"],
     "conversation.branch-keeper": [
-        "tests/test_transactional_branches.py#test_open_branch_requires_its_approval_and_enforces_open_limit"
+        "tests/test_branch_state.py#test_fluxo_publico_aplica_gate_e_limite_transacionais"
     ],
     "safety.command-policy": [
         "tests/test_command_policy.py#test_policy_denies_destructive_chain_and_gates_plugin_mutation"

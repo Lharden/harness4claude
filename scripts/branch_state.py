@@ -34,6 +34,7 @@ e o bloco de parking passaria a mentir sobre o que ainda esta suspenso.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness_paths
+from transactional_state import HarnessDatabase, StateTransitionError
 
 SCHEMA_VERSION = 1
 FILENAME = "branches.json"
@@ -84,6 +86,74 @@ def branches_path(cwd: str | os.PathLike | None = None) -> str:
 def branches_dir(cwd: str | os.PathLike | None = None) -> str:
     """Diretorio das sementes e launchers deste projeto."""
     return str(harness_paths.state_dir(cwd=cwd) / "branches")
+
+
+def _transaction_context(cwd: str | os.PathLike | None):
+    project_home = harness_paths.state_dir(cwd=cwd)
+    session_id = None
+    try:
+        sensor = json.loads((project_home / "branch-sensor.json").read_text(encoding="utf-8"))
+        session_id = sensor.get("session_id") if isinstance(sensor, dict) else None
+    except (OSError, ValueError):
+        pass
+    candidates = []
+    if session_id:
+        candidates.append(harness_paths.state_dir(cwd=cwd, session_id=str(session_id)))
+    candidates.append(project_home)
+    for home in candidates:
+        try:
+            projection = json.loads((home / "state.json").read_text(encoding="utf-8"))
+            task_id = projection.get("task_id") if isinstance(projection, dict) else None
+            if not task_id or not (home / "harness.db").is_file():
+                continue
+            database = HarnessDatabase(home)
+            task = database.task(str(task_id))
+            return home, database, task
+        except (OSError, ValueError, StateTransitionError):
+            continue
+    return None
+
+
+def _sync_task(home: Path, task: dict) -> None:
+    path = home / "state.json"
+    try:
+        projection = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(projection, dict):
+            projection = {}
+    except (OSError, ValueError):
+        projection = {}
+    projection.update(
+        {
+            "task_id": task["task_id"],
+            "status": task["status"],
+            "current_step": task["phase"],
+            "revision": task["revision"],
+            "code_revision": task["code_revision"],
+            "verified": task["verified"],
+            "pending_gate": task["pending_gate"],
+            "scope_id": task["scope_id"],
+        }
+    )
+    temporary = path.with_suffix(".json.branch.tmp")
+    temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _integer_setting(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _sensor_turn(cwd: str | os.PathLike | None) -> int:
+    try:
+        payload = json.loads(
+            (harness_paths.state_dir(cwd=cwd) / "branch-sensor.json").read_text(encoding="utf-8")
+        )
+        return int(payload.get("turn", 0)) if isinstance(payload, dict) else 0
+    except (OSError, ValueError, TypeError):
+        return 0
 
 
 class _Lock:
@@ -222,6 +292,25 @@ def add(
             "detector": detector,
             "conclusion": None,
         }
+        transaction = _transaction_context(cwd)
+        if transaction is not None:
+            home, database, task = transaction
+            normalized_topic = unicodedata.normalize("NFKC", str(topic)).casefold().strip()
+            try:
+                database.create_branch(
+                    task["task_id"],
+                    branch_id=branch["session_id"],
+                    slug=branch["slug"],
+                    name=branch["name"],
+                    topic=branch["topic"],
+                    topic_hash=hashlib.sha256(normalized_topic.encode("utf-8")).hexdigest(),
+                    offered_turn=origin_turn or _sensor_turn(cwd),
+                    max_offers=_integer_setting("HARNESS_BRANCH_MAX_OFFERS", 2),
+                    cooldown_turns=_integer_setting("HARNESS_BRANCH_COOLDOWN_TURNS", 8),
+                )
+            except StateTransitionError as exc:
+                raise ValueError(str(exc)) from exc
+            _sync_task(home, database.task(task["task_id"]))
         if parent_session and not data.get("parent_session"):
             data["parent_session"] = parent_session
         data["branches"].append(branch)
@@ -258,6 +347,42 @@ def set_status(
             atual = b.get("status", "pending")
             if status not in TRANSITIONS.get(atual, set()):
                 raise ValueError(f"transicao invalida: {atual} -> {status} ({slug})")
+            transaction = _transaction_context(cwd)
+            if transaction is not None:
+                home, database, task = transaction
+                branch_id = str(b.get("session_id") or "")
+                try:
+                    if status == "open":
+                        selected_seed = seed_path or b.get("seed_path")
+                        if not selected_seed:
+                            raise StateTransitionError("branch seed path is required before opening")
+                        current = database.branch(branch_id)
+                        if not current.get("approved_at"):
+                            database.request_branch_approval(branch_id)
+                            database.approve_branch(branch_id)
+                        database.open_branch(
+                            branch_id,
+                            seed_path=str(selected_seed),
+                            max_open=_integer_setting("HARNESS_BRANCH_MAX_OPEN", 3),
+                        )
+                    else:
+                        current = database.branch(branch_id)
+                        if not current.get("approved_at"):
+                            try:
+                                database.resolve_branch_decision(branch_id, "park")
+                            except StateTransitionError as exc:
+                                if "pending branch-open gate" not in str(exc):
+                                    raise
+                        database.update_branch(
+                            branch_id,
+                            status=status,
+                            seed_path=seed_path,
+                            conclusion=conclusion,
+                        )
+                except StateTransitionError as exc:
+                    _sync_task(home, database.task(task["task_id"]))
+                    raise ValueError(str(exc)) from exc
+                _sync_task(home, database.task(task["task_id"]))
             b["status"] = status
             if status == "open":
                 b["opened_at"] = _now()
@@ -275,17 +400,71 @@ def set_status(
     raise KeyError(slug)
 
 
-def discard(*, cwd: str | os.PathLike | None = None, slug: str) -> None:
-    """Apaga o ramo do registro. Unico caminho de perda, e e explicito."""
+def attach_files(
+    *,
+    cwd: str | os.PathLike | None = None,
+    slug: str,
+    seed_path: str,
+    launcher_path: str,
+) -> dict:
     target = branches_path(cwd)
     with _Lock(target):
         data = load(cwd)
-        antes = len(data["branches"])
-        data["branches"] = [b for b in data["branches"] if b.get("slug") != slug]
-        if len(data["branches"]) == antes:
-            raise KeyError(slug)
-        save(data, cwd)
-    signal("discarded")
+        for branch in data["branches"]:
+            if branch.get("slug") != slug:
+                continue
+            transaction = _transaction_context(cwd)
+            if transaction is not None:
+                home, database, task = transaction
+                try:
+                    database.update_branch(
+                        str(branch.get("session_id") or ""),
+                        status=str(branch.get("status") or "pending"),
+                        seed_path=seed_path,
+                    )
+                except StateTransitionError as exc:
+                    raise ValueError(str(exc)) from exc
+                _sync_task(home, database.task(task["task_id"]))
+            branch["seed_path"] = seed_path
+            branch["launcher_path"] = launcher_path
+            save(data, cwd)
+            return branch
+    raise KeyError(slug)
+
+
+def decide(
+    *, cwd: str | os.PathLike | None = None, slug: str, decision: str
+) -> dict:
+    if decision not in {"park", "discard"}:
+        raise ValueError(f"decisao desconhecida: {decision}")
+    target = branches_path(cwd)
+    with _Lock(target):
+        data = load(cwd)
+        for branch in data["branches"]:
+            if branch.get("slug") != slug:
+                continue
+            transaction = _transaction_context(cwd)
+            if transaction is not None:
+                home, database, task = transaction
+                try:
+                    database.resolve_branch_decision(
+                        str(branch.get("session_id") or ""), decision
+                    )
+                except StateTransitionError as exc:
+                    raise ValueError(str(exc)) from exc
+                _sync_task(home, database.task(task["task_id"]))
+            if decision == "discard":
+                data["branches"] = [item for item in data["branches"] if item is not branch]
+                save(data, cwd)
+                signal("discarded")
+                return branch
+            return branch
+    raise KeyError(slug)
+
+
+def discard(*, cwd: str | os.PathLike | None = None, slug: str) -> None:
+    """Apaga o ramo do registro. Unico caminho de perda, e e explicito."""
+    decide(cwd=cwd, slug=slug, decision="discard")
 
 
 def by_status(cwd: str | os.PathLike | None = None, *statuses: str) -> list[dict]:
@@ -302,10 +481,16 @@ def open_branches(cwd: str | os.PathLike | None = None) -> list[dict]:
 
 def can_open(cwd: str | os.PathLike | None = None) -> bool:
     """Teto de janelas simultaneas. Estourou, o ramo novo fica `pending`."""
-    try:
-        teto = int(os.environ.get("HARNESS_BRANCH_MAX_OPEN", "3"))
-    except ValueError:
-        teto = 3
+    teto = _integer_setting("HARNESS_BRANCH_MAX_OPEN", 3)
+    transaction = _transaction_context(cwd)
+    if transaction is not None:
+        _home, database, task = transaction
+        opened = [
+            branch
+            for branch in database.list_branches(task["task_id"])
+            if branch["status"] == "open"
+        ]
+        return len(opened) < teto
     return len(open_branches(cwd)) < teto
 
 
@@ -405,7 +590,9 @@ def main() -> int:
     import argparse
 
     p = argparse.ArgumentParser(description="Registro de ramos do Branch Keeper.")
-    p.add_argument("acao", choices=["list", "parked", "add", "status", "discard", "path"])
+    p.add_argument(
+        "acao", choices=["list", "parked", "add", "status", "decision", "discard", "path"]
+    )
     p.add_argument("--cwd", default=None)
     p.add_argument("--slug", default=None)
     p.add_argument("--name", default=None)
@@ -415,6 +602,7 @@ def main() -> int:
     p.add_argument("--seed", default=None)
     p.add_argument("--launcher", default=None)
     p.add_argument("--detector", default="claude")
+    p.add_argument("--decision", choices=["park", "discard"], default=None)
     args = p.parse_args()
     cwd = args.cwd or os.getcwd()
 
@@ -446,6 +634,15 @@ def main() -> int:
                     seed_path=args.seed,
                     launcher_path=args.launcher,
                 ),
+                ensure_ascii=False,
+            )
+        )
+    elif args.acao == "decision":
+        if not (args.slug and args.decision):
+            p.error("decision exige --slug e --decision")
+        print(
+            json.dumps(
+                decide(cwd=cwd, slug=args.slug, decision=args.decision),
                 ensure_ascii=False,
             )
         )

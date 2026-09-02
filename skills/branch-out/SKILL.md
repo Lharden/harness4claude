@@ -71,6 +71,11 @@ python "$CLAUDE_PLUGIN_ROOT/scripts/branch_state.py" add \
 O `session_id` nasce aí, antes da janela: um ramo `pending` já é endereçável
 por `claude --resume <uuid>` semanas depois.
 
+Depois da resposta, resolva o gate do ramo. Para parkear (inclusive no default
+ambíguo), rode `branch_state.py decision --slug <slug> --decision park`; para
+descartar, use `--decision discard`. A opção de abrir é resolvida atomicamente
+no passo `status --set open` abaixo.
+
 ## open — abrir a janela
 
 **A semente é escrita por você, não pelo hook.** Só você tem o contexto. Ela é
@@ -90,9 +95,13 @@ Depois:
 
 ```bash
 python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" write --slug <slug> --seed-file <arquivo.md>
-python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" launch --slug <slug>
 python "$CLAUDE_PLUGIN_ROOT/scripts/branch_state.py" status --slug <slug> --set open
+python "$CLAUDE_PLUGIN_ROOT/scripts/branch_seed.py" launch --slug <slug>
 ```
+
+`status --set open` é a fronteira de autorização: resolve o gate específico do
+ramo e aplica o teto transacional antes de qualquer janela ser lançada. Se o
+teto estiver cheio, o comando falha e o launcher não deve ser executado.
 
 A janela abre em Windows Terminal + PowerShell 7, no diretório do projeto, já
 rodando `claude --session-id <uuid> -n "<nome>"` com a semente. O launcher fica

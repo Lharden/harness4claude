@@ -12,5 +12,5 @@
     "schemas/node-result.schema.json",
     "schemas/task-state.schema.json"
   ],
-  "sha256": "a02362006c32e551b451ca5e05f38ed9d65fa4357cf1e5afe45aa764b047cb2f"
+  "sha256": "bcb8bff10200f3f7dac3bab0ba22e397b16984d0086c3c54bdefff26d419a5e6"
 }

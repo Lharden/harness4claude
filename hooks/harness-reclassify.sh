@@ -98,6 +98,8 @@ state_file = os.path.join(harness_dir, 'state.json')
 counter_file = os.path.join(harness_dir, '.session-files-count')
 file_path = os.environ['HARNESS_FILE_PATH']
 tool_name = os.environ.get('HARNESS_TOOL_NAME') or ''
+if tool_name not in {'Edit', 'Write'}:
+    raise SystemExit(0)
 from post_tool_policy import counts_as_modified_file, touch_target
 target = touch_target(tool_name, file_path)
 if target is None:

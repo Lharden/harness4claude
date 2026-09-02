@@ -29,6 +29,28 @@ ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 STATE_PATH = ROOT / "scripts" / "branch_state.py"
 
 
+def _active_transaction(bs, cwd: Path, session_id: str = "session-branch"):
+    project_home = bs.harness_paths.ensure_state_dir(cwd=str(cwd))
+    (project_home / "branch-sensor.json").write_text(
+        json.dumps({"session_id": session_id, "turn": 10}), encoding="utf-8"
+    )
+    session_home = bs.harness_paths.ensure_state_dir(cwd=str(cwd), session_id=session_id)
+    database = bs.HarnessDatabase(session_home)
+    task = database.start_task(
+        scope_id=f"{session_id}|repo|worktree",
+        legacy_level="L2-feature",
+        tier="L2",
+        kind="feature",
+        pipeline=["discuss", "tdd"],
+        prompt="branch work",
+    )
+    (session_home / "state.json").write_text(
+        json.dumps({"task_id": task["task_id"], "scope_id": task["scope_id"]}),
+        encoding="utf-8",
+    )
+    return database, task
+
+
 @pytest.fixture(scope="module")
 def bs():
     """Carrega o modulo pelo path (scripts/ nao e um pacote instalavel)."""
@@ -131,6 +153,72 @@ class TestOrcamento:
         bs.add(cwd=str(tmp_path), name="Sensor", topic="detectar deriva por embedding")
         assert bs.already_seen(cwd=str(tmp_path), topic="detectar deriva por embedding") is True
         assert bs.already_seen(cwd=str(tmp_path), topic="renomear o launcher") is False
+
+    def test_fluxo_publico_aplica_gate_e_limite_transacionais(self, bs, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OPEN", "1")
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "3")
+        database, task = _active_transaction(bs, tmp_path)
+
+        first = bs.add(
+            cwd=str(tmp_path), name="Primeiro", topic="tema um", origin_turn=10
+        )
+        second = bs.add(
+            cwd=str(tmp_path), name="Segundo", topic="tema dois", origin_turn=18
+        )
+
+        assert database.branch(first["session_id"])["approved_at"] is None
+        assert database.task(task["task_id"])["pending_gate"].startswith("branch-open:")
+
+        opened = bs.set_status(
+            cwd=str(tmp_path),
+            slug=first["slug"],
+            status="open",
+            seed_path="first.seed.md",
+            launcher_path="first.launch.ps1",
+        )
+        assert opened["status"] == "open"
+        assert database.branch(first["session_id"])["status"] == "open"
+
+        with pytest.raises(ValueError, match="open branch limit"):
+            bs.set_status(
+                cwd=str(tmp_path),
+                slug=second["slug"],
+                status="open",
+                seed_path="second.seed.md",
+            )
+        assert bs.get(cwd=str(tmp_path), slug=second["slug"])["status"] == "pending"
+
+    def test_fluxo_publico_aplica_cooldown_transacional(self, bs, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "3")
+        monkeypatch.setenv("HARNESS_BRANCH_COOLDOWN_TURNS", "8")
+        _active_transaction(bs, tmp_path)
+
+        bs.add(cwd=str(tmp_path), name="Primeiro", topic="tema um", origin_turn=10)
+        with pytest.raises(ValueError, match="cooldown"):
+            bs.add(cwd=str(tmp_path), name="Cedo", topic="tema cedo", origin_turn=12)
+        assert [branch["name"] for branch in bs.load(cwd=str(tmp_path))["branches"]] == [
+            "Primeiro"
+        ]
+
+    def test_park_resolve_gate_e_abertura_posterior_cria_nova_aprovacao(self, bs, tmp_path):
+        database, task = _active_transaction(bs, tmp_path)
+        branch = bs.add(
+            cwd=str(tmp_path), name="Depois", topic="tema futuro", origin_turn=10
+        )
+
+        parked = bs.decide(cwd=str(tmp_path), slug=branch["slug"], decision="park")
+
+        assert parked["status"] == "pending"
+        assert database.task(task["task_id"])["pending_gate"] is None
+
+        opened = bs.set_status(
+            cwd=str(tmp_path),
+            slug=branch["slug"],
+            status="open",
+            seed_path="later.seed.md",
+        )
+        assert opened["status"] == "open"
+        assert database.branch(branch["session_id"])["approved_at"] is not None
 
 
 class TestParkingBlock:
