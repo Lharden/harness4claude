@@ -301,6 +301,60 @@ def _save_budget(cwd, data: dict) -> None:
         pass
 
 
+def _pending_path(cwd) -> Path:
+    return Path(str(branch_state.harness_paths.state_dir(cwd=cwd) / "pending-signal.json"))
+
+
+def stash_pending(*, cwd, session_id, text: str, turn: int) -> None:
+    """Guarda um sinal nascido no Stop para o proximo UserPromptSubmit entregar.
+
+    No Stop o turno acabou: a instrucao "invoque a skill AGORA, antes de
+    responder" chega depois da resposta, o que a torna inexecutavel. Os 4
+    BRANCH SIGNAL da historia inteira vieram desse evento, e nenhum virou
+    oferta.
+
+    Descartar tambem nao serve, e a medicao mostrou por que: `evaluate` chama
+    `record_offer` ANTES de saber se a entrega e possivel, entao um sinal
+    perdido no Stop ainda queima uma das 2 ofertas da sessao. Em 2026-09-01
+    isto foi observado ao vivo — `offers: 1` gasto por um sinal que ninguem
+    leu. Guardar fecha os dois buracos com o mesmo arquivo.
+    """
+    try:
+        p = _pending_path(cwd)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({
+            "session_id": session_id or "",
+            "text": text,
+            "turn": turn,
+            "stashed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def take_pending(*, cwd, session_id) -> str:
+    """Consome o sinal guardado, se for da sessao corrente. Le uma vez so.
+
+    Sinal de outra sessao e descartado sem entregar: o objetivo mudou, e
+    oferecer um ramo sobre a conversa de ontem seria ruido com cara de
+    memoria.
+    """
+    p = _pending_path(cwd)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    try:
+        p.unlink()
+    except OSError:
+        pass
+    if not isinstance(data, dict):
+        return ""
+    if session_id and data.get("session_id") and data["session_id"] != session_id:
+        return ""
+    return str(data.get("text") or "")
+
+
 def budget_allows(*, cwd, turn: int) -> bool:
     """Teto de ofertas por sessao mais cooldown entre elas.
 
@@ -580,17 +634,32 @@ def main() -> int:
     # metades: escolhe o canal pelo evento e junta os blocos num so, porque o
     # host aceita um `hookSpecificOutput` por saida.
     evento = payload.get("hook_event_name") or "UserPromptSubmit"
+
+    # O Stop nao fala: guarda e sai. O UserPromptSubmit seguinte entrega, num
+    # momento em que "antes de responder" ainda quer dizer alguma coisa.
+    if str(evento).lower().startswith("stop"):
+        if msg:
+            stash_pending(cwd=cwd, session_id=session_id, text=msg, turn=turn)
+        mod = _emit_mod()
+        if mod is not None:
+            mod.Emitter(evento, hook="branch_sensor", session_id=session_id,
+                        cwd=cwd).add("branch", msg).flush()
+        return 0
+
+    # Um sinal guardado vem primeiro: ele nasceu no turno anterior e envelhece.
+    pendente = take_pending(cwd=cwd, session_id=session_id)
+
     mod = _emit_mod()
     if mod is not None:
         em = mod.Emitter(evento, hook="branch_sensor", session_id=session_id, cwd=cwd)
-        em.add("branch", msg).add("parked", parked)
+        em.add("branch_pendente", pendente).add("branch", msg).add("parked", parked)
         em.flush()
         return 0
 
     # Fallback sem o emissor: so o canal provado, e nunca no Stop (ali o turno
     # ja acabou e a instrucao chegaria tarde por construcao).
-    corpo = "\n\n".join(x for x in (msg, parked) if x)
-    if corpo and not str(evento).lower().startswith("stop"):
+    corpo = "\n\n".join(x for x in (pendente, msg, parked) if x)
+    if corpo:
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": evento,

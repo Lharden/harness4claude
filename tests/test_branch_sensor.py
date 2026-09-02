@@ -427,3 +427,66 @@ class TestCanalVivo:
         ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
         assert "aliás" in ctx and "visualização" in ctx
         assert "Ã" not in ctx
+
+
+class TestSinalDiferido:
+    """Sinal nascido no Stop e guardado, nao descartado.
+
+    Os 4 BRANCH SIGNAL da historia inteira vieram do evento Stop, onde a
+    instrucao "invoque a skill AGORA, antes de responder" chega depois da
+    resposta — inexecutavel por construcao. Mas descartar tambem custa:
+    `evaluate` chama `record_offer` ANTES de saber se a entrega e possivel,
+    entao um sinal perdido no Stop ainda queima uma das 2 ofertas da sessao.
+    Observado ao vivo em 2026-09-01: `offers: 1` gasto por um sinal que
+    ninguem leu. Guardar fecha os dois buracos com o mesmo arquivo.
+    """
+
+    def _rodar(self, sensor, monkeypatch, tmp_path, prompt, evento, session_id="s1"):
+        monkeypatch.setattr(sensor, "embed", lambda _t: [0.0, 1.0])
+        monkeypatch.setattr(sensor, "text_from_payload", lambda p: p.get("prompt", ""))
+        return TestCanalVivo()._rodar(sensor, monkeypatch, tmp_path, prompt,
+                                      evento=evento, session_id=session_id)
+
+    def _ancora(self, sensor, tmp_path, session_id="s1"):
+        sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
+                          session_id=session_id, embedding=[1.0, 0.0])
+
+    def test_stop_guarda_em_vez_de_perder(self, sensor, tmp_path, monkeypatch):
+        self._ancora(sensor, tmp_path)
+        out = self._rodar(sensor, monkeypatch, tmp_path,
+                          "e se a gente exportasse tudo pra outro formato?", "Stop")
+        assert "BRANCH SIGNAL" not in out
+        assert sensor._pending_path(str(tmp_path)).exists()
+
+    def test_o_prompt_seguinte_entrega(self, sensor, tmp_path, monkeypatch):
+        self._ancora(sensor, tmp_path)
+        self._rodar(sensor, monkeypatch, tmp_path,
+                    "e se a gente exportasse tudo pra outro formato?", "Stop")
+        out = self._rodar(sensor, monkeypatch, tmp_path,
+                          "voltando ao trabalho normal agora", "UserPromptSubmit")
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        assert "BRANCH SIGNAL" in ctx and "outro formato" in ctx
+
+    def test_entrega_uma_vez_so(self, sensor, tmp_path, monkeypatch):
+        self._ancora(sensor, tmp_path)
+        self._rodar(sensor, monkeypatch, tmp_path,
+                    "e se a gente exportasse tudo pra outro formato?", "Stop")
+        self._rodar(sensor, monkeypatch, tmp_path, "primeiro prompt depois",
+                    "UserPromptSubmit")
+        out2 = self._rodar(sensor, monkeypatch, tmp_path, "segundo prompt depois",
+                           "UserPromptSubmit")
+        assert "outro formato" not in out2
+        assert not sensor._pending_path(str(tmp_path)).exists()
+
+    def test_sinal_de_outra_sessao_nao_e_entregue(self, sensor, tmp_path, monkeypatch):
+        """Objetivo novo, ancora nova: oferecer um ramo sobre a conversa de
+        ontem seria ruido com cara de memoria."""
+        sensor.stash_pending(cwd=str(tmp_path), session_id="sessao-velha",
+                             text="BRANCH SIGNAL: ramo de ontem", turn=3)
+        self._ancora(sensor, tmp_path, session_id="s1")
+        out = self._rodar(sensor, monkeypatch, tmp_path, "trabalho de hoje seguindo",
+                          "UserPromptSubmit", session_id="s1")
+        assert "ramo de ontem" not in out
+
+    def test_take_sem_arquivo_e_string_vazia(self, sensor, tmp_path):
+        assert sensor.take_pending(cwd=str(tmp_path), session_id="s1") == ""
