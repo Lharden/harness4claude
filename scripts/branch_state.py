@@ -373,6 +373,49 @@ def signal(event: str, harness_root: str | os.PathLike | None = None) -> None:
         pass
 
 
+#: Truncagem da conclusao devolvida ao pai. Menor que TOPIC_TRUNC nao serve:
+#: uma conclusao cortada em 80 chars vira "o ramo terminou" sem dizer no que.
+CONCLUSION_TRUNC = 220
+
+
+def _conclusoes_pendentes(dados: dict) -> list[dict]:
+    """Ramos fechados cuja conclusao o pai ainda nao viu.
+
+    O ramo existe para tirar um assunto do pai. Mas se o que ele descobriu
+    nunca volta, ramificar vira perder o assunto em vez de organiza-lo — e a
+    proxima vez que alguem tocar no tema no pai comeca do zero.
+
+    Entrega UMA vez. Reinjetar a cada turno transformaria a conclusao em ruido
+    de fundo, que e o que o proprio parking existe para evitar.
+    """
+    return [
+        b for b in dados.get("branches", [])
+        if b.get("status") == "closed"
+        and b.get("conclusion")
+        and not b.get("conclusion_delivered")
+    ]
+
+
+def _marcar_entregues(cwd, slugs: list) -> None:
+    """Marca as conclusoes como vistas.
+
+    Nunca levanta: perder a marca custa uma repeticao; quebrar o hook custa o
+    turno inteiro.
+    """
+    if not slugs:
+        return
+    try:
+        target = branches_path(cwd)
+        with _Lock(target):
+            dados = load(cwd)
+            for b in dados["branches"]:
+                if b.get("slug") in slugs:
+                    b["conclusion_delivered"] = True
+            save(dados, cwd)
+    except Exception:
+        pass
+
+
 def parked_block(cwd: str | os.PathLike | None = None) -> str:
     """Bloco `<harness-parked>` injetado no contexto a cada turno.
 
@@ -380,12 +423,14 @@ def parked_block(cwd: str | os.PathLike | None = None) -> str:
     ponto: esta feature existe para poupar contexto — um bloco que cresce sem
     teto gastaria mais do que o parking economiza.
     """
-    vivos = [b for b in load(cwd)["branches"] if b.get("status") in LIVE_STATUSES]
-    if not vivos:
+    dados = load(cwd)
+    vivos = [b for b in dados["branches"] if b.get("status") in LIVE_STATUSES]
+    entregar = _conclusoes_pendentes(dados)
+    if not vivos and not entregar:
         return ""
-    vivos = vivos[-MAX_PARKED_LINES:]
+
     linhas = []
-    for b in vivos:
+    for b in vivos[-MAX_PARKED_LINES:]:
         topic = str(b.get("topic", "")).replace("\n", " ").strip()
         if len(topic) > TOPIC_TRUNC:
             topic = topic[:TOPIC_TRUNC].rstrip() + "..."
@@ -393,6 +438,17 @@ def parked_block(cwd: str | os.PathLike | None = None) -> str:
             f'- {topic} -> ramo "{b.get("name")}" ({b.get("status")}). '
             f'NAO desenvolver aqui; ofereca /branch recall {b.get("slug")}.'
         )
+    for b in entregar:
+        conclusao = str(b.get("conclusion", "")).replace("\n", " ").strip()
+        if len(conclusao) > CONCLUSION_TRUNC:
+            conclusao = conclusao[:CONCLUSION_TRUNC].rstrip() + "..."
+        linhas.append(
+            f'- ramo "{b.get("name")}" FECHOU: {conclusao} '
+            f'(sessao {str(b.get("session_id", ""))[:8]})'
+        )
+    if entregar:
+        _marcar_entregues(cwd, [b["slug"] for b in entregar])
+
     corpo = "\n".join(linhas)
     return f"<harness-parked>\n{corpo}\n</harness-parked>"
 

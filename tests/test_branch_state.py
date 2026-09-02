@@ -249,3 +249,68 @@ class TestComandosDaSkillRodamMesmo:
         registro = json.loads(
             list((tmp_path / "h").rglob("branches.json"))[0].read_text(encoding="utf-8"))
         assert registro["parent_session"] is None
+
+
+class TestConclusaoVoltaParaAMae:
+    """O ramo existe para tirar um assunto do pai — mas o resultado tem que voltar.
+
+    Sem isso, ramificar vira PERDER o assunto em vez de organiza-lo: a proxima
+    vez que alguem tocar no tema na conversa pai comeca do zero, e o ramo virou
+    um buraco em vez de uma gaveta.
+
+    Entrega UMA vez. Reinjetar a cada turno transformaria a conclusao no ruido
+    de fundo que o proprio parking existe para evitar.
+    """
+
+    def _ramo_fechado(self, bs, cwd, conclusao="o piso 0.55 nunca vetava nada"):
+        b = bs.add(cwd=str(cwd), name="Calibrar Piso",
+                      topic="calibrar os pisos do sensor de ramo")
+        bs.set_status(cwd=str(cwd), slug=b["slug"], status="closed",
+                         conclusion=conclusao)
+        return b
+
+    def test_conclusao_aparece_no_bloco(self, bs, tmp_path):
+        self._ramo_fechado(bs, tmp_path)
+        bloco = bs.parked_block(str(tmp_path))
+        assert "FECHOU" in bloco and "0.55 nunca vetava" in bloco
+
+    def test_entrega_uma_vez_so(self, bs, tmp_path):
+        self._ramo_fechado(bs, tmp_path)
+        assert "FECHOU" in bs.parked_block(str(tmp_path))
+        assert "FECHOU" not in bs.parked_block(str(tmp_path))
+
+    def test_ramo_fechado_sem_conclusao_nao_entrega(self, bs, tmp_path):
+        b = bs.add(cwd=str(tmp_path), name="Sem Nada", topic="tema qualquer")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed")
+        assert "FECHOU" not in bs.parked_block(str(tmp_path))
+
+    def test_conclusao_longa_e_truncada(self, bs, tmp_path):
+        self._ramo_fechado(bs, tmp_path, conclusao="x" * 900)
+        bloco = bs.parked_block(str(tmp_path))
+        assert len(bloco) < 600 and "..." in bloco
+
+    def test_sem_ramo_nenhum_o_bloco_e_vazio(self, bs, tmp_path):
+        assert bs.parked_block(str(tmp_path)) == ""
+
+
+class TestRegistroEPorProjeto:
+    """`branches.json` fica no bucket do PROJETO, nunca no da sessao.
+
+    O escopo por sessao (`projects/<slug>/sessions/<uuid>/`) e certo para o
+    pipeline SDD, e errado para o parking: se cada sessao tivesse o seu
+    registro, a conversa pai nao veria o ramo que ela mesma abriu no turno
+    anterior, e o parking — que existe para atravessar sessoes — deixaria de
+    funcionar em silencio.
+
+    Hoje `branch_sensor` chama `state_dir(cwd=cwd)` sem `session_id` e o
+    caminho sai certo. Este teste existe para que propagar o `session_id` para
+    ca vire vermelho, e nao uma regressao invisivel.
+    """
+
+    def test_caminho_ignora_session_id(self, bs, tmp_path):
+        import harness_paths
+
+        sem = harness_paths.state_dir(cwd=str(tmp_path))
+        com = harness_paths.state_dir(cwd=str(tmp_path), session_id="uma-sessao-qualquer")
+        assert str(bs.branches_path(str(tmp_path))).startswith(str(sem))
+        assert str(sem) != str(com), "premissa do teste: o session_id muda o bucket"
