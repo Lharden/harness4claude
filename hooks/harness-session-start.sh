@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # harness-session-start.sh — SessionStart hook for Harness v3
-# Checks for active pipeline and emits systemMessage to resume.
+# Checks for active pipeline and emits the resume block via hooks/emit.py.
 
 set -euo pipefail
 
@@ -112,6 +112,30 @@ else
     HARNESS_DIR_PY="$HARNESS_DIR"
 fi
 PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+# ---------------------------------------------------------------------------
+# Emissao
+# ---------------------------------------------------------------------------
+# Ate 2026-09-01 os tres pontos de saida deste hook usavam `systemMessage`,
+# que e canal de UI: RESUMING, CONTINUING, o digest do vault e o do arsenal
+# nunca chegaram ao modelo.
+#
+# A migracao passa por CLI em vez de import inline de proposito. Os blocos que
+# emitem aqui vivem dentro de `python -c` numa string de aspas duplas do bash,
+# onde escape de quebra de linha vira quebra real e crase vira substituicao de
+# comando — os dois quebraram este arquivo em 2026-08-13, com exit 1 e stderr
+# vazio. Um pipe de texto cru nao mexe nesse terreno.
+#
+# Se o emissor falhar, o texto cru sai mesmo assim: stdout em SessionStart e
+# canal provado. Perder o digest por causa do mensageiro repetiria a falha.
+_harness_emit() {
+    local kind="${1:-session_start}"
+    local texto
+    texto="$(cat)"
+    [ -z "$texto" ] && return 0
+    printf '%s' "$texto" | python "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
+}
+
 MIGRATE_PY="$PLUGIN_DIR/scripts/migrate_state.py"
 if [ -f "$MIGRATE_PY" ] && command -v python >/dev/null 2>&1; then
     export PYTHONUTF8=1
@@ -281,8 +305,8 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 # Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
 partes_saida = [x for x in (digest, arsenal) if x]
 if partes_saida:
-    print(json.dumps({'systemMessage': (chr(10) * 2).join(partes_saida)}))
-" 2>/dev/null
+    print((chr(10) * 2).join(partes_saida))
+" 2>/dev/null | _harness_emit digest
     exit 0
 fi
 
@@ -325,8 +349,8 @@ if digest:
 arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 if arsenal:
     partes.append(arsenal)
-print(json.dumps({'systemMessage': '\n\n'.join(partes)}))
-" 2>/dev/null
+print('\n\n'.join(partes))
+" 2>/dev/null | _harness_emit resuming
     exit 0
 fi
 
@@ -369,7 +393,7 @@ if arsenal:
     parts.append(arsenal)
 
 if parts:
-    print(json.dumps({'systemMessage': '\n\n'.join(parts)}))
-" 2>/dev/null
+    print('\n\n'.join(parts))
+" 2>/dev/null | _harness_emit session_start
 
 exit 0
