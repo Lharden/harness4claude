@@ -113,6 +113,16 @@ KNOBS: dict[str, Knob] = {
             "parking vira lista de tarefas, que e outra coisa.",
         ),
         Knob(
+            "HARNESS_BRANCH_LAYER_B", BOOL, False, "liga/desliga",
+            "Camada B (embedding). DESLIGADA por default desde 2026-09-02, por "
+            "medicao: das 4 metricas testadas contra 703 pares rotulados, o "
+            "melhor F1 foi 0.209 contra 0.108 do acaso, e nenhuma passou o gate "
+            "de recall 0.80 com zero falsos positivos. Pior, a direcao do sinal "
+            "saiu invertida — cosseno MAIOR contra a ancora previa sessao nova. "
+            "Ligar de volta so faz sentido depois de scripts/calibrate_branch_"
+            "floor.py apontar uma metrica que separe.",
+        ),
+        Knob(
             "HARNESS_BRANCH_HOST", STR, "wt", "wt | none",
             "Como abrir a janela do ramo. `none` gera a semente e o launcher "
             "sem abrir nada — util em maquina sem Windows Terminal.",

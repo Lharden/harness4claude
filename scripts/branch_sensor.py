@@ -578,7 +578,12 @@ def evaluate(
     # - amostragem periodica  -> deriva exige streak, entao medir turno sim,
     #   turno nao apenas atrasa o alarme em alguns turnos, nao o impede.
     sample = _i("HARNESS_BRANCH_DRIFT_SAMPLE", 2)
-    precisa_b = bool(hit) or (sample > 0 and turn % sample == 0)
+    # Camada B desligada por default desde 2026-09-02: das 4 metricas medidas
+    # contra 703 pares rotulados, o melhor F1 foi 0.209 contra 0.108 do acaso,
+    # e a direcao do sinal saiu invertida. Ver HARNESS_BRANCH_LAYER_B.
+    precisa_b = branch_config.get_bool("HARNESS_BRANCH_LAYER_B") and (
+        bool(hit) or (sample > 0 and turn % sample == 0)
+    )
 
     sim = None
     if anchor and precisa_b:
@@ -606,13 +611,21 @@ def evaluate(
             return ""
         record_offer(cwd=cwd, turn=turn)
         branch_state.signal("offered_ramo_degradado" if v["degraded"] else "offered_ramo")
-        grau = "degradado (sem camada B)" if v["degraded"] else f"sim={v['sim']:.2f}"
+        # "degradado" descrevia excecao; desde que a camada B saiu desligada por
+        # default (medicao de 2026-09-02) o estado sem cosseno e o NORMAL.
+        grau = "so camada A" if v["degraded"] else f"sim={v['sim']:.2f}"
         return (
-            f"HARNESS v3 BRANCH SIGNAL: ramo — marcador '{v['marker']}' [{grau}]. "
-            f'Tema: "{tema}". '
-            f"Invoque a skill 'branch-out' com acao=offer AGORA, antes de responder "
-            f"ao conteudo: nomeie o ramo, justifique em ate 3 linhas e pergunte se "
-            f"abre, parkeia ou descarta. Se o usuario nao decidir, parkeie."
+            f"HARNESS v3 BRANCH SIGNAL: marcador fraco '{v['marker']}' [{grau}]. "
+            f'Trecho: "{tema}". '
+            f"ESTE SINAL NAO MANDA OFERECER. A camada A foi medida em 2026-09-02 "
+            f"contra 703 pares reais e o marcador tem precisao ~0.10 — erra cerca "
+            f"de 9 em 10. Ele serve para voce OLHAR, nao para agir. "
+            f"Julgue: o que apareceu aqui tem vida propria e comecaria sem o "
+            f"contexto acumulado nesta conversa? Se sim, consulte "
+            f"`branch_sensor.py may-offer --topic \"<tema>\"` e so entao ofereca "
+            f"pela skill branch-out. Se nao, ignore EM SILENCIO: nao mencione "
+            f"este sinal ao usuario — comentar um falso positivo custa o mesmo "
+            f"foco que a tangente que ele tentava evitar."
         )
 
     record_offer(cwd=cwd, turn=turn)

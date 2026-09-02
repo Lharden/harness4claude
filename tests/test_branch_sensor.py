@@ -156,16 +156,48 @@ class TestAvaliacaoCompleta:
     def _fake_embed(self, vec):
         return lambda _texto: vec
 
-    def test_ramo_emite_sinal_com_tema(self, sensor, tmp_path, monkeypatch):
+    def test_sinal_pede_julgamento_e_nao_manda_oferecer(self, sensor, tmp_path, monkeypatch):
+        """O sinal mudou de ordem para pergunta, e o motivo esta medido.
+
+        A camada A foi calibrada em 2026-09-02 contra 703 pares reais: precisao
+        ~0.10, e 12 dos 16 padroes nunca dispararam. Um sinal que erra 9 em 10
+        nao pode mandar oferecer — mandaria interromper o foco nove vezes para
+        acertar uma, que e exatamente o dano que o Branch Keeper existe para
+        evitar. Ele pode, no maximo, pedir que o modelo OLHE.
+        """
         monkeypatch.setattr(sensor, "embed", self._fake_embed([0.0, 1.0]))
         sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
                           session_id="s1", embedding=[1.0, 0.0])
         out = sensor.evaluate(cwd=str(tmp_path), text="e se a gente indexasse os traces?",
                               session_id="s1", turn=3)
-        assert "BRANCH SIGNAL" in out and "ramo" in out
-        assert "branch-out" in out
+        assert "BRANCH SIGNAL" in out
+        assert "NAO MANDA OFERECER" in out
+        assert "may-offer" in out, "tem que mandar consultar o portao antes"
+        assert "EM SILENCIO" in out, "falso positivo nao pode virar comentario"
 
-    def test_assunto_do_proprio_trabalho_fica_em_silencio(self, sensor, tmp_path, monkeypatch):
+    def test_camada_b_desligada_nao_paga_embed(self, sensor, tmp_path, monkeypatch):
+        """Desligada por default: melhor F1 medido 0.209 contra 0.108 do acaso.
+
+        Com ela fora, `sim` e sempre None e o veredicto de `ramo` sai marcado
+        `degradado` — que passa a ser o estado NORMAL, nao a excecao.
+        """
+        chamadas = []
+        monkeypatch.setattr(sensor, "embed",
+                            lambda t: chamadas.append(t) or [0.0, 1.0])
+        sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
+                          session_id="s1", embedding=[1.0, 0.0])
+        sensor.evaluate(cwd=str(tmp_path), text="e se a gente indexasse os traces?",
+                        session_id="s1", turn=3)
+        assert chamadas == [], "camada B rodou mesmo desligada"
+
+    def test_camada_b_ligada_volta_a_filtrar(self, sensor, tmp_path, monkeypatch):
+        """Ligar de volta e uma variavel de ambiente, nao um patch.
+
+        Quando ligada, ela volta a suprimir marcador em texto do MESMO assunto —
+        o unico trabalho util que ela fazia. Isto fica testado para que religar
+        depois de uma calibracao melhor nao exija arqueologia.
+        """
+        monkeypatch.setenv("HARNESS_BRANCH_LAYER_B", "1")
         monkeypatch.setattr(sensor, "embed", self._fake_embed([1.0, 0.0]))
         sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
                           session_id="s1", embedding=[1.0, 0.0])
@@ -214,7 +246,14 @@ class TestAvaliacaoCompleta:
         assert chamadas == []
 
     def test_marcador_paga_embed_em_qualquer_turno(self, sensor, tmp_path, monkeypatch):
+        """Com a camada B LIGADA, marcador fura a amostragem.
+
+        Precisa do `HARNESS_BRANCH_LAYER_B=1` explicito desde 2026-09-02: com
+        ela desligada por default, nenhum turno paga embed. A regra continua
+        valendo para quem religar apos uma calibracao melhor.
+        """
         chamadas = []
+        monkeypatch.setenv("HARNESS_BRANCH_LAYER_B", "1")
         monkeypatch.setattr(sensor, "embed", lambda t: chamadas.append(t) or [0.0, 1.0])
         monkeypatch.setenv("HARNESS_BRANCH_DRIFT_SAMPLE", "2")
         sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",

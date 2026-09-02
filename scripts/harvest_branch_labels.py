@@ -90,6 +90,12 @@ ABERTURA_NAO_HUMANA = (
 def _abertura_humana(texto: str) -> bool:
     return not any(m in texto for m in ABERTURA_NAO_HUMANA)
 
+#: Quantos turnos anteriores acompanham cada par. As metricas 2-4 da calibracao
+#: da camada B precisam de contexto local: "centroide dos ultimos K" e "cos
+#: menos a media dos 3 anteriores" nao existem sem eles. Guardar aqui evita
+#: reabrir os 344 transcripts na hora de calibrar.
+JANELA_ANTERIORES = 3
+
 #: Quantos turnos de continuacao por sessao entram como negativo. Sem teto, uma
 #: sessao de 200 turnos dominaria o conjunto sozinha e o classificador
 #: aprenderia o estilo daquela conversa em vez da diferenca entre os rotulos.
@@ -142,6 +148,11 @@ def harvest(root=bsi.DEFAULT_ROOT, *, days=0):
                     positivos.append({
                         "ancora": anterior["turns"][0]["prompt"],
                         "turno": ancora,
+                        # Contexto local = fim da sessao ANTERIOR: e de la que a
+                        # conversa saiu quando o usuario abriu esta.
+                        "anteriores": [
+                            t["prompt"] for t in anterior["turns"][-JANELA_ANTERIORES:]
+                        ],
                         "label": 1,
                         "projeto": projeto,
                         "sessao": sessao["session_id"],
@@ -161,6 +172,10 @@ def harvest(root=bsi.DEFAULT_ROOT, *, days=0):
                 negativos.append({
                     "ancora": ancora,
                     "turno": turno["prompt"],
+                    "anteriores": [
+                        t["prompt"] for t in
+                        sessao["turns"][max(0, n - JANELA_ANTERIORES):n]
+                    ],
                     "label": 0,
                     "projeto": projeto,
                     "sessao": sessao["session_id"],
