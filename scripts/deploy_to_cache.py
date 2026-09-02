@@ -37,6 +37,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness_paths  # noqa: E402
+
 #: Nao viajam para o plugin: infra de CI, worktrees aninhados, bytecode.
 NAO_VIAJAM = ("__pycache__", ".github", "worktrees", ".ruff_cache", ".pytest_cache")
 
@@ -53,7 +56,11 @@ def installed_root() -> Path | None:
     proprio repo — comparar uma arvore consigo mesma nao prova nada.
     """
     candidatos = []
-    marcador = Path.home() / ".claude" / "harness" / "plugin-root"
+    # INV-4: o diretorio de ESTADO se resolve por `default_root()`, que honra
+    # HARNESS_DIR. Compor `~/.claude/harness` aqui a mao faria este script ler
+    # um marcador diferente do que os hooks escrevem quando a variavel esta
+    # setada — e o script existe justamente para dizer o que roda de verdade.
+    marcador = harness_paths.default_root() / "plugin-root"
     try:
         candidatos.append(Path(marcador.read_text(encoding="utf-8").strip()))
     except OSError:
