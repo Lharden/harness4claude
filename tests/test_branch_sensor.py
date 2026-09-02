@@ -325,3 +325,105 @@ class TestAncoraCega:
         assert self._run_main(sensor, monkeypatch,
                               self._payload(tmp_path, "seguindo o trabalho normal")) == 0
         assert sensor.load_anchor(cwd=str(tmp_path), session_id="s1")["embedding"] is None
+
+
+class TestCanalVivo:
+    """O sinal precisa sair por um canal que chega ao modelo.
+
+    Ate 2026-09-01 o sensor emitia por `systemMessage`, que e canal de UI: os
+    4 BRANCH SIGNAL da historia inteira foram escritos, nao deram erro, e nao
+    chegaram. Nenhuma oferta foi feita, `branches.json` nunca nasceu, e o
+    silencio ficou indistinguivel de "nao havia ramo". Estes testes existem
+    para que a volta desse canal seja barulhenta.
+    """
+
+    class _Stdin:
+        """stdin falso que serve aos dois caminhos.
+
+        Precisa de `.read()` e de `.buffer` porque o teste tem que rodar
+        identico contra o codigo velho e o novo — um duplo que so aceita o
+        caminho novo prova que o duplo mudou, nao que o canal mudou. E o
+        `.read()` decodifica em cp1252 de proposito: e o que o Windows fazia.
+        """
+
+        def __init__(self, raw: bytes):
+            import io
+
+            self.buffer = io.BytesIO(raw)
+            self._texto = raw.decode("cp1252", "replace")
+
+        def read(self, *_a):
+            return self._texto
+
+    def _rodar(self, sensor, monkeypatch, tmp_path, prompt, evento="UserPromptSubmit",
+               session_id="s1"):
+        import io
+
+        payload = {
+            "hook_event_name": evento,
+            "cwd": str(tmp_path),
+            "session_id": session_id,
+            "prompt": prompt,
+        }
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        monkeypatch.setattr(sensor.sys, "stdin", self._Stdin(raw))
+        buf = io.StringIO()
+        monkeypatch.setattr(sensor.sys, "stdout", buf)
+        sensor.main()
+        return buf.getvalue()
+
+    def test_ramo_sai_por_additional_context(self, sensor, tmp_path, monkeypatch):
+        monkeypatch.setattr(sensor, "embed", lambda _t: [0.0, 1.0])
+        sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
+                          session_id="s1", embedding=[1.0, 0.0])
+        out = self._rodar(sensor, monkeypatch, tmp_path,
+                          "e se a gente montasse um dashboard separado?")
+        assert out, "o sensor ficou mudo com marcador presente"
+        data = json.loads(out)
+        assert "systemMessage" not in data
+        assert "BRANCH SIGNAL" in data["hookSpecificOutput"]["additionalContext"]
+        assert data["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+
+    def test_stop_nao_fala(self, sensor, tmp_path, monkeypatch):
+        """No Stop o turno acabou: 'invoque AGORA' chegaria tarde por construcao.
+
+        Foi assim que os 4 sinais da historia morreram — todos vieram do Stop.
+        `text_from_payload` e substituido de proposito: no Stop real o texto sai
+        do transcript, e sem isso o hook retornaria cedo e o teste passaria sem
+        nunca alcancar o ponto de emissao.
+        """
+        monkeypatch.setattr(sensor, "embed", lambda _t: [0.0, 1.0])
+        monkeypatch.setattr(sensor, "text_from_payload",
+                            lambda p: p.get("prompt", ""))
+        sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
+                          session_id="s1", embedding=[1.0, 0.0])
+        out = self._rodar(sensor, monkeypatch, tmp_path,
+                          "e se a gente montasse um dashboard separado?", evento="Stop")
+        assert "BRANCH SIGNAL" not in out
+
+    def test_o_mesmo_prompt_no_userpromptsubmit_fala(self, sensor, tmp_path, monkeypatch):
+        """Controle do teste acima: o silencio do Stop e do evento, nao do texto."""
+        monkeypatch.setattr(sensor, "embed", lambda _t: [0.0, 1.0])
+        monkeypatch.setattr(sensor, "text_from_payload",
+                            lambda p: p.get("prompt", ""))
+        sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
+                          session_id="s1", embedding=[1.0, 0.0])
+        out = self._rodar(sensor, monkeypatch, tmp_path,
+                          "e se a gente montasse um dashboard separado?")
+        assert "BRANCH SIGNAL" in out
+
+    def test_acento_no_prompt_sobrevive_a_ida_e_volta(self, sensor, tmp_path, monkeypatch):
+        """stdin em cp1252 transformava 'alias' acentuado em 'aliÃ¡s'.
+
+        A camada A compara texto dobrado (sem acento); um prompt mal decodificado
+        muda os bytes e o marcador escapa. O hook nao pode depender de o
+        chamador exportar PYTHONIOENCODING.
+        """
+        monkeypatch.setattr(sensor, "embed", lambda _t: [0.0, 1.0])
+        sensor.set_anchor(cwd=str(tmp_path), text="ancora", source="first-prompt",
+                          session_id="s1", embedding=[1.0, 0.0])
+        out = self._rodar(sensor, monkeypatch, tmp_path,
+                          "aliás, e se fizéssemos a visualização em outra ferramenta?")
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        assert "aliás" in ctx and "visualização" in ctx
+        assert "Ã" not in ctx

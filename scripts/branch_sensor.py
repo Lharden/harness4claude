@@ -64,6 +64,31 @@ def _router():
     return _ROUTER
 
 
+_EMIT = None
+
+
+def _emit_mod():
+    """Emissor unico, carregado como o `_router()` — hooks/ nao entra no path.
+
+    Devolve None se nao carregar; `main` cai no canal provado escrevendo o
+    JSON a mao. Perder o sinal por causa do mensageiro seria repetir, com
+    outra causa, exatamente a falha que este modulo veio consertar.
+    """
+    global _EMIT
+    if _EMIT is None:
+        path = Path(__file__).resolve().parent.parent / "hooks" / "emit.py"
+        spec = importlib.util.spec_from_file_location("harness_emit", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            return None
+        _EMIT = mod
+    return _EMIT
+
+
 def embed(text: str) -> list[float] | None:
     """Vetor normalizado do texto, ou None quando a camada B esta fora.
 
@@ -444,8 +469,20 @@ def evaluate(
 
 
 def main() -> int:
+    # Le os bytes e decodifica em UTF-8 a mao. `json.load(sys.stdin)` usa o
+    # encoding do processo, que no Windows nasce cp1252: sem PYTHONIOENCODING
+    # o prompt "alias" com acento chega como "aliÃ¡s" e a camada A erra o
+    # marcador. O wrapper .sh exporta as duas variaveis, mas depender disso
+    # deixa o sensor quebrado para qualquer outro chamador.
     try:
-        payload = json.load(sys.stdin)
+        raw = sys.stdin.buffer.read()
+    except (AttributeError, OSError, ValueError):
+        raw = None
+    try:
+        if raw is None:
+            payload = json.load(sys.stdin)
+        else:
+            payload = json.loads(raw.decode("utf-8", "replace"))
     except (ValueError, OSError):
         return 0
     if not isinstance(payload, dict):
@@ -536,16 +573,30 @@ def main() -> int:
     msg = evaluate(cwd=cwd, text=texto, session_id=session_id, turn=turn)
     parked = branch_state.parked_block(cwd)
 
-    out: dict = {}
-    if msg:
-        out["systemMessage"] = msg
-    if parked:
-        out["hookSpecificOutput"] = {
-            "hookEventName": payload.get("hook_event_name") or "UserPromptSubmit",
-            "additionalContext": parked,
-        }
-    if out:
-        print(json.dumps(out, ensure_ascii=False))
+    # Ate 2026-09-01 o sinal saia por `systemMessage` e o parking por
+    # `additionalContext`. So o segundo chegava ao modelo — e como o parking
+    # depende de `branches.json`, que nunca nasceu porque nenhuma oferta foi
+    # aceita, na pratica o hook falava sozinho. O emissor resolve as duas
+    # metades: escolhe o canal pelo evento e junta os blocos num so, porque o
+    # host aceita um `hookSpecificOutput` por saida.
+    evento = payload.get("hook_event_name") or "UserPromptSubmit"
+    mod = _emit_mod()
+    if mod is not None:
+        em = mod.Emitter(evento, hook="branch_sensor", session_id=session_id, cwd=cwd)
+        em.add("branch", msg).add("parked", parked)
+        em.flush()
+        return 0
+
+    # Fallback sem o emissor: so o canal provado, e nunca no Stop (ali o turno
+    # ja acabou e a instrucao chegaria tarde por construcao).
+    corpo = "\n\n".join(x for x in (msg, parked) if x)
+    if corpo and not str(evento).lower().startswith("stop"):
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": evento,
+                "additionalContext": corpo,
+            }
+        }, ensure_ascii=False))
     return 0
 
 
