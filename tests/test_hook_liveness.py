@@ -316,3 +316,73 @@ class TestRelatorioDeEntrega:
         home = self._home_com_transcript(tmp_path, "s1")
         code, _ = hl.delivery_report(tmp_path, home)
         assert code == 0
+
+
+class TestSessionStartTemRelogioProprio:
+    """SessionStart dispara por sessao; UserPromptSubmit, por prompt.
+
+    Com um relogio so (mtime dos transcripts), toda sessao com mais de uma hora
+    reprovava SessionStart: a conversa segue escrevendo e o disparo correto do
+    minuto zero fica para tras. O relogio deste evento e a ABERTURA da sessao.
+    """
+
+    def _home_com_sessao(self, tmp_path: Path, abertura: float, ultima_escrita: float) -> Path:
+        from datetime import datetime as _dt, timezone as _tz
+
+        home = tmp_path / "home"
+        proj = home / ".claude" / "projects" / "algum-projeto"
+        proj.mkdir(parents=True)
+        transcript = proj / "sessao.jsonl"
+        carimbo = _dt.fromtimestamp(abertura, _tz.utc).isoformat().replace("+00:00", "Z")
+        transcript.write_text(
+            json.dumps({"type": "user", "timestamp": carimbo}) + "\n", encoding="utf-8"
+        )
+        os.utime(transcript, (ultima_escrita, ultima_escrita))
+        return home
+
+    def _harness(self, tmp_path: Path, beats: dict[str, float]) -> Path:
+        harness = tmp_path / "harness"
+        (harness / "heartbeats").mkdir(parents=True)
+        for event, ts in beats.items():
+            (harness / "heartbeats" / event).write_text(str(ts), encoding="utf-8")
+        return harness
+
+    def test_sessao_longa_nao_reprova_session_start(self, hl, tmp_path):
+        agora = time.time()
+        harness = self._harness(
+            tmp_path, {"UserPromptSubmit": agora - 60, "SessionStart": agora - 5 * HOUR}
+        )
+        home = self._home_com_sessao(tmp_path, abertura=agora - 5 * HOUR, ultima_escrita=agora - 30)
+
+        code, lines = hl.run(harness, ROOT / "hooks" / "hooks.json", home, agora)
+
+        assert code == 0, "\n".join(lines)
+        assert not any("SessionStart" in ln and "[FAIL]" in ln for ln in lines)
+
+    def test_sessao_aberta_sem_disparo_reprova(self, hl, tmp_path):
+        """A deteccao que o check existe para fazer continua de pe."""
+        agora = time.time()
+        harness = self._harness(
+            tmp_path, {"UserPromptSubmit": agora - 60, "SessionStart": agora - 3 * DAY}
+        )
+        home = self._home_com_sessao(tmp_path, abertura=agora - HOUR, ultima_escrita=agora - 30)
+
+        code, lines = hl.run(harness, ROOT / "hooks" / "hooks.json", home, agora)
+
+        assert code == 1
+        assert any("SessionStart" in ln and "[FAIL]" in ln for ln in lines)
+        assert any("abertura de sessao" in ln for ln in lines)
+
+    def test_transcript_sem_timestamp_nao_inventa_abertura(self, hl, tmp_path):
+        home = tmp_path / "home"
+        proj = home / ".claude" / "projects" / "p"
+        proj.mkdir(parents=True)
+        (proj / "a.jsonl").write_text("nao e json\n", encoding="utf-8")
+        (proj / "b.jsonl").write_text('{"type":"user"}\n', encoding="utf-8")
+
+        assert hl.newest_session_opening(home, since=0.0) == 0.0
+
+    def test_so_conta_transcript_mexido_depois_do_disparo(self, hl, tmp_path):
+        agora = time.time()
+        home = self._home_com_sessao(tmp_path, abertura=agora - 10 * DAY, ultima_escrita=agora - 10 * DAY)
+        assert hl.newest_session_opening(home, since=agora - DAY) == 0.0

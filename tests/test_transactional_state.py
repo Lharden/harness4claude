@@ -324,3 +324,78 @@ def test_gate_pendente_de_task_verificada_tambem_e_cancelado(tmp_path):
     db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
                   kind="bug", pipeline=["tdd"], prompt="dois")
     assert db.task(primeira["task_id"])["pending_gate"] is None
+
+
+# --- Task concluida e terminal (incidente 2026-09-03) ------------------------
+#
+# `touch_files` ja protege 'done': o CASE so rebaixa quem esta em 'verified'.
+# `record_evidence` escrevia 'verified' por cima de QUALQUER status. Entao uma
+# suite rodada depois do `complete` — o caso normal, porque a validacao final
+# vem depois de fechar — devolvia a task para 'verified', e o primeiro comando
+# de shell seguinte a derrubava para 'active'. Task concluida ressuscitada por
+# evidencia posterior.
+#
+# Pior: 'verified' esta DENTRO de `one_active_task_per_scope`. Com uma task nova
+# ja aberta no mesmo escopo, a ressurreicao viola o indice unico e o hook
+# estoura com IntegrityError em vez de gravar a evidencia.
+
+
+def test_evidencia_posterior_nao_ressuscita_task_concluida(tmp_path):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    task = db.record_evidence(task["task_id"], evidence_type="test", command="pytest",
+                              exit_code=0, tests_collected=5, tests_passed=5, output_hash="h")
+    concluida = db.complete(task["task_id"], expected_revision=task["revision"])
+    assert concluida["status"] == "done"
+
+    depois = db.record_evidence(concluida["task_id"], evidence_type="test", command="pytest",
+                                exit_code=0, tests_collected=9, tests_passed=9, output_hash="h2")
+    assert depois["status"] == "done", "task concluida nao volta a ficar viva"
+    assert depois["verified"] is True
+
+
+def test_evidencia_falha_posterior_nao_derruba_task_concluida(tmp_path):
+    """Suite vermelha depois do fecho tambem nao reabre: 'done' e terminal nos dois sentidos."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    task = db.record_evidence(task["task_id"], evidence_type="test", command="pytest",
+                              exit_code=0, tests_collected=5, tests_passed=5, output_hash="h")
+    concluida = db.complete(task["task_id"], expected_revision=task["revision"])
+
+    depois = db.record_evidence(concluida["task_id"], evidence_type="test", command="pytest",
+                                exit_code=1, tests_collected=9, tests_passed=8, output_hash="h3")
+    assert depois["status"] == "done"
+    assert depois["verified"] is True
+
+
+def test_evidencia_em_task_concluida_nao_colide_com_a_task_viva_do_escopo(tmp_path):
+    """Ressuscitar para 'verified' com outra task aberta violaria o indice unico."""
+    db = state.HarnessDatabase(tmp_path)
+    primeira = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                             kind="bug", pipeline=["tdd"], prompt="um")
+    primeira = db.record_evidence(primeira["task_id"], evidence_type="test", command="pytest",
+                                  exit_code=0, tests_collected=5, tests_passed=5, output_hash="h")
+    db.complete(primeira["task_id"], expected_revision=primeira["revision"])
+    db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                  kind="bug", pipeline=["tdd"], prompt="dois")
+
+    depois = db.record_evidence(primeira["task_id"], evidence_type="test", command="pytest",
+                                exit_code=0, tests_collected=9, tests_passed=9, output_hash="h4")
+    assert depois["status"] == "done"
+
+
+def test_evidencia_em_task_abandonada_nao_a_reabre(tmp_path):
+    """'abandoned' e 'superseded' tambem sao terminais — sem excecao para um deles."""
+    db = state.HarnessDatabase(tmp_path)
+    primeira = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                             kind="bug", pipeline=["tdd"], prompt="um")
+    db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                  kind="bug", pipeline=["tdd"], prompt="dois")
+    assert db.task(primeira["task_id"])["status"] == "abandoned"
+
+    depois = db.record_evidence(primeira["task_id"], evidence_type="test", command="pytest",
+                                exit_code=0, tests_collected=9, tests_passed=9, output_hash="h5")
+    assert depois["status"] == "abandoned"
+    assert depois["verified"] is False

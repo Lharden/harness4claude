@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 # Eventos com expectativa confiavel de disparo. Os demais sao condicionais.
@@ -70,6 +71,46 @@ def claude_activity(home: Path) -> float:
     return newest_mtime(list(root.glob("*/*.jsonl")))
 
 
+def newest_session_opening(home: Path, *, since: float) -> float:
+    """Epoch da sessao mais recente ABERTA depois de `since`. 0.0 se nenhuma.
+
+    `SessionStart` dispara uma vez por sessao; `UserPromptSubmit`, a cada
+    prompt. Confrontar os dois com o mesmo relogio — o mtime dos transcripts —
+    so funciona para o segundo: a sessao viva continua escrevendo, entao um
+    disparo correto no minuto zero fica "atrasado" assim que a conversa passa
+    de uma hora. Toda sessao longa reprovava.
+
+    A pergunta certa para este evento e "o host abriu sessao sem chamar o
+    hook?", e a abertura esta na primeira linha do jsonl, nao no mtime.
+    Transcript sem timestamp legivel e ignorado: um teste que nao consegue
+    provar nada nao reprova nada.
+    """
+    root = home / ".claude" / "projects"
+    if not root.is_dir():
+        return 0.0
+    melhor = 0.0
+    for caminho in root.glob("*/*.jsonl"):
+        try:
+            if caminho.stat().st_mtime <= since:
+                continue
+            with caminho.open(encoding="utf-8", errors="replace") as fh:
+                primeira = fh.readline()
+        except OSError:
+            continue
+        try:
+            bruto = json.loads(primeira).get("timestamp")
+        except ValueError:
+            continue
+        if not isinstance(bruto, str):
+            continue
+        try:
+            momento = datetime.fromisoformat(bruto.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        melhor = max(melhor, momento.timestamp())
+    return melhor
+
+
 def registered_events(hooks_json: Path) -> list[str]:
     """Eventos que o plugin registra — a fonte de verdade e o proprio hooks.json."""
     try:
@@ -96,6 +137,7 @@ def verdict(
     now: float,
     *,
     any_beat: float = 0.0,
+    rotulo: str = "atividade de sessao",
 ) -> tuple[str, str]:
     """Classifica um evento. Retorna (nivel, mensagem).
 
@@ -142,7 +184,7 @@ def verdict(
                 f"(evento condicional - pode ser normal)"
             )
         return "FAIL", (
-            f"{event}: atividade de sessao {atraso / 3600:.1f}h mais nova que o "
+            f"{event}: {rotulo} {atraso / 3600:.1f}h mais nova que o "
             f"ultimo disparo. O host parou de chamar este hook?"
         )
 
@@ -162,7 +204,20 @@ def run(harness_dir: Path, hooks_json: Path, home: Path, now: float) -> tuple[in
     failed = False
 
     for event in events:
-        level, msg = verdict(event, beats[event], activity, now, any_beat=any_beat)
+        # Cada evento assertivel tem o seu relogio de expectativa: prompt para
+        # quem dispara a cada prompt, abertura de sessao para quem dispara a
+        # cada sessao. Um relogio so reprovava sessao longa por existir.
+        if event == "SessionStart" and beats[event]:
+            esperado = newest_session_opening(home, since=beats[event])
+            rotulo = "abertura de sessao"
+            if esperado <= 0:
+                esperado = beats[event]
+        else:
+            esperado = activity
+            rotulo = "atividade de sessao"
+        level, msg = verdict(
+            event, beats[event], esperado, now, any_beat=any_beat, rotulo=rotulo
+        )
         if level == "FAIL":
             failed = True
         lines.append(f"[{level}]".ljust(9) + msg)

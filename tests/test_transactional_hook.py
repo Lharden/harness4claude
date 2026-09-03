@@ -556,3 +556,59 @@ def test_varios_arquivos_num_comando_sobem_code_revision_uma_vez(tmp_path: Path)
     )
     assert database.task(task["task_id"])["code_revision"] == antes + 1
     assert len(database.files(task["task_id"])) == 3
+
+
+# --- Inspecionar nao e alterar (incidente 2026-09-03) ------------------------
+#
+# Todo comando de shell subia `code_revision` pelo placeholder 'shell-command',
+# entao um `grep` para conferir o estado invalidava a evidencia da suite e
+# obrigava a rodar a suite de novo antes de conseguir fechar a task. O
+# placeholder existe para o caso duvidoso; `grep` e `git log` nao sao duvidosos.
+
+
+def test_is_read_only_reconhece_inspecao():
+    assert hook.is_read_only("grep -n foo bar.py")
+    assert hook.is_read_only("cat scripts/x.py")
+    assert hook.is_read_only("sed -n '1,40p' scripts/x.py")
+    assert hook.is_read_only("git log --oneline -3")
+    assert hook.is_read_only("git status --short")
+    assert hook.is_read_only("cat a.py | grep -c def | wc -l")
+
+
+def test_is_read_only_recusa_o_que_escreve_ou_pode_escrever():
+    assert not hook.is_read_only("sed -i 's/a/b/' x.py")
+    assert not hook.is_read_only("git checkout -- .")
+    assert not hook.is_read_only("git config user.name foo")
+    assert not hook.is_read_only("python scripts/patch.py")
+    assert not hook.is_read_only("npm install")
+    assert not hook.is_read_only("find . -name '*.py' -delete")
+    assert not hook.is_read_only("")
+
+
+def test_is_read_only_recusa_quando_um_segmento_escreve():
+    """Um so elo fora da lista tira a linha inteira — composicao nao dilui."""
+    assert not hook.is_read_only("grep -n foo x.py && python build.py")
+    assert not hook.is_read_only("cat x.py > y.py")
+    assert not hook.is_read_only("cat x.py | tee y.py")
+
+
+def test_comando_de_inspecao_nao_invalida_evidencia(tmp_path: Path):
+    """O custo real: conferir o estado do repositorio nao pode custar a suite."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=10, tests_passed=10, output_hash=None,
+    )
+    antes = database.task(task["task_id"])
+    assert antes["verified"] is True
+
+    hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": "grep -n def scripts/transactional_state.py"},
+    ), harness_root=tmp_path / "harness")
+
+    depois = database.task(task["task_id"])
+    assert depois["verified"] is True, "um grep invalidou a evidencia"
+    assert depois["code_revision"] == antes["code_revision"]

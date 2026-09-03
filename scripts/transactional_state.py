@@ -17,6 +17,9 @@ class StateTransitionError(RuntimeError):
 
 
 ACTIVE_STATUSES = ("suggested", "active", "awaiting_gate", "verified")
+# Um desfecho ja registrado nao muda mais. Fora do indice de task unica e
+# fora do alcance de qualquer evidencia que chegue depois.
+TERMINAL_STATUSES = frozenset({"done", "abandoned", "superseded"})
 HUMAN_GATES = {"approve-spec", "approve-plan", "answer-clarifications", "escalation", "branch-open"}
 ARTIFACT_OBLIGATIONS = {
     "graph-context": "graph-context",
@@ -913,20 +916,35 @@ class HarnessDatabase:
                     utc_now(),
                 ),
             )
+            # A evidencia entra sempre — o registro acima e o historico e nao
+            # depende do estado da task. O que segue e o ciclo de vida, e ele
+            # para em status terminal: a validacao final roda DEPOIS do
+            # `complete`, entao deixar a evidencia mexer no status faria toda
+            # entrega bem-feita ser desfeita pelo proprio ato de conferi-la.
+            # 'verified' ainda esta dentro de `one_active_task_per_scope`, entao
+            # com uma task nova ja aberta a ressurreicao nem falhava em silencio:
+            # estourava IntegrityError e derrubava o hook.
+            terminal = row["status"] in TERMINAL_STATUSES
+            if terminal:
+                novo_verified = int(row["verified"])
+                novo_status = row["status"]
+            elif valid_test:
+                novo_verified = 1
+                novo_status = "verified"
+            elif evidence_type == "test":
+                novo_verified = 0
+                novo_status = "active" if row["status"] == "verified" else row["status"]
+            else:
+                novo_verified = int(row["verified"])
+                novo_status = row["status"]
             connection.execute(
                 "UPDATE tasks SET verified = ?, status = ?, "
                 "stop_continuations = CASE WHEN ? THEN 0 ELSE stop_continuations END, "
                 "revision = revision + 1, updated_at = ? WHERE task_id = ?",
                 (
-                    1 if valid_test else 0 if evidence_type == "test" else int(row["verified"]),
-                    (
-                        "verified"
-                        if valid_test
-                        else "active"
-                        if evidence_type == "test" and row["status"] == "verified"
-                        else row["status"]
-                    ),
-                    1 if valid_test else 0,
+                    novo_verified,
+                    novo_status,
+                    1 if (valid_test and not terminal) else 0,
                     utc_now(),
                     task_id,
                 ),

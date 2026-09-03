@@ -232,6 +232,70 @@ def _tokenize(command: str) -> list[str]:
 _OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
 
 
+#: Binarios cujo unico efeito e ler. Cada nome aqui e a afirmacao "este comando
+#: nao escreve", e uma afirmacao errada apaga alteracao de codigo do contador —
+#: por isso a lista e curta e nao inclui interpretador (`python`, `awk`) nem
+#: comando que muda de efeito pelo argumento (`find -delete`, `git config`).
+_SOMENTE_LEITURA = frozenset({
+    'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'ls', 'pwd', 'echo', 'printf',
+    'sort', 'uniq', 'cut', 'nl', 'basename', 'dirname', 'stat', 'diff', 'cmp',
+    'date', 'sed', 'true', 'false',
+})
+
+#: Subcomandos de git que so leem. `branch`, `remote` e `config` ficam de fora:
+#: os tres escrevem dependendo da flag.
+_GIT_SOMENTE_LEITURA = frozenset({
+    'status', 'log', 'diff', 'show', 'ls-files', 'rev-parse', 'blame',
+    'shortlog', 'describe', 'cat-file', 'grep',
+})
+
+
+def is_read_only(command: str) -> bool:
+    """Sei que este comando nao escreve — nao apenas "nao consegui ver escrita".
+
+    `shell_write_targets` distingue "escreve em X" de "nao da para saber", e o
+    chamador guarda o placeholder no segundo caso. Isso e o certo para um
+    programa arbitrario, mas `grep`, `cat` e `git log` nao sao caso duvidoso:
+    inspecionar o repositorio subia `code_revision` e invalidava a evidencia da
+    suite, o que obrigava a rodar a suite de novo para conseguir fechar.
+
+    A porta e estreita: todo segmento da linha tem de comecar por um binario da
+    lista, e qualquer redirecionamento ja tira o comando daqui pelo chamador.
+    """
+    if not command:
+        return False
+    if shell_write_targets(command):
+        return False
+    tokens = _tokenize(command)
+    segmento: list[str] = []
+    segmentos: list[list[str]] = []
+    for token in tokens:
+        if token in _OPERADORES_TOKEN:
+            if segmento:
+                segmentos.append(segmento)
+            segmento = []
+            continue
+        segmento.append(token)
+    if segmento:
+        segmentos.append(segmento)
+    if not segmentos:
+        return False
+    for partes in segmentos:
+        binario = partes[0].replace(chr(92), '/').rsplit('/', 1)[-1]
+        if binario.endswith('.exe'):
+            binario = binario[:-4]
+        if binario == 'git':
+            resto = [p for p in partes[1:] if not p.startswith('-')]
+            if not resto or resto[0] not in _GIT_SOMENTE_LEITURA:
+                return False
+            continue
+        if binario not in _SOMENTE_LEITURA:
+            return False
+        if binario == 'sed' and any(p.startswith('-i') for p in partes[1:]):
+            return False
+    return True
+
+
 def shell_write_targets(command: str) -> list[str]:
     """Arquivos que este comando de shell escreve, ate onde da para atribuir.
 
@@ -437,7 +501,8 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # a escrita por shell; sem a segunda, um programa que escreve por dentro
         # passaria por "nao alterou nada".
         alvos = shell_write_targets(command)
-        task = database.touch_files(task["task_id"], alvos or ["shell-command"])
+        if alvos or not is_read_only(command):
+            task = database.touch_files(task["task_id"], alvos or ["shell-command"])
     aviso = ""
     if is_trusted_verification(command):
         collected, passed, output_hash = _test_counts(payload)
