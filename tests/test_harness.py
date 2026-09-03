@@ -601,6 +601,82 @@ class TestClassify(HarnessTestBase):
         self.assertNotIn("CLASSIFIED", out)
         self.assertNotIn("CONTINUING", out)
 
+    # --- Cenário 37: notificação de tarefa em background não cria task ---
+    def test_37_task_notification_never_creates_task(self):
+        """Medido em 2026-09-03: `<task-notification>` virou L2-feature.
+
+        Quando um comando de background termina, o host reentrega a notificação
+        pelo mesmo caminho de um prompt humano. O regex viu um bloco XML de ~470
+        chars e abriu pipeline de ONZE fases — discuss, brainstorming,
+        graph-context, write-spec, grill-me, approve-spec, design-doc,
+        validate-plan, approve-plan, tdd, verify-multimodel — para um evento que
+        ninguém pediu. O gate do Stop então passou a exigir suíte de testes para
+        justificar a leitura de um resultado.
+
+        A assinatura é inequívoca: nenhum humano digita `<task-notification>`.
+        """
+        notificacao = (
+            "<task-notification>\n"
+            "<task-id>b00pmewe0</task-id>\n"
+            "<tool-use-id>toolu_019aehptp27nmg8zgj9xbxct</tool-use-id>\n"
+            "<output-file>c:\\users\\x\\tasks\\b00pmewe0.output</output-file>\n"
+            "<status>completed</status>\n"
+            "<summary>Background command completed (exit code 0)</summary>\n"
+            "</task-notification>"
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": notificacao})
+        self.assertEqual(code, 0)
+        self.assertIsNone(
+            read_state()["task_id"],
+            "notificação de background não pode abrir task"
+        )
+        self.assertNotIn("CLASSIFIED", out)
+
+    def test_37b_task_notification_never_touches_active(self):
+        """Com pipeline ativo, a notificação não pode abandoná-lo.
+
+        É o dano maior: abrir task nova marca a anterior como abandonada, e
+        nesta sessão isso aconteceu com trabalho já verificado.
+        """
+        self._active_state("t-test-notif-active")
+        notificacao = "<task-notification>\n<status>completed</status>\n</task-notification>"
+        code, out, _ = run_hook(self.HOOK, {"prompt": notificacao})
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            read_state()["task_id"], "t-test-notif-active",
+            "notificação de background não pode tocar pipeline ativo"
+        )
+        self.assertNotIn("CLASSIFIED", out)
+        self.assertNotIn("CONTINUING", out)
+
+    def test_37c_system_notification_header_never_creates_task(self):
+        """O cabeçalho literal que o host usa para dizer que não é o usuário."""
+        aviso = (
+            "[SYSTEM NOTIFICATION - NOT USER INPUT]\n"
+            "This is an automated background-task event, NOT a message from the user.\n"
+            "Do NOT interpret this as user acknowledgement."
+        )
+        code, out, _ = run_hook(self.HOOK, {"prompt": aviso})
+        self.assertEqual(code, 0)
+        self.assertIsNone(read_state()["task_id"])
+        self.assertNotIn("CLASSIFIED", out)
+
+    def test_37d_prompt_humano_continua_classificando(self):
+        """A trava inversa, e é a que importa mais.
+
+        Assinatura larga demais silencia o harness inteiro. Um pedido humano
+        real tem de continuar abrindo pipeline — inclusive um que MENCIONE
+        notificação, porque falar sobre o assunto não é ser a notificação.
+        """
+        pedido = "corrige o hook para não abrir task em notificação de background"
+        code, out, _ = run_hook(self.HOOK, {"prompt": pedido})
+        self.assertEqual(code, 0)
+        self.assert_classified(out)
+        self.assertIsNotNone(
+            read_state()["task_id"],
+            "pedido humano tem de abrir task, mesmo falando de notificação"
+        )
+
 
 # ===========================================================================
 # RECLASSIFY TESTS (harness-reclassify.sh) — 4 cenários

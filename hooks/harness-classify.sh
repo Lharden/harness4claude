@@ -216,8 +216,22 @@ except Exception:
 # state.json GLOBAL. Assinatura > comprimento: pega o sumarizador em QUALQUER
 # tamanho e sai ANTES de ler/escrever o state — nunca cria/toca task, independente
 # do status (msg já vem lowercased + NFKD-normalizado do extrator).
+#
+# 2026-09-03: a mesma classe de defeito, por outra porta. Quando um comando de
+# background termina, o host reentrega a notificação pelo caminho de um prompt
+# humano — e o regex, que classifica por forma e comprimento, viu um bloco XML
+# de ~470 chars e abriu pipeline de ONZE fases para um evento que ninguém
+# pediu. Pior que a task fantasma: abrir task nova marca a anterior como
+# abandonada, e nesta máquina isso já aconteceu com trabalho verificado.
+#
+# O critério para entrar nesta lista é estreito: a assinatura tem de ser texto
+# que o HOST emite e que nenhum humano digitaria como pedido. Mensagem de outra
+# sessão (`<cross-session-message`) NÃO entra — ela pode carregar trabalho real.
 AUTOMATION_SIGNATURES = (
     "you are summarizing a claude code session",
+    "<task-notification>",
+    "[system notification - not user input]",
+    "[cross-session idle notice]",
 )
 if any(sig in msg for sig in AUTOMATION_SIGNATURES):
     raise SystemExit(0)
