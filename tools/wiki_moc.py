@@ -198,6 +198,20 @@ def main() -> None:
 if __name__ == "__main__":
     # `tools/` e sys.path[0] quando o arquivo roda como script; em modo importado
     # este bloco nao executa, e o stdout do chamador fica intacto.
+    # `sys.path` conta a historia certa nos DOIS modos de invocacao. Ate
+    # 2026-09-03 este bloco confiava em `tools/` ser `sys.path[0]`, o que so
+    # vale em `python tools/x.py`: sob `python -m tools.x` o primeiro caminho
+    # e o diretorio de trabalho, e o import morria com ModuleNotFoundError.
+    # `scripts/health-check.sh` invoca com `-m`, e reportava a falha como
+    # "Obsidian doctor nao-ready (app fechado / REST off?)" — com o Obsidian
+    # rodando e a porta 27124 respondendo 200.
+    import os as _os
+    import sys as _sys
+
+    _AQUI = _os.path.dirname(_os.path.abspath(__file__))
+    if _AQUI not in _sys.path:
+        _sys.path.insert(0, _AQUI)
+
     from console import usar_utf8
 
     usar_utf8()

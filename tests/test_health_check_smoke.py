@@ -141,3 +141,49 @@ class TestSmokeNaoTocaEstadoReal:
         _run_health_check(plugin_copy)
         depois = real.read_bytes() if real.exists() else None
         assert antes == depois, "health-check alterou o state.json real"
+
+
+def _secao_obsidian(out: str) -> str:
+    marker = "--- Obsidian integration ---"
+    if marker not in out:
+        return ""
+    return out.split(marker, 1)[1].split("--- ", 1)[0]
+
+
+class TestObsidianDistingueQuebraDeIndisponibilidade:
+    """Doutor quebrado e REST fora sao diagnosticos diferentes (2026-09-03).
+
+    O health-check rodava `python -m tools.vault_sync_doctor` e, em QUALQUER
+    saida nao-zero, reportava "app fechado / REST off?". O doutor estava
+    quebrado — `ModuleNotFoundError: No module named 'console'`, porque o bloco
+    `__main__` supunha `tools/` em `sys.path[0]`, o que nao vale sob `-m` — e o
+    relatorio culpava o Obsidian.
+
+    Medido no momento do diagnostico: Obsidian com 3 processos vivos, porta
+    27124 LISTENING, TLS estrito devolvendo 200, chave de 64 chars exportada,
+    e o MCP respondendo `initialize`. Tudo no ar, e o relatorio dizia que nao.
+
+    Mandar consertar a coisa errada e pior que nao dizer nada: gasta o tempo de
+    quem le e deixa o defeito real de pe.
+    """
+
+    def test_doutor_quebrado_nao_e_reportado_como_obsidian_fora(self, plugin_copy):
+        alvo = plugin_copy / "tools" / "console.py"
+        if not alvo.is_file():
+            pytest.skip("tools/console.py ausente nesta copia")
+        guardado = alvo.read_text(encoding="utf-8")
+        alvo.unlink()
+        try:
+            secao = _secao_obsidian(_run_health_check(plugin_copy).stdout)
+            assert secao, "secao Obsidian ausente do relatorio"
+            assert "app fechado" not in secao, (
+                "doutor quebrado reportado como Obsidian fora:\n" + secao
+            )
+            assert "doctor" in secao.casefold()
+        finally:
+            alvo.write_text(guardado, encoding="utf-8")
+
+    def test_secao_obsidian_nunca_reprova_o_health_check(self, plugin_copy):
+        """Obsidian aberto nao e pre-requisito: a secao e WARN-only, por design."""
+        secao = _secao_obsidian(_run_health_check(plugin_copy).stdout)
+        assert "[FAIL]" not in secao, "integracao opcional nao pode reprovar:\n" + secao

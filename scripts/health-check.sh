@@ -372,10 +372,27 @@ elif [ -z "${OBSIDIAN_API_KEY:-}" ]; then
     warn "OBSIDIAN_API_KEY nao exportada — MCP 'obsidian' (REST) ficara sem auth"
 elif [ ! -d "$PLUGIN_DIR/tools" ]; then
     warn "tools/ ausente (PR de tooling nao mergeado?) — doctor indisponivel"
-elif ( cd "$PLUGIN_DIR" && python -m tools.vault_sync_doctor --root "$VAULT_ROOT" --check-rest >/dev/null 2>&1 ); then
-    echo "[OK]     Obsidian doctor ready (plugins + REST API 127.0.0.1:27124)"
 else
-    warn "Obsidian doctor nao-ready (app fechado / REST off?) — rode: (cd '$PLUGIN_DIR' && python -m tools.vault_sync_doctor --root \"\$VAULT_PATH\" --check-rest)"
+    # Tres desfechos, nao dois. Ate 2026-09-03 qualquer saida nao-zero virava
+    # "app fechado / REST off?", e o doutor estava QUEBRADO
+    # (ModuleNotFoundError: console, porque o bloco __main__ supunha `tools/`
+    # em sys.path[0], o que nao vale sob `-m` — que e como esta linha invoca).
+    # Medido no diagnostico: Obsidian com 3 processos, 27124 LISTENING, TLS
+    # estrito devolvendo 200, MCP respondendo initialize. Tudo no ar, e o
+    # relatorio mandava consertar o Obsidian.
+    #
+    # Mandar consertar a coisa errada gasta o tempo de quem le e deixa o
+    # defeito real de pe. O doutor ja fala JSON com `ready`: se a saida nao e
+    # JSON, quem falhou foi o doutor.
+    DOCTOR_OUT="$( cd "$PLUGIN_DIR" && python -m tools.vault_sync_doctor --root "$VAULT_ROOT" --check-rest 2>&1 )"
+    DOCTOR_RC=$?
+    if [ "$DOCTOR_RC" -eq 0 ]; then
+        echo "[OK]     Obsidian doctor ready (plugins + REST API 127.0.0.1:27124)"
+    elif printf '%s' "$DOCTOR_OUT" | python -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+        warn "Obsidian doctor rodou e reprovou (app fechado / REST off?) — rode: (cd '$PLUGIN_DIR' && python -m tools.vault_sync_doctor --root \"\$VAULT_PATH\" --check-rest)"
+    else
+        warn "Obsidian doctor NAO RODOU (defeito na ferramenta, nao no Obsidian): $(printf '%s' "$DOCTOR_OUT" | tail -n 1)"
+    fi
 fi
 echo ""
 

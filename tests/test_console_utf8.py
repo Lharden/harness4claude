@@ -128,3 +128,57 @@ def test_render_no_stdout_sobrevive_a_console_cp1252(tmp_path: Path, ferramenta:
 
     assert "UnicodeEncodeError" not in erro, erro[-600:]
     assert proc.returncode == 0, erro[-600:]
+
+
+# --- A ferramenta tem que rodar dos DOIS jeitos (incidente 2026-09-03) --------
+#
+# O bloco `if __name__ == "__main__":` faz `from console import usar_utf8`
+# apoiado num comentario que diz "`tools/` e sys.path[0] quando o arquivo roda
+# como script". Verdade em `python tools/x.py`; FALSO em `python -m tools.x`,
+# onde sys.path[0] e o diretorio de trabalho.
+#
+# `scripts/health-check.sh:375` invoca justamente com `-m`. O resultado era
+# `ModuleNotFoundError: No module named 'console'`, que o health-check
+# interpretava como "Obsidian doctor nao-ready (app fechado / REST off?)" — com
+# o Obsidian rodando, a porta 27124 respondendo 200 e o certificado confiavel.
+#
+# Medido em 2026-09-03: 8 das 15 ferramentas com esse bloco quebravam sob `-m`.
+# O comentario e o chamador discordavam, e quem lia o relatorio era enganado.
+
+def _ferramentas_com_console():
+    return sorted(
+        p.name for p in (RAIZ / "tools").glob("*.py")
+        if "from console import" in p.read_text(encoding="utf-8", errors="replace")
+    )
+
+
+def test_existem_ferramentas_a_verificar():
+    """Se o inventario esvaziar, os testes abaixo passam sem medir nada."""
+    assert len(_ferramentas_com_console()) >= 10
+
+
+@pytest.mark.parametrize("nome", _ferramentas_com_console())
+def test_roda_como_modulo(nome):
+    """`python -m tools.x` — o modo que o health-check usa."""
+    modulo = f"tools.{nome[:-3]}"
+    proc = subprocess.run(
+        [sys.executable, "-m", modulo, "--help"],
+        cwd=str(RAIZ), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=60,
+    )
+    assert "ModuleNotFoundError" not in (proc.stderr or ""), (
+        f"{modulo} nao roda com -m:\n{proc.stderr[-400:]}"
+    )
+
+
+@pytest.mark.parametrize("nome", _ferramentas_com_console())
+def test_roda_como_script(nome):
+    """`python tools/x.py` — o modo documentado nas docstrings."""
+    proc = subprocess.run(
+        [sys.executable, str(RAIZ / "tools" / nome), "--help"],
+        cwd=str(RAIZ), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=60,
+    )
+    assert "ModuleNotFoundError" not in (proc.stderr or ""), (
+        f"tools/{nome} nao roda como script:\n{proc.stderr[-400:]}"
+    )
