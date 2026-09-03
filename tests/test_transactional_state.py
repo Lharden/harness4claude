@@ -216,3 +216,44 @@ def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
     assert projection["verified"] is False
     assert projection["status"] == "active"
     assert projection["code_revision"] == 1
+
+
+# --- Correcao semantica tem que propagar (incidente 2026-09-03) ---------------
+
+
+def test_confirm_classification_propaga_legacy_level(tmp_path):
+    """`legacy_level` e a forma legivel de `tier-kind`; nao pode ficar para tras.
+
+    Medido em 2026-09-03: apos `confirm_classification.py --final L1-bug`, a
+    linha ficou com `tier='L1'`, `kind='bug'` e `legacy_level='L1-feature'` —
+    o rotulo antigo do regex. Quem le a coluna (relatorio, auditoria, migracao)
+    recebe a classificacao que a correcao semantica descartou.
+
+    O irmao `reclassify` ja atualizava a coluna. A divergencia entre dois
+    caminhos que fazem a mesma coisa e o defeito.
+    """
+    database = state.HarnessDatabase(tmp_path)
+    task = database.start_task(
+        scope_id="s|repo|wt", legacy_level="L1-feature", tier="L1", kind="feature",
+        pipeline=["write-spec-light", "tdd"], prompt="p",
+    )
+    depois = database.confirm_classification(
+        task["task_id"], tier="L1", kind="bug",
+        pipeline=["systematic-debugging", "tdd", "verify"],
+        source="semantic", confidence=1.0,
+    )
+    assert depois["legacy_level"] == "L1-bug"
+    assert depois["legacy_level"] == f"{depois['tier']}-{depois['kind']}"
+
+
+def test_confirm_classification_concordante_tambem_mantem_coerencia(tmp_path):
+    database = state.HarnessDatabase(tmp_path)
+    task = database.start_task(
+        scope_id="s|repo|wt", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["systematic-debugging"], prompt="p",
+    )
+    depois = database.confirm_classification(
+        task["task_id"], tier="L1", kind="bug", pipeline=["systematic-debugging"],
+        source="semantic", confidence=1.0,
+    )
+    assert depois["legacy_level"] == "L1-bug"

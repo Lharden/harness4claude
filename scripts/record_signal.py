@@ -47,6 +47,47 @@ def actual_level(files: int) -> str:
     return "L2"
 
 
+#: Caminho sintetico que o hook transacional grava quando um comando de shell
+#: rodou mas nao da para atribuir arquivo nenhum a ele.
+PLACEHOLDER_SHELL = "shell-command"
+
+
+def _arquivos_do_banco(harness_dir: Path, task_id: str) -> tuple[list[str], bool]:
+    """Caminhos atribuidos pelo hook transacional, e se houve shell nao atribuido.
+
+    Degrada em silencio: bucket sem `harness.db` e o caso normal em projeto que
+    nunca rodou pipeline transacional, nao um erro.
+    """
+    caminho = Path(harness_dir) / "harness.db"
+    if not caminho.is_file():
+        return [], False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from transactional_state import HarnessDatabase
+
+        registrados = HarnessDatabase(Path(harness_dir)).files(task_id)
+    except Exception:
+        return [], False
+    reais = [c for c in registrados if c != PLACEHOLDER_SHELL]
+    return reais, len(reais) != len(registrados)
+
+
+def files_modified(harness_dir, counter: dict, task_id: str) -> int:
+    """Quantos arquivos esta task alterou, unindo as DUAS fontes.
+
+    `.session-files-count` so cresce por Edit/Write (`harness-reclassify.sh`,
+    matcher `Edit|Write`); a tabela `files` do harness.db so recebe o que o hook
+    transacional ve (matcher `Bash|PowerShell`). As fontes sao disjuntas, e ler
+    uma delas subconta — em modo Bash-first, sistematicamente.
+    """
+    do_banco, _ = _arquivos_do_banco(Path(harness_dir), task_id) if harness_dir else ([], False)
+    do_counter = [str(c) for c in (counter.get("files") or [])]
+    uniao = {str(Path(c)) for c in do_counter + do_banco}
+    if uniao:
+        return len(uniao)
+    return int(counter.get("count", 0) or 0)
+
+
 def build_task(
     state: dict,
     counter: dict,
@@ -55,9 +96,16 @@ def build_task(
     steps: list[str],
     reason: str | None,
     timestamp: str,
+    harness_dir=None,
 ) -> dict:
     """Monta o registro da task a partir de state + counter + flags de conclusao."""
-    files = int(counter.get("count", 0) or 0)
+    task_id = state.get("task_id") or "unknown"
+    if harness_dir is None:
+        files = int(counter.get("count", 0) or 0)
+        incompleta = False
+    else:
+        files = files_modified(harness_dir, counter, task_id)
+        _, incompleta = _arquivos_do_banco(Path(harness_dir), task_id)
     task: dict[str, object] = {
         "task_id": state.get("task_id") or "unknown",
         "classification": state.get("classification") or "unknown",
@@ -66,6 +114,10 @@ def build_task(
         "pipeline_completed": completed,
         "steps_executed": steps or list(state.get("pipeline", [])),
         "files_modified": files,
+        # Houve comando de shell que pode ter escrito sem dar para ver qual
+        # arquivo. Sem esta marca, "nenhum arquivo atribuido" e "nenhum arquivo
+        # alterado" ficam indistinguiveis, e e a segunda leitura que vira L0.
+        "atribuicao_incompleta": incompleta,
     }
     if completed:
         task["completed_at"] = timestamp
@@ -160,7 +212,8 @@ def main() -> int:
     completed = not args.abandoned
     timestamp = datetime.now(timezone.utc).isoformat()
     task = build_task(
-        state, counter, completed=completed, steps=steps, reason=args.reason, timestamp=timestamp
+        state, counter, completed=completed, steps=steps, reason=args.reason,
+        timestamp=timestamp, harness_dir=args.harness_dir,
     )
     signals = record(args.signals_dir or args.harness_dir, task)
     accuracy = signals["aggregates"].get("classify", {}).get("avg_classify_accuracy")

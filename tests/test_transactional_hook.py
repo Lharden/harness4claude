@@ -436,3 +436,123 @@ def test_aviso_de_background_quando_nao_ha_casos(tmp_path: Path):
         harness_root=tmp_path / "harness",
     )
     assert "background" in saida.casefold()
+
+
+# --- Escrita por shell some da contagem (incidente 2026-09-03) ----------------
+#
+# `_handle_post_tool` registra todo comando de shell como o caminho sintetico
+# "shell-command". Como a tabela `files` tem PRIMARY KEY(task_id, path) com
+# INSERT OR IGNORE, mil comandos viram UMA linha — e nenhuma delas nomeia um
+# arquivo. O contador `.session-files-count` so cresce por Edit/Write.
+#
+# Medido em 2026-09-03: uma task que alterou 2 arquivos por heredoc registrou
+# `files=0` e virou `actual_level=L0`. `proxy_regex_vs_observado` (o 0.30 que o
+# CLAUDE.md cita) e calculado sobre esse rotulo. Em modo Bash-first o vies e
+# sistematico, nao ocasional.
+#
+# O heredoc que escreve por dentro do Python continua invisivel, e nao ha como
+# ver: `python - <<PY` e um programa. O que da para atribuir e redirecionamento,
+# `tee` e `sed -i` — e e o que estes testes travam.
+
+
+def test_shell_write_targets_reconhece_redirecionamento():
+    alvos = hook.shell_write_targets
+    assert alvos("cat > scripts/x.py") == ["scripts/x.py"]
+    assert alvos("echo oi >> notas.md") == ["notas.md"]
+    assert alvos("python gen.py > a.txt") == ["a.txt"]
+
+
+def test_shell_write_targets_reconhece_tee_e_sed():
+    alvos = hook.shell_write_targets
+    assert alvos("echo oi | tee saida.log") == ["saida.log"]
+    assert alvos("echo oi | tee -a saida.log") == ["saida.log"]
+    assert alvos("sed -i 's/a/b/' hooks/x.py") == ["hooks/x.py"]
+
+
+def test_shell_write_targets_ignora_o_que_nao_e_arquivo():
+    """`2>&1` e `/dev/null` sao redirecionamento sem arquivo de projeto."""
+    alvos = hook.shell_write_targets
+    assert alvos("pytest -q 2>&1") == []
+    assert alvos("cmd 2>/dev/null") == []
+    assert alvos("git status --short") == []
+    assert alvos("") == []
+
+
+def test_shell_write_targets_respeita_aspas():
+    assert hook.shell_write_targets('cat > "docs/nota final.md"') == ["docs/nota final.md"]
+    assert hook.shell_write_targets("echo 'a > b' ") == []
+
+
+def test_shell_write_targets_pega_varios():
+    assert hook.shell_write_targets("cat > a.py; cat > b.py") == ["a.py", "b.py"]
+
+
+def test_post_tool_registra_o_arquivo_escrito_e_nao_o_placeholder(tmp_path: Path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "cat > scripts/novo.py"},
+            tool_response={"exit_code": 0, "output": ""},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+
+    vistos = database.files(task["task_id"])
+    assert "scripts/novo.py" in [str(v).replace("\\", "/") for v in vistos]
+    assert "shell-command" not in vistos
+
+
+def test_post_tool_mantem_placeholder_quando_nada_e_atribuivel(tmp_path: Path):
+    """`python - <<PY` escreve por dentro e nao da para ver. O placeholder fica.
+
+    Trocar o placeholder por 'nenhum arquivo' seria afirmar que o comando nao
+    escreveu — e a diferenca entre 'nao escreveu' e 'nao da para saber' e o
+    ponto inteiro desta correcao.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "python gerador.py"},
+            tool_response={"exit_code": 0, "output": ""},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+    assert "shell-command" in database.files(task["task_id"])
+
+
+def test_varios_arquivos_num_comando_sobem_code_revision_uma_vez(tmp_path: Path):
+    """Uma chamada de ferramenta e uma alteracao, mesmo tocando tres arquivos.
+
+    `touch_file` incrementa `code_revision` a cada chamada. Chamar em laco
+    inflaria o contador que invalida evidencia, e um `pytest` seguinte pareceria
+    obsoleto sem que nada tivesse mudado depois dele.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    antes = database.task(task["task_id"])["code_revision"]
+
+    hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "cat > a.py; cat > b.py; cat > c.py"},
+            tool_response={"exit_code": 0, "output": ""},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+    assert database.task(task["task_id"])["code_revision"] == antes + 1
+    assert len(database.files(task["task_id"])) == 3

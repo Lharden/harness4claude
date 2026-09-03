@@ -305,14 +305,19 @@ class HarnessDatabase:
                 "UPDATE classifications SET final = ?, source = ?, confidence = ?, agreed = ? WHERE task_id = ?",
                 (final, source, confidence, 1 if agreed else 0, task_id),
             )
+            # `legacy_level` acompanha `tier-kind`. Deixa-lo para tras faz a linha
+            # mentir para quem le a coluna: relatorio, auditoria e migracao
+            # recebem o rotulo do regex que a correcao semantica descartou.
+            # Medido em 2026-09-03: tier='L1', kind='bug', legacy_level='L1-feature'.
             connection.execute(
                 """
                 UPDATE tasks
-                SET tier = ?, kind = ?, pipeline_json = ?, phase_index = ?,
+                SET legacy_level = ?, tier = ?, kind = ?, pipeline_json = ?, phase_index = ?,
                     status = ?, verified = 0, revision = revision + 1, updated_at = ?
                 WHERE task_id = ?
                 """,
                 (
+                    final,
                     tier,
                     kind,
                     json.dumps(pipeline),
@@ -817,13 +822,29 @@ class HarnessDatabase:
         return self.task(task_id)
 
     def touch_file(self, task_id: str, path: str) -> dict[str, Any]:
-        normalized = str(Path(path))
+        return self.touch_files(task_id, [path])
+
+    def touch_files(self, task_id: str, paths) -> dict[str, Any]:
+        """Registra N caminhos como UMA alteracao.
+
+        Uma chamada de ferramenta e uma alteracao, mesmo tocando tres arquivos.
+        Chamar `touch_file` em laco incrementaria `code_revision` uma vez por
+        arquivo, e `code_revision` e o que invalida evidencia: um `pytest`
+        seguinte pareceria obsoleto sem que nada tivesse mudado depois dele.
+        """
+        normalizados = []
+        for caminho in paths:
+            texto = str(Path(caminho))
+            if texto not in normalizados:
+                normalizados.append(texto)
+        if not normalizados:
+            return self.task(task_id)
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
             next_code_revision = int(row["code_revision"]) + 1
-            connection.execute(
+            connection.executemany(
                 "INSERT OR IGNORE INTO files(task_id, normalized_path, first_seen_code_revision) VALUES (?, ?, ?)",
-                (task_id, normalized, next_code_revision),
+                [(task_id, texto, next_code_revision) for texto in normalizados],
             )
             connection.execute(
                 "UPDATE tasks SET code_revision = ?, revision = revision + 1, verified = 0, "
@@ -832,6 +853,16 @@ class HarnessDatabase:
                 (next_code_revision, utc_now(), task_id),
             )
         return self.task(task_id)
+
+    def files(self, task_id: str) -> list[str]:
+        """Caminhos ja atribuidos a esta task, na ordem em que apareceram."""
+        with self._connect() as connection:
+            linhas = connection.execute(
+                "SELECT normalized_path FROM files WHERE task_id = ? "
+                "ORDER BY first_seen_code_revision, normalized_path",
+                (task_id,),
+            ).fetchall()
+        return [linha["normalized_path"] for linha in linhas]
 
     def record_evidence(
         self,

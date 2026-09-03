@@ -230,3 +230,71 @@ def test_semantica_e_proxy_nao_se_misturam(rec):
     c = _agg(rec, tasks)
     assert c["avg_classify_accuracy"] == 1.0
     assert c["proxy_regex_vs_observado"] == 0.0
+
+
+# --- Uniao das duas contagens (incidente 2026-09-03) --------------------------
+#
+# `.session-files-count` so cresce por Edit/Write: `harness-reclassify.sh` esta
+# registrado em PostToolUse com matcher `Edit|Write`. O hook transacional, que
+# ve os comandos de shell, esta em outro matcher (`Bash|PowerShell`) e escreve
+# na tabela `files` do harness.db.
+#
+# As duas fontes sao DISJUNTAS, e ler so uma delas subconta. Medido: uma task
+# que alterou 2 arquivos por heredoc registrou `files=0` e virou `actual_level`
+# L0, que e a entrada de `proxy_regex_vs_observado`.
+
+
+def _db_com_arquivos(tmp_path, task_id: str, caminhos, placeholder=False):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("ts_para_record", ROOT / "scripts" / "transactional_state.py")
+    ts = iu.module_from_spec(spec)
+    spec.loader.exec_module(ts)
+    db = ts.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="p")
+    todos = list(caminhos) + (["shell-command"] if placeholder else [])
+    if todos:
+        db.touch_files(task["task_id"], todos)
+    return task["task_id"]
+
+
+def test_files_modified_une_counter_e_banco(rec, tmp_path):
+    real = _db_com_arquivos(tmp_path, "ignorado", ["hooks/x.py", "scripts/y.py"])
+    counter = {"count": 1, "files": ["docs/z.md"], "task_id": real}
+    assert rec.files_modified(tmp_path, counter, real) == 3
+
+
+def test_files_modified_nao_conta_duas_vezes_o_mesmo_arquivo(rec, tmp_path):
+    real = _db_com_arquivos(tmp_path, "ignorado", ["hooks/x.py"])
+    counter = {"count": 1, "files": ["hooks/x.py"], "task_id": real}
+    assert rec.files_modified(tmp_path, counter, real) == 1
+
+
+def test_files_modified_ignora_o_placeholder(rec, tmp_path):
+    """'shell-command' nao e arquivo; conta-lo inflaria o nivel."""
+    real = _db_com_arquivos(tmp_path, "ignorado", [], placeholder=True)
+    counter = {"count": 0, "files": [], "task_id": real}
+    assert rec.files_modified(tmp_path, counter, real) == 0
+
+
+def test_files_modified_cai_no_counter_quando_nao_ha_banco(rec, tmp_path):
+    """Sem harness.db (bucket antigo, ou projeto sem pipeline transacional)."""
+    counter = {"count": 4, "files": ["a", "b", "c", "d"], "task_id": "t-x"}
+    assert rec.files_modified(tmp_path, counter, "t-x") == 4
+
+
+def test_build_task_marca_atribuicao_incompleta(rec, tmp_path):
+    """Placeholder presente = houve shell que pode ter escrito sem dar para ver.
+
+    Sem esta marca, 'nenhum arquivo atribuido' e 'nenhum arquivo alterado' ficam
+    indistinguiveis no signals.json — e a segunda leitura e a que vira L0.
+    """
+    real = _db_com_arquivos(tmp_path, "ignorado", ["a.py"], placeholder=True)
+    state = {"task_id": real, "classification": "L1-bug", "classification_meta": {}}
+    counter = {"count": 0, "files": [], "task_id": real}
+    task = rec.build_task(state, counter, completed=True, steps=["tdd"],
+                          reason=None, timestamp="2026-09-03T00:00:00+00:00",
+                          harness_dir=tmp_path)
+    assert task["files_modified"] == 1
+    assert task["atribuicao_incompleta"] is True

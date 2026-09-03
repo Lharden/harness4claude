@@ -172,6 +172,115 @@ def is_state_management(command: str) -> bool:
     return any(re.search(p, command, re.IGNORECASE) for p in STATE_CLI_PATTERNS)
 
 
+
+#: Destinos de redirecionamento que nao sao arquivo do projeto.
+_DESTINOS_NULOS = frozenset({'/dev/null', 'nul', 'NUL', 'con', 'CON'})
+
+
+def _tokenize(command: str) -> list[str]:
+    """Tokens do comando, com os operadores fora de aspas separados.
+
+    Conteudo entre aspas nunca vira operador: `echo 'a > b'` nao escreve
+    em `b`. E por isso que uma regex sobre a linha crua nao serve aqui.
+    """
+    tokens: list[str] = []
+    atual: list[str] = []
+    quote = None
+    escaped = False
+
+    def fechar():
+        if atual:
+            tokens.append(''.join(atual))
+            atual.clear()
+
+    for character in command:
+        if escaped:
+            atual.append(character)
+            escaped = False
+            continue
+        if quote:
+            if character == chr(92) and quote == chr(34):
+                escaped = True
+                continue
+            if character == quote:
+                quote = None
+                continue
+            atual.append(character)
+            continue
+        if character in {chr(39), chr(34)}:
+            quote = character
+            continue
+        if character.isspace():
+            fechar()
+            continue
+        if character == '>':
+            fechar()
+            if tokens and tokens[-1] == '>':
+                tokens[-1] = '>>'
+            else:
+                tokens.append('>')
+            continue
+        if character in {';', '|', '&'}:
+            fechar()
+            tokens.append(character)
+            continue
+        atual.append(character)
+    fechar()
+    return tokens
+
+
+_OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
+
+
+def shell_write_targets(command: str) -> list[str]:
+    """Arquivos que este comando de shell escreve, ate onde da para atribuir.
+
+    Existe porque `_handle_post_tool` registrava todo comando como o caminho
+    sintetico 'shell-command'. Com PRIMARY KEY(task_id, path) e INSERT OR
+    IGNORE, mil comandos viravam UMA linha, e nenhuma nomeava um arquivo — o
+    contador de arquivos so crescia por Edit/Write. Em 2026-09-03 uma task
+    que alterou 2 arquivos por heredoc registrou `files=0` e virou L0, e
+    `proxy_regex_vs_observado` e calculado sobre esse rotulo.
+
+    Cobre redirecionamento, `tee` e `sed -i`. NAO cobre programa que escreve
+    por dentro (`python - <<PY` com `write_text`), e nao ha como cobrir: e um
+    programa. Por isso o chamador mantem o placeholder quando esta lista sai
+    vazia — 'nao da para saber' e diferente de 'nao escreveu'.
+    """
+    if not command:
+        return []
+    tokens = _tokenize(command)
+    alvos: list[str] = []
+
+    def considerar(candidato: str) -> None:
+        if not candidato or candidato in _OPERADORES_TOKEN:
+            return
+        if candidato.startswith('-') or candidato in _DESTINOS_NULOS:
+            return
+        if candidato not in alvos:
+            alvos.append(candidato)
+
+    for indice, token in enumerate(tokens):
+        if token in {'>', '>>'} and indice + 1 < len(tokens):
+            considerar(tokens[indice + 1])
+        elif token == 'tee':
+            for seguinte in tokens[indice + 1:]:
+                if seguinte in _OPERADORES_TOKEN:
+                    break
+                if seguinte.startswith('-'):
+                    continue
+                considerar(seguinte)
+                break
+        elif token == 'sed':
+            fatia = []
+            for seguinte in tokens[indice + 1:]:
+                if seguinte in _OPERADORES_TOKEN:
+                    break
+                fatia.append(seguinte)
+            if any(f.startswith('-i') for f in fatia) and fatia:
+                considerar(fatia[-1])
+    return alvos
+
 def _response(payload: dict[str, Any]) -> Any:
     return payload.get("tool_response") or payload.get("toolResponse") or payload.get("output") or ""
 
@@ -323,7 +432,12 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").casefold()
     command = _command(payload)
     if tool_name in SHELL_TOOLS and not is_state_management(command):
-        task = database.touch_file(task["task_id"], "shell-command")
+        # Atribuir o caminho real quando da; manter o placeholder quando nao da.
+        # As duas metades importam: sem a primeira o contador de arquivos e cego
+        # a escrita por shell; sem a segunda, um programa que escreve por dentro
+        # passaria por "nao alterou nada".
+        alvos = shell_write_targets(command)
+        task = database.touch_files(task["task_id"], alvos or ["shell-command"])
     aviso = ""
     if is_trusted_verification(command):
         collected, passed, output_hash = _test_counts(payload)
