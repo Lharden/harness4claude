@@ -41,12 +41,25 @@ MIN_LEN, MAX_LEN = 20, 30000
 # devolve lista vazia, e a Camada A sozinha vale 47% no golden set (medido forcando
 # EMBED_TIMEOUT=0.05: hit@3 cai de 93% para exatamente 46,7%).
 #
-# O embed real desta maquina mede p50 964ms / p95 1049ms / max 1127ms; o teto antigo
-# de 1.2s deixava 73ms de margem, e qualquer contencao de GPU o estourava.
-#
 # Separados: porta morta custa ~150ms (era ~1700ms) e modelo ocupado tem folga real.
+#
+# O teto vem de duas medicoes, nao de uma (2026-09-03, n=3 por caso, RTX 5000 Ada,
+# nomic-embed-text-v2-moe, 586 MB, 100% GPU):
+#
+#   quente (modelo residente): p50 190ms, max 221ms
+#   frio (modelo fora da VRAM): 4.68s, 4.83s, 4.87s
+#
+# 3.0s cobria o quente com folga de 13x e ficava ABAIXO do frio por construcao:
+# o primeiro embed depois que o modelo sai da VRAM estourava sempre, e tres
+# desses seguidos abriam o disjuntor por 15 minutos. Nao era o Ollama fora do
+# ar — era o Ollama carregando, que e exatamente o caso que vale esperar.
+#
+# `keep_alive: "30m"` (abaixo, e em build_skills_index/wiki_query/session_query)
+# torna o frio raro; 6.0s o torna sobrevivivel quando acontece. O custo do teto
+# maior fica contido: porta morta nem chega aqui por causa do CONNECT_TIMEOUT, e
+# um Ollama travado de verdade paga 3 tentativas antes do disjuntor cortar.
 CONNECT_TIMEOUT = 0.15
-EMBED_TIMEOUT = 3.0
+EMBED_TIMEOUT = 6.0
 
 # Disjuntor da Camada B (auditoria 2026-07-28)
 # --------------------------------------------

@@ -44,7 +44,10 @@ def test_os_dois_relogios_sao_distintos() -> None:
     """Se voltarem a ser um so, o defeito da issue #13 volta junto."""
     assert sr.CONNECT_TIMEOUT < sr.EMBED_TIMEOUT
     assert sr.CONNECT_TIMEOUT <= 0.5, "pre-check precisa ser barato o bastante"
-    assert sr.EMBED_TIMEOUT >= 2.0, "teto precisa de folga sobre o p95 medido (1049ms)"
+    assert sr.EMBED_TIMEOUT >= 5.0, (
+        "o teto tem de cobrir a carga do modelo na VRAM, nao so o embed quente: "
+        "medido em 2026-09-03, frio 4.68-4.87s contra quente p50 190ms"
+    )
 
 
 # --- alcancabilidade ------------------------------------------------------

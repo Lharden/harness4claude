@@ -83,7 +83,7 @@ def test_golden_top3_hit_rate(disjuntor_isolado):
 
     # Medicao contaminada nao passa NEM reprova.
     #
-    # Este teste chama o Ollama uma vez por pergunta com EMBED_TIMEOUT=3.0. Numa
+    # Este teste chama o Ollama uma vez por pergunta, pagando EMBED_TIMEOUT. Numa
     # suite de seis minutos com outros testes de integracao, o Ollama fica
     # disputado, o embed estoura e a Camada B degrada — o hit rate cai para o
     # valor da Camada A sozinha, sem que o router tenha piorado em nada.

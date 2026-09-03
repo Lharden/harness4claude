@@ -399,3 +399,38 @@ def test_evidencia_em_task_abandonada_nao_a_reabre(tmp_path):
                                 exit_code=0, tests_collected=9, tests_passed=9, output_hash="h5")
     assert depois["status"] == "abandoned"
     assert depois["verified"] is False
+
+
+def test_arquivo_tocado_depois_do_fecho_nao_mexe_na_task(tmp_path):
+    """A outra metade do desfecho terminal: os contadores tambem param.
+
+    `record_evidence` ja nao ressuscita, mas `touch_files` seguia subindo
+    `code_revision` e `revision` numa task fechada — medido em producao em
+    2026-09-03: uma task 'done' chegou a code_revision 53 depois do fecho.
+    Nao e ressurreicao, e contabilidade de uma task que acabou, e ela ainda
+    atribuia arquivos novos a um trabalho que ja tinha sido entregue.
+    """
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    task = db.record_evidence(task["task_id"], evidence_type="test", command="pytest",
+                              exit_code=0, tests_collected=5, tests_passed=5, output_hash="h")
+    concluida = db.complete(task["task_id"], expected_revision=task["revision"])
+    arquivos_antes = db.files(concluida["task_id"])
+
+    depois = db.touch_files(concluida["task_id"], ["src/novo.py"])
+
+    assert depois["status"] == "done"
+    assert depois["code_revision"] == concluida["code_revision"]
+    assert depois["revision"] == concluida["revision"]
+    assert db.files(concluida["task_id"]) == arquivos_antes
+
+
+def test_task_viva_continua_contando_arquivo(tmp_path):
+    """Contraste: a protecao e so para desfecho registrado, nao afrouxou o geral."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    depois = db.touch_files(task["task_id"], ["src/novo.py"])
+    assert depois["code_revision"] == task["code_revision"] + 1
+    assert db.files(task["task_id"]) == [str(Path("src/novo.py"))]

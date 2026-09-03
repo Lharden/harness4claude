@@ -854,6 +854,12 @@ class HarnessDatabase:
             return self.task(task_id)
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            if row["status"] in TERMINAL_STATUSES:
+                # A task acabou. Continuar contando arquivo nela atribuiria
+                # trabalho novo a uma entrega ja fechada, e `code_revision`
+                # existe para invalidar evidencia de uma task viva — numa
+                # morta nao invalida nada, so cresce.
+                return self.task(task_id)
             next_code_revision = int(row["code_revision"]) + 1
             connection.executemany(
                 "INSERT OR IGNORE INTO files(task_id, normalized_path, first_seen_code_revision) VALUES (?, ?, ?)",

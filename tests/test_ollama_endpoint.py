@@ -9,7 +9,8 @@ quente:
     embed_query("http://127.0.0.1:11434")    220 ms
 
 Sao ~2,06s pagos em todo prompt que chega na Camada B, contra um
-`EMBED_TIMEOUT` de 3,0s — margem de 700ms para o embed inteiro. Era o gerador
+`EMBED_TIMEOUT` que era de 3,0s na epoca — margem de 700ms para o embed
+inteiro. Era o gerador
 das "88 falhas consecutivas, 100% TimeoutError" que puseram o router atras de
 `HARNESS_ROUTER=1`.
 
