@@ -42,33 +42,102 @@ def _command(payload: dict[str, Any]) -> str:
     return str(value.get("command") or value.get("cmd") or value.get("script") or "")
 
 
-def _has_unquoted_shell_composition(command: str) -> bool:
-    quote: str | None = None
+#: Operadores que compoem comandos. Montados com `chr()` porque este arquivo
+#: ja foi corrompido uma vez por escaping de heredoc: `\r` chegou ao disco
+#: como byte de retorno de carro e quebrou a sintaxe.
+_OPERADORES = frozenset({';', '|', '&', '`', chr(13), chr(10)})
+
+
+def _scan_composition(command: str) -> tuple[int, bool]:
+    """Indice do primeiro operador fora de aspas (-1 se nao houver), e se
+    a linha terminou com aspa aberta.
+
+    Duas perguntas diferentes saem da mesma varredura, e e de proposito:
+    `is_trusted_verification` recusa nos DOIS casos, enquanto `atomic_prefix`
+    so pode cortar no primeiro. Manter duas varreduras separadas foi o que
+    fez o corte cair dentro de um argumento entre aspas.
+    """
+    quote = None
     escaped = False
     for index, character in enumerate(command):
         if escaped:
             escaped = False
             continue
         if quote:
-            if character == "\\" and quote == '"':
+            if character == chr(92) and quote == '"':
                 escaped = True
             elif character == quote:
                 quote = None
             continue
-        if character in {"'", '"'}:
+        if character in {chr(39), '"'}:
             quote = character
             continue
-        if character in {";", "|", "&", "\r", "\n", "`"}:
-            return True
-        if character == "$" and index + 1 < len(command) and command[index + 1] == "(":
-            return True
-    return quote is not None
+        if character in _OPERADORES:
+            return index, False
+        if character == '$' and index + 1 < len(command) and command[index + 1] == '(':
+            return index, False
+    return -1, quote is not None
+
+
+def _has_unquoted_shell_composition(command: str) -> bool:
+    indice, aspa_aberta = _scan_composition(command)
+    return indice >= 0 or aspa_aberta
 
 
 def is_trusted_verification(command: str) -> bool:
     if not command or _has_unquoted_shell_composition(command):
         return False
     return any(re.search(pattern, command, re.IGNORECASE) for pattern in VERIFICATION_PATTERNS)
+
+
+def looks_like_verification(command: str) -> bool:
+    """Parece tentativa de verificar, mesmo que nao sirva como evidencia.
+
+    Difere de `is_trusted_verification` em um ponto so: ignora composicao de
+    shell. Serve para separar "voce tentou verificar e eu descartei" de "isto
+    nao tinha nada a ver com teste" — sem essa distincao o aviso apareceria em
+    `git log | head` e viraria ruido por turno.
+
+    As ancoras `^` de VERIFICATION_PATTERNS continuam valendo: `echo "rode
+    python -m pytest"` menciona pytest e nao roda teste nenhum.
+    """
+    if not command:
+        return False
+    return any(re.search(p, command, re.IGNORECASE) for p in VERIFICATION_PATTERNS)
+
+
+def atomic_prefix(command: str) -> str:
+    """O comando ate o primeiro operador de shell nao citado.
+
+    E o que o aviso devolve para o leitor rodar. Reconstruir a intencao a
+    partir do comando dele vale mais que uma receita generica:
+    `python -m pytest -q | tail -20` vira `python -m pytest -q`, que e
+    exatamente o que ele queria.
+
+    Aspa aberta NAO e ponto de corte: ela torna o comando nao confiavel, mas
+    nao ha prefixo bom a sugerir, entao devolve a linha inteira.
+    """
+    indice, _ = _scan_composition(command)
+    return (command[:indice] if indice >= 0 else command).strip()
+
+
+#: O aviso do descarte. Curto de proposito: ele aparece no meio do trabalho, e
+#: um paragrafo aqui custa mais atencao do que o erro que ele evita.
+AVISO_COMPOSICAO = (
+    "[harness] evidencia de teste NAO gravada: o comando tem composicao de "
+    "shell (pipe, `&&`, `;`, nova linha ou substituicao), e um comando composto "
+    "pode fabricar saida de teste. Para que conte, rode sozinho: {sugestao}"
+)
+
+#: Background nao tem composicao nenhuma, entao passa por `is_trusted_verification`
+#: — mas o PostToolUse chega antes de existir saida, e evidencia sem caso
+#: coletado nao verifica (contrato Harness4Contract v1). O silencio aqui custou
+#: dois runs de ~7 min repetidos em 2026-09-02.
+AVISO_SEM_CASOS = (
+    "[harness] evidencia de teste gravada SEM casos coletados, entao nao "
+    "verifica. Causa provavel: o comando rodou em background e a saida ainda "
+    "nao existia. Rode em primeiro plano para que conte."
+)
 
 
 #: O proprio CLI de estado do harness. Ver `is_state_management`.
@@ -255,6 +324,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     command = _command(payload)
     if tool_name in SHELL_TOOLS and not is_state_management(command):
         task = database.touch_file(task["task_id"], "shell-command")
+    aviso = ""
     if is_trusted_verification(command):
         collected, passed, output_hash = _test_counts(payload)
         task = database.record_evidence(
@@ -266,8 +336,12 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
             tests_passed=passed,
             output_hash=output_hash,
         )
+        if collected is None:
+            aviso = AVISO_SEM_CASOS
+    elif looks_like_verification(command):
+        aviso = AVISO_COMPOSICAO.format(sugestao=atomic_prefix(command) or command)
     _sync_projection(bucket, projection, task)
-    return ""
+    return aviso
 
 
 def _handle_stop(payload: dict[str, Any], context) -> str:

@@ -283,3 +283,156 @@ def test_isencao_nao_vale_com_composicao_de_shell(tmp_path: Path):
         tool_input={"command": "python scripts/state_cli.py --home /h complete && sed -i s/a/b/ x.py"},
     ), harness_root=tmp_path / "harness")
     assert database.task(task["task_id"])["verified"] is False
+
+
+# --- O descarte silencioso (incidente 2026-09-02) -----------------------------
+#
+# `is_trusted_verification` rejeita comando com composicao de shell, e a rejeicao
+# esta certa: `pytest --bad; echo "1 passed"` fabrica evidencia trivialmente.
+# O defeito era o silencio. Em uma unica sessao a mesma armadilha pegou tres
+# vezes — `pytest` em background, `pytest | tail` e `pytest` dentro de um Bash
+# multi-linha — e nas tres nada foi gravado e nada foi dito. Custo medido: dois
+# runs de ~7 min repetidos e 2 `stop_continuations`, com o gate do Stop pedindo
+# evidencia que ja tinha sido produzida e jogada fora.
+#
+# Um portao que descarta em silencio ensina que ele esta quebrado. Avisar custa
+# uma linha e devolve o comando que funciona.
+
+
+def test_comando_de_teste_composto_avisa_em_vez_de_sumir(tmp_path: Path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _active_task(tmp_path / "harness", cwd)
+
+    saida = hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "python -m pytest -q | tail -20"},
+            tool_response={"exit_code": 0, "output": "1056 passed"},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert saida, "descartou a evidencia sem dizer nada"
+    assert "evid" in saida.casefold()
+    assert "python -m pytest" in saida, "o aviso tem que devolver o comando que funciona"
+
+
+def test_o_aviso_nomeia_a_causa(tmp_path: Path):
+    """Sem a causa, o aviso vira ruido: nao da para agir sobre 'nao gravei'."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _active_task(tmp_path / "harness", cwd)
+
+    saida = hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "python -m pytest -q && echo ok"},
+            tool_response={"exit_code": 0, "output": "1056 passed"},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+    assert "composic" in saida.casefold() or "shell" in saida.casefold()
+
+
+def test_comando_confiavel_nao_gera_aviso(tmp_path: Path):
+    """Aviso em caminho feliz e ruido por turno — o modo de falha do R5."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _active_task(tmp_path / "harness", cwd)
+
+    saida = hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "python -m pytest -q"},
+            tool_response={"exit_code": 0, "output": "3 passed"},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+    assert saida == ""
+
+
+def test_comando_que_nao_e_teste_nao_gera_aviso(tmp_path: Path):
+    """`git log | head` nao e tentativa de verificar nada."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _active_task(tmp_path / "harness", cwd)
+
+    saida = hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "git log --oneline | head -20"},
+            tool_response={"exit_code": 0, "output": "abc123 fix"},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+    assert saida == ""
+
+
+def test_looks_like_verification_ignora_composicao():
+    """O predicado novo e o antigo diferem exatamente na composicao."""
+    composto = "python -m pytest -q | tail -20"
+    assert hook.looks_like_verification(composto)
+    assert not hook.is_trusted_verification(composto)
+
+    limpo = "python -m pytest -q"
+    assert hook.looks_like_verification(limpo)
+    assert hook.is_trusted_verification(limpo)
+
+    alheio = "git status --short"
+    assert not hook.looks_like_verification(alheio)
+
+
+def test_pytest_no_meio_da_linha_nao_conta():
+    """As ancoras `^` de VERIFICATION_PATTERNS nao podem ser afrouxadas aqui.
+
+    `echo "rode python -m pytest" | tee nota.txt` menciona pytest e nao roda
+    teste nenhum. Avisar ali seria treinar o leitor a ignorar o aviso.
+    """
+    assert not hook.looks_like_verification('echo "rode python -m pytest" | tee nota.txt')
+
+
+def test_atomic_prefix_nao_corta_dentro_de_aspas():
+    """Aspas nao fechadas contam como composicao; aspas fechadas, nao.
+
+    `_has_unquoted_shell_composition` devolve True tambem quando a linha termina
+    com aspa aberta — e correto para decidir confianca, e errado para achar o
+    corte. Varrendo prefixos, `python -m pytest "a` cai nesse ramo e o aviso
+    sugeriria `python -m pytest`, jogando fora o argumento que importa.
+    """
+    assert hook.atomic_prefix('python -m pytest "tests/x y.py" -q | tail -20') == (
+        'python -m pytest "tests/x y.py" -q'
+    )
+    assert hook.atomic_prefix("python -m pytest -q") == "python -m pytest -q"
+    assert hook.atomic_prefix("python -m pytest -q && echo ok") == "python -m pytest -q"
+
+
+def test_aviso_de_background_quando_nao_ha_casos(tmp_path: Path):
+    """Background nao tem composicao: passa no gate e grava evidencia inutil.
+
+    O PostToolUse chega antes de existir saida, entao `tests_collected` e None e
+    a evidencia nao verifica. Foi o que custou dois runs de ~7 min em 2026-09-02.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _active_task(tmp_path / "harness", cwd)
+
+    saida = hook.handle_payload(
+        _payload(
+            "PostToolUse",
+            cwd,
+            tool_name="Bash",
+            tool_input={"command": "python -m pytest -q"},
+            tool_response={"output": "Command running in background with ID: b7oa52upf"},
+        ),
+        harness_root=tmp_path / "harness",
+    )
+    assert "background" in saida.casefold()
