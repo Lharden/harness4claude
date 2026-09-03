@@ -570,9 +570,47 @@ def main() -> int:
     except (OSError, ValueError):
         payload = {}
     output = handle_payload(payload, event=args.event)
-    if output:
+    if not output:
+        return 0
+    if _event_name(payload, args.event) == "Stop":
+        # O gate do Stop e `decision: block`, o unico canal que interrompe de
+        # verdade. Ele sai cru: passar por `emit.py` o silenciaria, porque la o
+        # Stop e `silent` por projeto.
         print(output)
+        return 0
+    _emitir(payload, args.event, output)
     return 0
+
+
+def _emitir(payload: dict[str, Any], event: str | None, texto: str) -> None:
+    """Avisos do PostToolUse pelo emissor unico, e nao por `print` solto.
+
+    O aviso de composicao de shell existe para dizer "a evidencia deste teste
+    NAO foi gravada". Ele saia por `print`, entao nao passava pelo extrato de
+    `emissions.jsonl` e `check_hook_liveness.py --delivery` nao tinha como
+    medir se chegava. Em 2026-09-03 uma suite verde de 551s foi descartada por
+    um `| tail -12` e o aviso nao apareceu — invisivel para quem devia ler e
+    invisivel para a auditoria, que e a combinacao que originou esta auditoria
+    toda.
+    """
+    nome = _event_name(payload, event)
+    try:
+        import importlib.util
+
+        caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emit.py")
+        spec = importlib.util.spec_from_file_location("harness_emit", caminho)
+        if spec is None or spec.loader is None:
+            raise ImportError
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.Emitter(
+            nome,
+            hook="transactional",
+            session_id=payload.get("session_id"),
+            cwd=payload.get("cwd"),
+        ).add("evidence_warning", texto).flush()
+    except Exception:
+        print(texto)
 
 
 if __name__ == "__main__":

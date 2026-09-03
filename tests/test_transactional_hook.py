@@ -612,3 +612,44 @@ def test_comando_de_inspecao_nao_invalida_evidencia(tmp_path: Path):
     depois = database.task(task["task_id"])
     assert depois["verified"] is True, "um grep invalidou a evidencia"
     assert depois["code_revision"] == antes["code_revision"]
+
+
+# --- O aviso tem de ser auditavel (incidente 2026-09-03) ---------------------
+#
+# O aviso de composicao de shell diz "a evidencia deste teste NAO foi gravada".
+# Ele saia por `print` solto: fora do extrato de `emissions.jsonl`, invisivel
+# para `check_hook_liveness.py --delivery`. Uma suite verde de 551s foi
+# descartada por um `| tail -12` e nenhum dos dois lados soube.
+
+
+def test_aviso_do_post_tool_entra_no_extrato(tmp_path: Path, monkeypatch, capsys):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _, database, task = _active_task(raiz, cwd)
+    monkeypatch.setenv("HARNESS_DIR", str(raiz))
+
+    aviso = hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": "python -m pytest -q 2>&1 | tail -12"},
+    ), harness_root=raiz)
+    assert "NAO gravada" in aviso
+
+    hook._emitir({"cwd": str(cwd), "session_id": "s1"}, "PostToolUse", aviso)
+
+    extrato = raiz / "emissions.jsonl"
+    assert extrato.is_file(), "o aviso nao deixou rastro no extrato"
+    linhas = [json.loads(l) for l in extrato.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert any(l.get("kind") == "evidence_warning" for l in linhas)
+
+
+def test_gate_do_stop_continua_saindo_cru(tmp_path: Path):
+    """O `decision: block` e o unico canal que interrompe — nao pode ir para o emissor."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _, database, task = _active_task(raiz, cwd)
+
+    saida = hook.handle_payload(_payload("Stop", cwd), harness_root=raiz)
+
+    assert json.loads(saida)["decision"] == "block"
