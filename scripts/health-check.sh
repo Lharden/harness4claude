@@ -415,10 +415,38 @@ else
     else
         warn "HARNESS_ROUTER=1 mas Ollama/modelo indisponivel — camada B nunca respondera"
     fi
+    # Contador de falhas nao e o mesmo que disjuntor aberto. `skill_router.py`
+    # define aberto como `failures >= BREAKER_THRESHOLD E (agora - opened_at) <
+    # BREAKER_COOLDOWN_S`. So um sucesso da camada B zera o contador, e ela so
+    # roda em UserPromptSubmit com HARNESS_ROUTER=1 — entao `failures` fica
+    # parado indefinidamente depois de uma tempestade passageira.
+    #
+    # Ate 2026-09-03 este check olhava so o contador e avisava para sempre. O
+    # caso real: a camada B estourou o orcamento de 3s enquanto os indices eram
+    # reconstruidos (3088 + 903 embeddings em lote); passada a tempestade,
+    # `embed_query` voltou a 0,26s e o aviso continuaria de pe. E o mesmo
+    # defeito do doutor do Obsidian com outro nome — dizer que algo esta
+    # quebrado quando nao esta.
     BREAKER="$HARNESS_DIR/router/layer-b-breaker.json"
     if [ -f "$BREAKER" ]; then
-        FAILS="$(python -c "import json,sys;print(json.load(open(sys.argv[1])).get('failures',0))" "$BREAKER" 2>/dev/null || echo 0)"
-        [ "${FAILS:-0}" -ge 3 ] && warn "camada B em cooldown ($FAILS falhas seguidas)"
+        BREAKER_STATE="$(python - "$BREAKER" <<'PYBRK' 2>/dev/null || echo "0 fechado"
+import json, sys, time
+LIMIAR, COOLDOWN = 3, 900
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("0 fechado"); raise SystemExit(0)
+falhas = int(d.get("failures") or 0)
+idade = time.time() - float(d.get("opened_at") or 0.0)
+aberto = falhas >= LIMIAR and idade < COOLDOWN
+print(f"{falhas} {'aberto' if aberto else 'fechado'}")
+PYBRK
+)"
+        FAILS="${BREAKER_STATE%% *}"
+        ESTADO="${BREAKER_STATE##* }"
+        if [ "$ESTADO" = "aberto" ]; then
+            warn "camada B em cooldown ($FAILS falhas seguidas)"
+        fi
     fi
 fi
 echo ""

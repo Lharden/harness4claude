@@ -187,3 +187,68 @@ class TestObsidianDistingueQuebraDeIndisponibilidade:
         """Obsidian aberto nao e pre-requisito: a secao e WARN-only, por design."""
         secao = _secao_obsidian(_run_health_check(plugin_copy).stdout)
         assert "[FAIL]" not in secao, "integracao opcional nao pode reprovar:\n" + secao
+
+
+class TestDisjuntorRespeitaOCooldown:
+    """Contador de falhas nao e o mesmo que disjuntor aberto (2026-09-03).
+
+    `hooks/skill_router.py` define o disjuntor como
+    `failures >= 3 E (agora - opened_at) < 900`. Um sucesso zera o contador —
+    mas so a camada B zera, e ela so roda em UserPromptSubmit com
+    HARNESS_ROUTER=1. Sem isso, `failures` fica em 4 para sempre.
+
+    O health-check olhava so `failures >= 3`. Depois que o cooldown expira o
+    disjuntor esta funcionalmente fechado e o relatorio continuava avisando —
+    o mesmo defeito do doutor do Obsidian, com outro nome: dizer que algo esta
+    quebrado quando nao esta.
+
+    Medido no incidente que originou isto: a camada B falhou porque a
+    reconstrucao dos indices (3088 + 903 embeddings em lote) estourou o
+    orcamento de 3s do router. Passada a tempestade, `embed_query` voltou a
+    responder em 0,26s e o aviso continuaria de pe.
+    """
+
+    def _rodar(self, plugin_dir: Path, harness_dir: Path) -> str:
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["CLAUDE_PLUGIN_ROOT"] = str(plugin_dir)
+        env["HARNESS_DIR"] = str(harness_dir)
+        env["HARNESS_ROUTER"] = "1"
+        proc = subprocess.run(
+            [BASH, str(plugin_dir / "scripts" / "health-check.sh")],
+            capture_output=True, text=True, timeout=300, env=env,
+        )
+        return proc.stdout
+
+    def _breaker(self, harness_dir: Path, *, falhas: int, idade_s: float) -> None:
+        import json
+        import time
+        alvo = harness_dir / "router"
+        alvo.mkdir(parents=True, exist_ok=True)
+        (alvo / "layer-b-breaker.json").write_text(json.dumps({
+            "failures": falhas,
+            "opened_at": time.time() - idade_s,
+            "last_msg": "layer B degraded: TimeoutError: timed out",
+            "last_msg_ts": time.time() - idade_s,
+        }), encoding="utf-8")
+
+    def test_cooldown_expirado_nao_avisa(self, plugin_copy, tmp_path):
+        harness = tmp_path / "h-expirado"
+        self._breaker(harness, falhas=4, idade_s=100000)
+        saida = self._rodar(plugin_copy, harness)
+        assert "em cooldown" not in saida, (
+            "cooldown expirado ainda avisando — contador residual vira alarme eterno:\n"
+            + saida
+        )
+
+    def test_cooldown_ativo_avisa(self, plugin_copy, tmp_path):
+        harness = tmp_path / "h-ativo"
+        self._breaker(harness, falhas=4, idade_s=10)
+        saida = self._rodar(plugin_copy, harness)
+        assert "em cooldown" in saida, "disjuntor aberto de verdade tem que avisar"
+
+    def test_poucas_falhas_nao_avisa(self, plugin_copy, tmp_path):
+        harness = tmp_path / "h-poucas"
+        self._breaker(harness, falhas=2, idade_s=10)
+        saida = self._rodar(plugin_copy, harness)
+        assert "em cooldown" not in saida
