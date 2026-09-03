@@ -98,3 +98,48 @@ def test_workflow_encodes_drop_constrain_retain_gate():
     assert "Antes de propagar qualquer artefato" in workflow
     assert "fronteira" in workflow
     assert "evidência" in workflow
+
+
+# --- A evidencia tem que existir de verdade (incidente 2026-09-03) ------------
+#
+# `build_capability_report` fazia `record.split("#", 1)[0]` e checava so o
+# arquivo. O nome do teste depois do `#` era descartado, entao
+# `tests/x.py#test_que_nunca_existiu` carimbava a capacidade como "equivalent".
+#
+# A conta de equipotencia com o harness4codex se apoia nesse carimbo. Verificar
+# so o arquivo transforma "existe um teste que prova isto" em "existe um arquivo
+# com esse nome" — que e outra afirmacao, bem mais fraca.
+
+
+adapter = _load("contract_adapter_evidencia", ROOT / "scripts" / "contract_adapter.py")
+
+
+def test_nome_do_teste_ausente_degrada_a_capacidade(tmp_path, monkeypatch):
+    """Arquivo presente e teste ausente nao pode passar por equivalencia."""
+    monkeypatch.setitem(adapter.EVIDENCE, "cap.sonda", ["tests/sonda_falsa.py#test_que_nao_existe"])
+    (ROOT / "tests" / "sonda_falsa.py").write_text(
+        "def test_outro_nome():\n    assert True\n", encoding="utf-8")
+    try:
+        assert adapter.evidence_is_valid(ROOT, ["tests/sonda_falsa.py#test_que_nao_existe"]) is False
+        assert adapter.evidence_is_valid(ROOT, ["tests/sonda_falsa.py#test_outro_nome"]) is True
+    finally:
+        (ROOT / "tests" / "sonda_falsa.py").unlink()
+
+
+def test_arquivo_ausente_continua_degradando():
+    assert adapter.evidence_is_valid(ROOT, ["tests/nao_existe_de_jeito_nenhum.py#test_x"]) is False
+
+
+def test_registro_sem_ancora_verifica_so_o_arquivo():
+    """Sem `#`, a afirmacao e sobre o arquivo — e continua valendo como tal."""
+    assert adapter.evidence_is_valid(ROOT, ["scripts/contract_adapter.py"]) is True
+
+
+def test_toda_evidencia_declarada_hoje_aponta_para_teste_que_existe():
+    """O portao. Vermelho aqui = o contrato afirma prova que ninguem escreveu."""
+    quebrados = []
+    for capacidade, registros in adapter.EVIDENCE.items():
+        for registro in registros:
+            if not adapter.evidence_is_valid(ROOT, [registro]):
+                quebrados.append(f"{capacidade} -> {registro}")
+    assert not quebrados, "evidencia declarada que nao existe:\n  " + "\n  ".join(quebrados)

@@ -158,8 +158,40 @@ def _fechar_sessao(payload: dict, root) -> None:
             "",
         ]
         arquivo.write_text(chr(10).join(linhas), encoding="utf-8")
+        _regerar_index_do_vault(vault)
     except Exception:
         pass
+
+
+def _regerar_index_do_vault(vault) -> None:
+    """Reescreve `wiki/index.md` a partir do disco.
+
+    O cartao era escrito e nada o registrava. `index.md` e gerado por
+    `tools/wiki_index.py` a partir do que existe em disco, e ninguem o rodava
+    depois de escrever pagina — entao a pagina existia e a wiki nao sabia dela.
+    Para quem consulta pelo indice, isso e o mesmo que nao existir.
+
+    Medido em 2026-09-03: `wiki_lint` acusou 45 paginas fora do index (42
+    cartoes e specs espelhadas, mais as tres desta sessao), com `ready: False`
+    e 90 erros. Depois de regerar: `ready: True`, zero erros.
+
+    Barato e sem Ollama: le markdown do disco, nao gera embedding. E outra coisa
+    que o `.stale` do sessions-index, que marca o indice SEMANTICO para
+    reconstrucao e depende do servico de embedding.
+    """
+    import importlib.util
+
+    caminho = Path(__file__).resolve().parent.parent / "tools" / "wiki_index.py"
+    if not caminho.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("wiki_index_para_lifecycle", caminho)
+    if spec is None or spec.loader is None:
+        return
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    destino = Path(vault) / "wiki" / "index.md"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(modulo.build_index(Path(vault)), encoding="utf-8")
 
 
 def main() -> int:

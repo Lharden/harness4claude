@@ -228,8 +228,18 @@ class HarnessDatabase:
                 "AND status IN ('suggested', 'active', 'awaiting_gate', 'verified'))",
                 (now, scope_id),
             )
+            # A task anterior sai do caminho, mas o que aconteceu com ela nao e
+            # sempre a mesma coisa. Ate 2026-09-03 tudo virava 'abandoned',
+            # inclusive task que tinha rodado a suite e passado: o prompt
+            # seguinte do usuario chega antes de dar tempo de fechar o pipeline.
+            # Medido nos harness.db da maquina: 6 abandonadas, 3 com verified=1.
+            # Metade do "abandono" era trabalho concluido.
+            #
+            # 'superseded' fica FORA de `one_active_task_per_scope`, entao libera
+            # o indice igual a 'abandoned' — sem mentir sobre o desfecho.
             connection.execute(
-                "UPDATE tasks SET status = 'abandoned', revision = revision + 1, updated_at = ? "
+                "UPDATE tasks SET status = CASE WHEN verified = 1 THEN 'superseded' ELSE 'abandoned' END, "
+                "revision = revision + 1, updated_at = ? "
                 "WHERE scope_id = ? AND status IN ('suggested', 'active', 'awaiting_gate', 'verified')",
                 (now, scope_id),
             )

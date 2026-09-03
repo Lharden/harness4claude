@@ -257,3 +257,70 @@ def test_confirm_classification_concordante_tambem_mantem_coerencia(tmp_path):
         source="semantic", confidence=1.0,
     )
     assert depois["legacy_level"] == "L1-bug"
+
+
+# --- Task verificada nao e task abandonada (incidente 2026-09-03) -------------
+#
+# `start_task` movia para 'abandoned' TODA task nas quatro situacoes vivas,
+# incluindo 'verified'. Uma task que fez o trabalho, rodou a suite e passou
+# ficava registrada igual a uma largada no meio — porque o prompt seguinte do
+# usuario chega antes de dar tempo de fechar.
+#
+# Medido em 2026-09-03 nos harness.db da maquina: 6 abandonadas, 3 delas com
+# verified=1. Metade do "abandono" era trabalho concluido.
+#
+# 'superseded' fica FORA de `one_active_task_per_scope`, entao a task sai do
+# caminho da nova sem mentir sobre o que aconteceu com ela.
+
+
+def test_task_verificada_vira_superseded_nao_abandonada(tmp_path):
+    db = state.HarnessDatabase(tmp_path)
+    primeira = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                             kind="bug", pipeline=["tdd"], prompt="um")
+    db.record_evidence(primeira["task_id"], evidence_type="test", command="python -m pytest -q",
+                       exit_code=0, tests_collected=10, tests_passed=10, output_hash="h")
+    assert db.task(primeira["task_id"])["verified"] is True
+
+    db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                  kind="bug", pipeline=["tdd"], prompt="dois")
+
+    anterior = db.task(primeira["task_id"])
+    assert anterior["status"] == "superseded"
+    assert anterior["verified"] is True, "a verificacao que aconteceu nao pode sumir"
+
+
+def test_task_nao_verificada_continua_abandonada(tmp_path):
+    """Largar no meio sem evidencia continua sendo abandono. A distincao e o ponto."""
+    db = state.HarnessDatabase(tmp_path)
+    primeira = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                             kind="bug", pipeline=["tdd"], prompt="um")
+    db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                  kind="bug", pipeline=["tdd"], prompt="dois")
+    assert db.task(primeira["task_id"])["status"] == "abandoned"
+
+
+def test_superseded_libera_o_indice_de_task_unica(tmp_path):
+    """`one_active_task_per_scope` so admite um vivo; 'superseded' tem de sair dele."""
+    db = state.HarnessDatabase(tmp_path)
+    primeira = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                             kind="bug", pipeline=["tdd"], prompt="um")
+    db.record_evidence(primeira["task_id"], evidence_type="test", command="python -m pytest -q",
+                       exit_code=0, tests_collected=10, tests_passed=10, output_hash="h")
+    segunda = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                            kind="bug", pipeline=["tdd"], prompt="dois")
+    assert db.task(segunda["task_id"])["status"] == "active"
+    terceira = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                             kind="bug", pipeline=["tdd"], prompt="tres")
+    assert db.task(terceira["task_id"])["status"] == "active"
+
+
+def test_gate_pendente_de_task_verificada_tambem_e_cancelado(tmp_path):
+    """A troca de task nao pode deixar gate orfao esperando decisao humana."""
+    db = state.HarnessDatabase(tmp_path)
+    primeira = db.start_task(scope_id="s|r|w", legacy_level="L2-feature", tier="L2",
+                             kind="feature", pipeline=["write-spec", "approve-spec"], prompt="um")
+    db.record_evidence(primeira["task_id"], evidence_type="test", command="python -m pytest -q",
+                       exit_code=0, tests_collected=1, tests_passed=1, output_hash="h")
+    db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                  kind="bug", pipeline=["tdd"], prompt="dois")
+    assert db.task(primeira["task_id"])["pending_gate"] is None

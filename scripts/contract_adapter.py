@@ -86,6 +86,47 @@ def _snapshot_bytes(path: Path) -> bytes:
     ).encode("utf-8")
 
 
+def evidence_is_valid(root: str | Path, records: list) -> bool:
+    """A evidencia declarada existe de verdade?
+
+    Ate 2026-09-03 esta checagem era `(plugin / record.split("#", 1)[0]).exists()`:
+    o nome do teste depois do `#` era descartado, entao
+    `tests/x.py#test_que_nunca_existiu` carimbava a capacidade como "equivalent".
+
+    A conta de equipotencia com o harness4codex se apoia nesse carimbo. Checar
+    so o arquivo troca "existe um teste que prova isto" por "existe um arquivo
+    com esse nome" — que e outra afirmacao, bem mais fraca.
+
+    Registro sem `#` continua sendo afirmacao sobre o arquivo, e continua
+    valendo como tal: nem toda evidencia e um teste nomeado.
+
+    A busca do nome e textual (`def <nome>` no arquivo). Nao importa o teste
+    para nao executar codigo arbitrario ao montar um relatorio, e nao usa AST
+    porque a classe que envolve o metodo tornaria a regra mais fragil, nao mais
+    forte — o que se quer saber e se o nome esta escrito ali.
+    """
+    base = Path(root)
+    if not records:
+        return False
+    for record in records:
+        arquivo, _, ancora = str(record).partition("#")
+        caminho = base / arquivo
+        if not caminho.is_file():
+            return False
+        if not ancora:
+            continue
+        nome = ancora.split("::")[-1].strip()
+        if not nome:
+            continue
+        try:
+            texto = caminho.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if f"def {nome}(" not in texto:
+            return False
+    return True
+
+
 def build_capability_report(root: str | Path | None = None) -> dict[str, Any]:
     plugin = Path(root or Path(__file__).resolve().parents[1]).resolve()
     contract = load_contract(plugin)
@@ -93,7 +134,7 @@ def build_capability_report(root: str | Path | None = None) -> dict[str, Any]:
     capabilities = {}
     for capability in required:
         records = EVIDENCE.get(capability, [])
-        valid = records and all((plugin / record.split("#", 1)[0]).exists() for record in records)
+        valid = evidence_is_valid(plugin, records)
         capabilities[capability] = {
             "status": "equivalent" if valid else "degraded",
             "evidence": records if valid else ["missing conformance evidence"],
