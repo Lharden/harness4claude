@@ -135,6 +135,23 @@ def main() -> int:
         print("erro: state.json sem task_id (idle?) — nada a confirmar", file=sys.stderr)
         return 2
 
+    # O rotulo tem de existir na tabela ANTES de qualquer escrita. Sem esta
+    # porta, `--final L0` chegava ao `args.final.split("-", 1)` la embaixo e
+    # saia como `not enough values to unpack (expected 2, got 1)` — erro que nao
+    # diz ao chamador o que fazer, e justamente no caminho que existe para
+    # corrigir o palpite do regex. O rotulo certo (`L0-question`) esta a uma
+    # palavra de distancia, e a mensagem agora a entrega.
+    # Tabela vazia (pipelines.json ilegivel) NAO bloqueia: degradar e melhor que
+    # impedir a confirmacao por falta de um arquivo de apoio.
+    tabela = load_pipelines()
+    if tabela and args.final not in tabela:
+        print(
+            f"erro: '{args.final}' nao e classificacao valida — nada gravado.\n"
+            f"       use uma de: {', '.join(sorted(tabela))}",
+            file=sys.stderr,
+        )
+        return 2
+
     apply_confirmation(state, args.final, args.source, confidence=args.confidence)
     database_path = harness_dir / "harness.db"
     if database_path.exists():

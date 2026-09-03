@@ -32,6 +32,10 @@ def _sync(home: Path, task: dict) -> None:
             "verified": task["verified"],
             "pending_gate": task["pending_gate"],
             "scope_id": task["scope_id"],
+            # Sem esta linha, `state_cli artifact` saia com 0, gravava no banco
+            # e deixava `artifacts_so_far: []` no state — sucesso silencioso que
+            # parecia perda de dado.
+            "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
         }
     )
     temporary = path.with_suffix(".json.tmp")

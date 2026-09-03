@@ -434,3 +434,56 @@ def test_task_viva_continua_contando_arquivo(tmp_path):
     depois = db.touch_files(task["task_id"], ["src/novo.py"])
     assert depois["code_revision"] == task["code_revision"] + 1
     assert db.files(task["task_id"]) == [str(Path("src/novo.py"))]
+
+
+def test_artifacts_voltam_do_banco_e_chegam_ao_state_json(tmp_path: Path):
+    """`record_artifact` sempre gravou; nada lia de volta.
+
+    O sintoma era o pior tipo: `state_cli artifact` saia com 0, a linha entrava
+    na tabela, e `artifacts_so_far` no `state.json` continuava `[]`. Quem lia o
+    state — incluindo `harness-lifecycle.py` — via uma task sem artefato nenhum,
+    e a conclusao natural era perda de dado. O dado estava la; faltava a volta.
+
+    Medido em 2026-09-03: tres artefatos no SQLite, `artifacts_so_far: []`.
+    """
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s|r|w", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["systematic-debugging", "tdd", "verify"], prompt="fix",
+    )
+    tid = task["task_id"]
+
+    assert db.task(tid)["artifacts"] == [], "task sem artefato comeca vazia"
+
+    db.record_artifact(tid, "analysis", "dossie.md", None)
+    db.record_artifact(tid, "registry", "terms.toml", "deadbeef")
+
+    artifacts = db.task(tid)["artifacts"]
+    assert [a["path"] for a in artifacts] == ["dossie.md", "terms.toml"]
+    assert [a["type"] for a in artifacts] == ["analysis", "registry"]
+    assert all(a["phase"] for a in artifacts), "a fase em que o artefato nasceu se perde sem isto"
+
+    # O upsert de `record_artifact` nao pode duplicar a linha na volta.
+    db.record_artifact(tid, "analysis", "dossie.md", "novohash")
+    assert len(db.task(tid)["artifacts"]) == 2
+
+
+def test_state_cli_artifact_projeta_no_state_json(tmp_path: Path):
+    """A ponta que o usuario ve: o CLI grava e o `state.json` mostra."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s|r|w", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["systematic-debugging", "tdd", "verify"], prompt="fix",
+    )
+    cli = ROOT / "scripts" / "state_cli.py"
+    res = subprocess.run(
+        [sys.executable, str(cli), "--home", str(tmp_path), "artifact",
+         "--task", task["task_id"], "--type", "analysis", "--path", "dossie.md"],
+        capture_output=True, text=True, check=False,
+    )
+    assert res.returncode == 0, res.stderr
+
+    projecao = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert projecao["artifacts_so_far"] == ["dossie.md"], (
+        "exit 0 com a lista vazia e sucesso silencioso — parece perda de dado"
+    )

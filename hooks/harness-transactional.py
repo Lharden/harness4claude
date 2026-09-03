@@ -463,6 +463,11 @@ def _sync_projection(bucket: Path, projection: dict[str, Any], task: dict[str, A
             "stop_continuations": task["stop_continuations"],
             "pending_gate": task["pending_gate"],
             "scope_id": task["scope_id"],
+            # A projecao do hook e a que sobrescreve o state com mais
+            # frequencia. Sem esta linha ela reintroduzia a lista vazia a cada
+            # PostToolUse, desfazendo o que o `state_cli` tivesse acabado de
+            # projetar — as duas metades precisam existir juntas.
+            "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
         }
     )
     temporary = bucket / "state.json.transactional.tmp"

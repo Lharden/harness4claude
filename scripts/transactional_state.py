@@ -362,12 +362,30 @@ class HarnessDatabase:
                 "ORDER BY id DESC LIMIT 1",
                 (task_id,),
             ).fetchone()
+            # `record_artifact` sempre gravou aqui corretamente, mas nada lia a
+            # tabela de volta: a projecao `state.json` carregava
+            # `artifacts_so_far: []` para sempre, e quem le o state — inclusive
+            # o hook de lifecycle — via zero artefatos numa task que tinha
+            # varios. O dado existia; faltava o caminho de volta.
+            artifacts = [
+                {"type": r["artifact_type"], "path": r["path"], "phase": r["phase"]}
+                # `rowid` e nao `created_at`: o upsert de `record_artifact`
+                # reescreve `created_at`, entao ordenar por ele faria o artefato
+                # reaparecer no fim da lista a cada regravacao. `rowid` guarda a
+                # ordem de primeira insercao, que e a ordem em que o trabalho
+                # aconteceu. A tabela nao tem coluna `id` — a chave e composta.
+                for r in connection.execute(
+                    "SELECT artifact_type, path, phase FROM artifacts WHERE task_id = ? "
+                    "ORDER BY rowid",
+                    (task_id,),
+                )
+            ]
         pending_gate = None
         if gate:
             pending_gate = str(gate["gate_type"])
             if gate["subject_id"]:
                 pending_gate += f":{gate['subject_id']}"
-        return self._render_task(row, pending_gate)
+        return self._render_task(row, pending_gate, artifacts)
 
     def current_task(self, scope_id: str) -> dict[str, Any] | None:
         placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
@@ -1066,10 +1084,16 @@ class HarnessDatabase:
         )
 
     @classmethod
-    def _render_task(cls, row: sqlite3.Row, pending_gate: str | None) -> dict[str, Any]:
+    def _render_task(
+        cls,
+        row: sqlite3.Row,
+        pending_gate: str | None,
+        artifacts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         pipeline = json.loads(row["pipeline_json"])
         index = int(row["phase_index"])
         return {
+            "artifacts": artifacts or [],
             "task_id": row["task_id"],
             "scope_id": row["scope_id"],
             "legacy_level": row["legacy_level"],

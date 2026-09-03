@@ -202,3 +202,31 @@ class TestCli:
     def test_source_invalida_recusa(self, harness_dir):
         (harness_dir / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
         assert self._run(harness_dir, "--final", "L1-bug", "--source", "chute").returncode != 0
+
+    def test_rotulo_fora_da_tabela_recusa_e_lista_as_opcoes(self, harness_dir):
+        """`--final L0` era o erro mais provavel, e o menos legivel.
+
+        `L0` parece rotulo valido — o CLAUDE.md fala em "L0" o tempo todo —, mas
+        a tabela so tem `L0-question`. Sem esta porta, o valor atravessava ate
+        `args.final.split("-", 1)` e voltava como `not enough values to unpack
+        (expected 2, got 1)`: um erro de desempacotamento no lugar de uma
+        instrucao. Justamente no caminho que existe para corrigir o palpite do
+        regex, que acerta ~30%.
+        """
+        (harness_dir / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+
+        res = self._run(harness_dir, "--final", "L0")
+
+        assert res.returncode == 2
+        assert "unpack" not in res.stderr, "o erro de desempacotamento nao pode vazar ao chamador"
+        assert "L0-question" in res.stderr, "a mensagem tem de entregar o rotulo certo"
+
+        meta = json.loads((harness_dir / "state.json").read_text(encoding="utf-8"))["classification_meta"]
+        assert meta["agreed"] is None, "rotulo invalido nao pode tocar o state"
+
+    def test_todo_rotulo_da_tabela_e_aceito(self, harness_dir, cc):
+        """A porta recusa o que esta fora; ela nao pode recusar o que esta dentro."""
+        for rotulo in sorted(cc.load_pipelines()):
+            (harness_dir / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+            res = self._run(harness_dir, "--final", rotulo)
+            assert res.returncode == 0, f"{rotulo} recusado: {res.stderr}"
