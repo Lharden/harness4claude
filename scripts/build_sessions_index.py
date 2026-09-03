@@ -117,6 +117,59 @@ _RUIDO_RE = re.compile("|".join(re.escape(x) for x in RUIDO))
 # ---------------------------------------------------------------------------
 
 
+#: Raiz do estado do harness. `branches.json` vive em `<raiz>/projects/<slug>/`.
+DEFAULT_HARNESS = os.path.join(HOME, ".claude", "harness")
+
+
+def branch_links(harness_root=DEFAULT_HARNESS) -> dict:
+    """Vinculo mae<->ramo por sessao, lido do registro de ramos.
+
+    A busca cross-sessao devolvia nos soltos: o vinculo existe em
+    `branches.json` desde 2026-08-27 e nunca chegava ao indice, entao mae e
+    filho voltavam como conversas sem relacao.
+
+    Nao confundir com `git_branch`, que ja existe no registro e e a branch do
+    git. Sao coisas diferentes e convivem.
+
+    Degrada em silencio de proposito: medido em 2026-09-03, ZERO `branches.json`
+    em 35 buckets. Registro ausente e o caso NORMAL hoje, nao anomalia — e a
+    construcao do indice nao pode falhar por causa dele.
+    """
+    mapa: dict = {}
+
+    def entrada(session_id: str) -> dict:
+        return mapa.setdefault(session_id, {"branch_of": None, "branches": []})
+
+    base = os.path.join(str(harness_root), "projects")
+    try:
+        slugs = sorted(os.listdir(base))
+    except OSError:
+        return mapa
+    for slug in slugs:
+        caminho = os.path.join(base, slug, "branches.json")
+        try:
+            with open(caminho, encoding="utf-8") as fh:
+                dados = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(dados, dict):
+            continue
+        pai = dados.get("parent_session")
+        if not pai:
+            continue
+        for ramo in dados.get("branches") or []:
+            # Ramo `pending` ainda nao abriu janela e nao tem sessao. Incluir
+            # `None` como chave criaria um no que a busca nunca poderia devolver.
+            filho = (ramo or {}).get("session_id")
+            if not filho:
+                continue
+            entrada(filho)["branch_of"] = pai
+            filhos = entrada(pai)["branches"]
+            if filho not in filhos:
+                filhos.append(filho)
+    return mapa
+
+
 def session_files(root=DEFAULT_ROOT):
     """Transcripts de sessao: jsonl na RAIZ de cada projeto.
 
@@ -286,7 +339,12 @@ def _fatias(texto: str, tamanho: int = CHUNK_CHARS):
     return pedacos
 
 
-def session_chunks(sessao):
+def _vinculo(links, session_id: str) -> dict:
+    """Vinculo desta sessao, ou o vazio. Nunca None, para o chamador nao ramificar."""
+    return (links or {}).get(session_id) or {"branch_of": None, "branches": []}
+
+
+def session_chunks(sessao, links=None):
     """Chunks do par de turno (prompt + resposta), fatiados em CHUNK_CHARS.
 
     O par e a unidade porque a pergunta sozinha perde a decisao e a resposta
@@ -294,6 +352,7 @@ def session_chunks(sessao):
     para o mesmo turno — a dedupe por sessao no `session_query` cuida de nao
     devolver a mesma conversa cinco vezes.
     """
+    vinculo = _vinculo(links, sessao["session_id"])
     saida = []
     for n, turno in enumerate(sessao["turns"]):
         corpo = turno["prompt"]
@@ -310,6 +369,7 @@ def session_chunks(sessao):
                 "project": sessao["project"],
                 "cwd": sessao["cwd"],
                 "git_branch": sessao["git_branch"],
+                "branch_of": vinculo["branch_of"],
                 "title": sessao["title"],
                 "started_at": sessao["started_at"],
                 "turn": n,
@@ -321,16 +381,24 @@ def session_chunks(sessao):
     return saida
 
 
-def scan_sessions(root=DEFAULT_ROOT, *, days=DEFAULT_DAYS):
-    """Sessoes qualificadas e seus chunks."""
+def scan_sessions(root=DEFAULT_ROOT, *, days=DEFAULT_DAYS, links=None):
+    """Sessoes qualificadas e seus chunks.
+
+    `links` e lido do registro de ramos quando nao vem pronto. Aceitar o
+    parametro sem nunca preenche-lo deixaria o campo `branch_of` sempre nulo com
+    o codigo todo no lugar — o modo de falha que manteve `verify-multimodel`
+    declarado e inalcancavel por cinco dias.
+    """
     corte = time.time() - days * 86400 if days else 0.0
+    if links is None:
+        links = branch_links(DEFAULT_HARNESS)
     sessoes, chunks = [], []
     for caminho in session_files(root):
         s = parse_session(caminho, corte_epoch=corte)
         if s is None:
             continue
         sessoes.append(s)
-        chunks.extend(session_chunks(s))
+        chunks.extend(session_chunks(s, links=links))
     return sessoes, chunks
 
 
@@ -375,7 +443,7 @@ def _history_map(path=HISTORY_JSONL):
     return mapa
 
 
-def build_catalog(sessoes, out=DEFAULT_CATALOG):
+def build_catalog(sessoes, out=DEFAULT_CATALOG, *, links=None):
     """Uma linha por sessao, sem vetor. Responde 'o que fiz ontem no projeto X'."""
     hist = _history_map()
     linhas = []
@@ -387,6 +455,10 @@ def build_catalog(sessoes, out=DEFAULT_CATALOG):
             "project": s["project"],
             "cwd": s["cwd"],
             "git_branch": s["git_branch"],
+            # Sempre presentes, mesmo nulos: campo ausente e campo vazio se
+            # confundem em quem le, e "nao tem ramo" e informacao.
+            "branch_of": _vinculo(links, s["session_id"])["branch_of"],
+            "branches": _vinculo(links, s["session_id"])["branches"],
             "first_prompt": s["turns"][0]["prompt"][:300],
             "last_prompt": hist.get(s["session_id"], s["turns"][-1]["prompt"][:300]),
             "n_turns": s["n_turns"],
@@ -413,7 +485,8 @@ def embed_text(chunk):
 
 def build(root=DEFAULT_ROOT, out_dir=DEFAULT_OUT, *, no_embed=False,
           days=DEFAULT_DAYS, catalog=DEFAULT_CATALOG):
-    sessoes, chunks = scan_sessions(root, days=days)
+    links = branch_links(DEFAULT_HARNESS)
+    sessoes, chunks = scan_sessions(root, days=days, links=links)
     dim, blob = 0, b""
     if not no_embed and chunks:
         vecs = [l2norm(v) for v in ollama_embed([embed_text(c) for c in chunks])]
@@ -440,7 +513,7 @@ def build(root=DEFAULT_ROOT, out_dir=DEFAULT_OUT, *, no_embed=False,
     meta["root"] = root
     atomic_write(os.path.join(out_dir, "meta.json"), json.dumps(meta).encode("utf-8"))
     if catalog:
-        build_catalog(sessoes, catalog)
+        build_catalog(sessoes, catalog, links=links)
     return len(chunks), len(sessoes)
 
 

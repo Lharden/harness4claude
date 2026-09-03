@@ -352,3 +352,147 @@ class TestFechamentoDeSessao:
         lifecycle._fechar_sessao({"session_id": "s-2", "cwd": "C:/outro"}, tmp_path)
 
         assert json.loads((d / "state.json").read_text(encoding="utf-8"))["status"] == "active"
+
+
+# --- Ramo visivel no indice (Fase 5) -----------------------------------------
+#
+# A busca cross-sessao devolvia nos soltos: quando uma sessao e ramo de outra, o
+# vinculo vive em `branches.json` e nunca chegava ao indice. Quem procura "o que
+# decidimos sobre X" recebia mae e filho como conversas sem relacao.
+#
+# Medido em 2026-09-03: ZERO `branches.json` em 35 buckets. O caso normal hoje e
+# o registro ausente, e e por isso que a degradacao silenciosa vem antes do
+# caminho feliz nos testes abaixo.
+#
+# `git_branch` ja existe no registro e e outra coisa — branch do git, nao ramo de
+# sessao. Os dois campos convivem de proposito.
+
+
+def _bucket_com_ramos(raiz: Path, slug: str, parent: str, ramos: list) -> Path:
+    bucket = raiz / "projects" / slug
+    bucket.mkdir(parents=True, exist_ok=True)
+    (bucket / "branches.json").write_text(
+        json.dumps({"schema_version": 1, "parent_session": parent, "branches": ramos}),
+        encoding="utf-8",
+    )
+    return bucket
+
+
+def test_ac1_vinculo_de_mao_dupla(builder, tmp_path):
+    """Filho aponta para o pai, e o pai lista o filho."""
+    _bucket_com_ramos(tmp_path, "proj-a", "PAI", [{"session_id": "FILHO", "slug": "f"}])
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["FILHO"]["branch_of"] == "PAI"
+    assert mapa["PAI"]["branches"] == ["FILHO"]
+
+
+def test_ac2_sem_registro_devolve_vazio(builder, tmp_path):
+    """O caso normal hoje: nenhum ramo aceito em nenhum bucket."""
+    (tmp_path / "projects").mkdir(parents=True)
+    assert builder.branch_links(tmp_path) == {}
+
+
+def test_ac2b_raiz_inexistente_nao_levanta(builder, tmp_path):
+    assert builder.branch_links(tmp_path / "nao-existe") == {}
+
+
+def test_ac3_json_quebrado_nao_contamina_os_outros(builder, tmp_path):
+    _bucket_com_ramos(tmp_path, "bom", "PAI", [{"session_id": "FILHO", "slug": "f"}])
+    ruim = tmp_path / "projects" / "ruim"
+    ruim.mkdir(parents=True)
+    (ruim / "branches.json").write_text("{lixo", encoding="utf-8")
+
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["FILHO"]["branch_of"] == "PAI"
+
+
+def test_ac4_ramo_pendente_sem_sessao_nao_entra(builder, tmp_path):
+    """`pending` sem janela aberta nao corresponde a sessao que a busca devolva."""
+    _bucket_com_ramos(tmp_path, "proj", "PAI", [
+        {"session_id": None, "slug": "ainda-nao-aberto"},
+        {"session_id": "", "slug": "vazio"},
+        {"session_id": "FILHO", "slug": "aberto"},
+    ])
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["PAI"]["branches"] == ["FILHO"]
+    assert None not in mapa and "" not in mapa
+
+
+def test_ac6_dois_ramos_do_mesmo_pai_em_ordem_estavel(builder, tmp_path):
+    _bucket_com_ramos(tmp_path, "proj", "PAI", [
+        {"session_id": "F1", "slug": "um"},
+        {"session_id": "F2", "slug": "dois"},
+    ])
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["PAI"]["branches"] == ["F1", "F2"]
+    assert mapa["F1"]["branch_of"] == "PAI"
+    assert mapa["F2"]["branch_of"] == "PAI"
+
+
+def test_pai_sem_registro_proprio_ainda_e_pai(builder, tmp_path):
+    """O pai nao precisa ter entrada propria em branches.json para ser listado."""
+    _bucket_com_ramos(tmp_path, "proj", "PAI", [{"session_id": "FILHO", "slug": "f"}])
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["PAI"]["branch_of"] is None
+    assert mapa["FILHO"]["branches"] == []
+
+
+def test_ac5_catalogo_traz_os_campos(builder, tmp_path):
+    """Sessao sem vinculo traz branch_of nulo e branches vazio — nao ausentes."""
+    sessoes = [
+        {"session_id": "FILHO", "short_ref": "abc123", "title": "ramo", "project": "p",
+         "cwd": "/c", "git_branch": "main", "n_turns": 3,
+         "started_at": "2026-09-01T00:00:00Z", "ended_at": "2026-09-01T01:00:00Z",
+         "turns": [{"prompt": "oi", "resposta": ""}]},
+        {"session_id": "SOZINHA", "short_ref": "def456", "title": "solta", "project": "p",
+         "cwd": "/c", "git_branch": "main", "n_turns": 3,
+         "started_at": "2026-09-02T00:00:00Z", "ended_at": "2026-09-02T01:00:00Z",
+         "turns": [{"prompt": "oi", "resposta": ""}]},
+    ]
+    saida = tmp_path / "catalogo.json"
+    builder.build_catalog(sessoes, out=saida, links={"FILHO": {"branch_of": "PAI", "branches": []}})
+    linhas = {l["session_id"]: l for l in json.loads(saida.read_text(encoding="utf-8"))["sessions"]}
+    assert linhas["FILHO"]["branch_of"] == "PAI"
+    assert linhas["SOZINHA"]["branch_of"] is None
+    assert linhas["SOZINHA"]["branches"] == []
+
+
+def test_req3_chunk_carrega_branch_of(builder):
+    sessao = {
+        "session_id": "FILHO", "short_ref": "abc123", "title": "ramo", "project": "p",
+        "cwd": "/c", "git_branch": "main", "started_at": "2026-09-01T00:00:00Z",
+        "path": "/x.jsonl",
+        "turns": [{"prompt": "uma pergunta longa o suficiente para virar chunk", "resposta": "uma resposta"}],
+    }
+    chunks = builder.session_chunks(sessao, links={"FILHO": {"branch_of": "PAI", "branches": []}})
+    assert chunks
+    assert all(c["branch_of"] == "PAI" for c in chunks)
+
+
+def test_req3_chunk_sem_vinculo_traz_none(builder):
+    sessao = {
+        "session_id": "SOZINHA", "short_ref": "def456", "title": "solta", "project": "p",
+        "cwd": "/c", "git_branch": "main", "started_at": "2026-09-01T00:00:00Z",
+        "path": "/x.jsonl",
+        "turns": [{"prompt": "uma pergunta longa o suficiente para virar chunk", "resposta": "uma resposta"}],
+    }
+    chunks = builder.session_chunks(sessao)
+    assert chunks
+    assert all(c["branch_of"] is None for c in chunks)
+
+
+def test_scan_sessions_usa_o_registro_de_ramos(builder, tmp_path, monkeypatch):
+    """A fiacao: sem isto as funcoes aceitam `links` e ninguem passa.
+
+    Foi assim que `verify-multimodel` ficou declarado e inalcancavel por cinco
+    dias — a peca existia, a chamada nao.
+    """
+    _transcript(tmp_path / "proj", "FILHO", _turnos(4))
+
+    harness = tmp_path / "estado"
+    _bucket_com_ramos(harness, "proj", "PAI", [{"session_id": "FILHO", "slug": "f"}])
+    monkeypatch.setattr(builder, "DEFAULT_HARNESS", str(harness))
+
+    sessoes, chunks = builder.scan_sessions(str(tmp_path), days=0)
+    assert chunks, "nenhum chunk — o fixture nao qualificou a sessao"
+    assert all(c["branch_of"] == "PAI" for c in chunks)
