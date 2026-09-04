@@ -780,7 +780,7 @@ def main() -> int:
     _save_budget(cwd, b)
 
     msg = evaluate(cwd=cwd, text=texto, session_id=session_id, turn=turn)
-    parked = branch_state.parked_block(cwd)
+    parked = branch_state.parked_block(cwd, session_id=session_id)
 
     # Ate 2026-09-01 o sinal saia por `systemMessage` e o parking por
     # `additionalContext`. So o segundo chegava ao modelo — e como o parking

@@ -652,14 +652,28 @@ def _marcar_entregues(cwd, slugs: list) -> None:
         pass
 
 
-def parked_block(cwd: str | os.PathLike | None = None) -> str:
+def parked_block(cwd: str | os.PathLike | None = None, session_id: str | None = None) -> str:
     """Bloco `<harness-parked>` injetado no contexto a cada turno.
 
     Limitado a `MAX_PARKED_LINES` itens com tema truncado. O orcamento e o
     ponto: esta feature existe para poupar contexto — um bloco que cresce sem
     teto gastaria mais do que o parking economiza.
+
+    `session_id` diz QUEM esta lendo, e sem isso o bloco ia para a sessao
+    errada. O ramo nasce com `Set-Location` no mesmo repo da mae, entao lia o
+    parking dela — inclusive a linha "NAO desenvolver aqui" sobre o proprio
+    tema que ele existe para desenvolver — e consumia a entrega unica da
+    conclusao, porque `_marcar_entregues` roda em quem le primeiro. Medido em
+    2026-09-04, no primeiro ramo real: as tres emissoes `parked` sairam com o
+    session_id do ramo, a mae nunca recebeu, e a conclusao morreu no ramo.
+
+    Chamador que nao se identifica continua recebendo: degradar e melhor que
+    calar um bloco por falta de informacao sobre quem pergunta.
     """
     dados = load(cwd)
+    mae = str(dados.get("parent_session") or "")
+    if session_id and mae and str(session_id) != mae:
+        return ""
     vivos = [b for b in dados["branches"] if b.get("status") in LIVE_STATUSES]
     entregar = _conclusoes_pendentes(dados)
     if not vivos and not entregar:
@@ -702,6 +716,8 @@ def main() -> int:
         "acao", choices=["list", "parked", "add", "status", "decision", "discard", "path"]
     )
     p.add_argument("--cwd", default=None)
+    p.add_argument("--session-id", dest="session_id", default=None,
+                   help="quem esta lendo; `parked` so responde a sessao mae")
     p.add_argument("--slug", default=None)
     p.add_argument("--name", default=None)
     p.add_argument("--topic", default="")
@@ -722,7 +738,7 @@ def main() -> int:
     elif args.acao == "list":
         print(json.dumps(load(cwd), ensure_ascii=False, indent=2))
     elif args.acao == "parked":
-        print(parked_block(cwd))
+        print(parked_block(cwd, session_id=args.session_id))
     elif args.acao == "add":
         if not args.name:
             p.error("add exige --name")

@@ -439,3 +439,53 @@ class TestRegistroEPorProjeto:
         com = harness_paths.state_dir(cwd=str(tmp_path), session_id="uma-sessao-qualquer")
         assert str(bs.branches_path(str(tmp_path))).startswith(str(sem))
         assert str(sem) != str(com), "premissa do teste: o session_id muda o bucket"
+
+
+class TestParkingSoFalaComAMae:
+    """O parking e endereçado a mae, e o ramo roda no mesmo diretorio dela.
+
+    `parked_block` so recebia `cwd`. O ramo nasce com `Set-Location` no mesmo
+    repo, entao lia o bloco da mae — inclusive a linha "NAO desenvolver aqui"
+    sobre o proprio tema que ele existe para desenvolver — e, pior, consumia a
+    entrega unica da conclusao: `_marcar_entregues` roda em quem le primeiro.
+
+    Medido em 2026-09-04, no primeiro ramo real: as tres emissoes `parked` do
+    `emissions.jsonl` saíram com o session_id do RAMO (5c54af66), a mae
+    (7249629f) nunca recebeu, e `conclusion_delivered` ja estava `true`. A
+    conclusao do ramo morreu no proprio ramo.
+    """
+
+    def _com_conclusao(self, bs, tmp_path, parent):
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="tema do ramo",
+                   parent_session=parent)
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed",
+                      conclusion="a hipotese morreu")
+        return b
+
+    def test_ramo_nao_recebe_o_parking_da_mae(self, bs, tmp_path):
+        mae = "11111111-2222-3333-4444-555555555555"
+        filho = "99999999-8888-7777-6666-555555555555"
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="tema do ramo",
+                   parent_session=mae)
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+
+        assert bs.parked_block(cwd=str(tmp_path), session_id=filho) == ""
+        assert "tema do ramo" in bs.parked_block(cwd=str(tmp_path), session_id=mae)
+
+    def test_leitura_do_ramo_nao_consome_a_entrega_da_conclusao(self, bs, tmp_path):
+        mae = "11111111-2222-3333-4444-555555555555"
+        filho = "99999999-8888-7777-6666-555555555555"
+        b = self._com_conclusao(bs, tmp_path, mae)
+
+        assert bs.parked_block(cwd=str(tmp_path), session_id=filho) == ""
+        entregue = bs.parked_block(cwd=str(tmp_path), session_id=mae)
+        assert "a hipotese morreu" in entregue, "a mae precisa receber a conclusao"
+        assert bs.parked_block(cwd=str(tmp_path), session_id=mae) == "", "entrega e unica"
+
+    def test_sem_session_id_o_comportamento_nao_muda(self, bs, tmp_path):
+        """Chamador que nao sabe quem e continua recebendo — degradar, nao bloquear."""
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="tema do ramo",
+                   parent_session="11111111-2222-3333-4444-555555555555")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+        assert "tema do ramo" in bs.parked_block(cwd=str(tmp_path))
