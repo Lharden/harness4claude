@@ -129,6 +129,40 @@ class TestTransicoes:
         with pytest.raises(KeyError):
             bs.set_status(cwd=str(tmp_path), slug="nao-existe", status="open")
 
+    def test_ramo_fecha_depois_que_o_sensor_troca_de_sessao(self, bs, tmp_path):
+        """O ramo tem de fechar A PARTIR DO RAMO, que e onde a skill manda fechar.
+
+        Medido em 2026-09-04, na primeira vez que um ramo real tentou se fechar:
+        `branch not found: 5c54af66-...`. O registro transacional do ramo vive no
+        `harness.db` da sessao que o CRIOU (a mae), mas `_transaction_context`
+        resolvia o banco pelo `session_id` do `branch-sensor.json` do projeto —
+        um campo unico, sobrescrito por quem rodou por ultimo.
+
+        Consequencia: `close` falhava dos DOIS lados. Do ramo, porque o registro
+        esta na mae; da mae, porque o sensor ja apontava para o ramo. Um ramo
+        aberto nao tinha caminho nenhum de volta, que e exatamente o trabalho
+        que ramificar existe para preservar.
+        """
+        _active_transaction(bs, tmp_path, session_id="sessao-mae")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
+                   parent_session="sessao-mae")
+        semente = tmp_path / "semente.md"
+        semente.write_text("# semente", encoding="utf-8")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open",
+                      seed_path=str(semente))
+
+        # A janela do ramo sobe e roda: o sensor do PROJETO passa a apontar
+        # para ela, e o banco dela nao conhece ramo nenhum.
+        _active_transaction(bs, tmp_path, session_id="sessao-filha")
+
+        fechado = bs.set_status(
+            cwd=str(tmp_path), slug=b["slug"], status="closed",
+            conclusion="mediu, reprovou a hipotese, achou outra causa",
+        )
+        assert fechado["status"] == "closed"
+        assert fechado["conclusion"].startswith("mediu")
+        assert fechado["closed_at"]
+
 
 class TestOrcamento:
     def test_recusar_parkeia_em_vez_de_descartar(self, bs, tmp_path):

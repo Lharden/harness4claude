@@ -89,7 +89,31 @@ def branches_dir(cwd: str | os.PathLike | None = None) -> str:
     return str(harness_paths.state_dir(cwd=cwd) / "branches")
 
 
-def _transaction_context(cwd: str | os.PathLike | None):
+def _transaction_context(
+    cwd: str | os.PathLike | None,
+    *,
+    branch_id: str | None = None,
+    parent_session: str | None = None,
+):
+    """Acha o `harness.db` que responde por esta operacao.
+
+    `branch-sensor.json` guarda UM `session_id`, sobrescrito por quem rodou por
+    ultimo no projeto. Enquanto ele era a unica pista, um ramo aberto nao tinha
+    caminho de volta: o registro transacional nasce no banco da sessao que
+    CRIOU o ramo, e quando a janela do ramo sobe o sensor ja aponta para ela.
+    `close` falhava dos dois lados — do ramo porque o registro esta na mae, da
+    mae porque o sensor aponta para o ramo (medido 2026-09-04).
+
+    Por isso a busca e por CONTEUDO quando ha um ramo em questao: entre os
+    candidatos, ganha o banco que de fato contem aquele `branch_id`. `parent_session`
+    entra na lista porque e o unico campo que o registro guarda apontando para a
+    sessao de origem.
+
+    Sem `branch_id` — o caso de `add`, que cria o ramo — nada muda: o primeiro
+    candidato valido responde, como antes. E quando nenhum banco conhece o ramo,
+    o primeiro valido volta como fallback, para a mensagem de erro continuar
+    sendo a do banco e nao um `None` silencioso.
+    """
     project_home = harness_paths.state_dir(cwd=cwd)
     session_id = None
     try:
@@ -98,9 +122,16 @@ def _transaction_context(cwd: str | os.PathLike | None):
     except (OSError, ValueError):
         pass
     candidates = []
-    if session_id:
-        candidates.append(harness_paths.state_dir(cwd=cwd, session_id=str(session_id)))
-    candidates.append(project_home)
+    for candidate_session in (session_id, parent_session):
+        if not candidate_session:
+            continue
+        home = harness_paths.state_dir(cwd=cwd, session_id=str(candidate_session))
+        if home not in candidates:
+            candidates.append(home)
+    if project_home not in candidates:
+        candidates.append(project_home)
+
+    fallback = None
     for home in candidates:
         try:
             projection = json.loads((home / "state.json").read_text(encoding="utf-8"))
@@ -109,10 +140,18 @@ def _transaction_context(cwd: str | os.PathLike | None):
                 continue
             database = HarnessDatabase(home)
             task = database.task(str(task_id))
-            return home, database, task
         except (OSError, ValueError, StateTransitionError):
             continue
-    return None
+        if not branch_id:
+            return home, database, task
+        try:
+            database.branch(str(branch_id))
+        except StateTransitionError:
+            if fallback is None:
+                fallback = (home, database, task)
+            continue
+        return home, database, task
+    return fallback
 
 
 def _sync_task(home: Path, task: dict) -> None:
@@ -348,10 +387,13 @@ def set_status(
             atual = b.get("status", "pending")
             if status not in TRANSITIONS.get(atual, set()):
                 raise ValueError(f"transicao invalida: {atual} -> {status} ({slug})")
-            transaction = _transaction_context(cwd)
+            branch_id = str(b.get("session_id") or "")
+            transaction = _transaction_context(
+                cwd, branch_id=branch_id,
+                parent_session=data.get("parent_session"),
+            )
             if transaction is not None:
                 home, database, task = transaction
-                branch_id = str(b.get("session_id") or "")
                 try:
                     if status == "open":
                         selected_seed = seed_path or b.get("seed_path")
@@ -414,7 +456,10 @@ def attach_files(
         for branch in data["branches"]:
             if branch.get("slug") != slug:
                 continue
-            transaction = _transaction_context(cwd)
+            transaction = _transaction_context(
+                cwd, branch_id=str(branch.get("session_id") or ""),
+                parent_session=data.get("parent_session"),
+            )
             if transaction is not None:
                 home, database, task = transaction
                 try:
@@ -444,7 +489,10 @@ def decide(
         for branch in data["branches"]:
             if branch.get("slug") != slug:
                 continue
-            transaction = _transaction_context(cwd)
+            transaction = _transaction_context(
+                cwd, branch_id=str(branch.get("session_id") or ""),
+                parent_session=data.get("parent_session"),
+            )
             if transaction is not None:
                 home, database, task = transaction
                 try:
