@@ -1,0 +1,20 @@
+ATRIBUICAO: este commit mistura dois trabalhos.
+
+A mensagem descreve so o conserto do launcher do Branch Keeper. Os outros
+quatro arquivos sao do ramo "Classificador de Prompt Curto" (sessao
+5c54af66-8da6-4e47-a1c6-7465a4bc7bc0), varridos por um `git add -A` numa
+arvore de trabalho compartilhada pelas duas sessoes.
+
+  scripts/branch_seed.py               +8    launcher (mensagem deste commit)
+  tests/test_branch_seed.py           +29    launcher (mensagem deste commit)
+  hooks/harness-classify.sh           +35    ramo: guard AUTOMATION_PREFIXES
+  scripts/harvest_classify_labels.py +282    ramo: colheita de rotulos
+  scripts/calibrate_classify_guard.py +261   ramo: tabela de precisao por corte
+  tests/test_harness.py               +81    ramo: testes do guard
+
+A medicao que justifica os quatro arquivos do ramo esta em 1c96f88, um commit
+vazio escrito para esse fim: 1.195 pares de 357 transcripts, e a conclusao de
+que o erro do classificador NAO se concentra em prompt curto.
+
+Historico nao foi reescrito de proposito: o commit ja estava publicado quando
+a mistura foi notada, e reescrever apagaria o reparo de 1c96f88.
