@@ -677,6 +677,87 @@ class TestClassify(HarnessTestBase):
             "pedido humano tem de abrir task, mesmo falando de notificação"
         )
 
+    # --- Cenário 38: automação headless de OUTRO projeto não abre pipeline ---
+    def test_38_harness_headless_de_outro_projeto_nao_abre_task(self):
+        """Medido em 2026-09-04 sobre 1.195 pares colhidos de 357 transcripts.
+
+        Um harness científico rodando noutro projeto manda prompts de ~21KB em
+        segunda pessoa ("You are running screening stage 1..."). Eles passam o
+        backstop de comprimento, porque 21746 < MAX_CLASSIFY_LEN, e abriam
+        pipeline de fases SDD para um turno de triagem de artigo. 101 disparos
+        no corpus, precisão 1.000, zero falso positivo em 1.040 pares.
+
+        A mesma classe de defeito de `<task-notification>`, por uma terceira
+        porta: automação sem assinatura conhecida.
+        """
+        for abertura in ("You are running screening stage 1 of a scoped",
+                         "You are screening one article for stage-2 inclusion",
+                         "You are auditing one table from a scientific article",
+                         "You are estimating, from a title and abstract,"):
+            with self.subTest(abertura=abertura):
+                fresh_state()
+                prompt = abertura + "\n" + ("linha do artigo em triagem.\n" * 80)
+                code, out, _ = run_hook(self.HOOK, {"prompt": prompt})
+                self.assertEqual(code, 0)
+                self.assertIsNone(
+                    read_state()["task_id"],
+                    "prompt de harness headless não pode abrir task"
+                )
+                self.assertNotIn("CLASSIFIED", out)
+
+    def test_38b_reentrega_do_host_nao_abre_task(self):
+        """Texto que o HOST reentrega pelo caminho de um prompt humano.
+
+        `[Request interrupted by user]` e `Continue from where you left off.`
+        são emitidos pelo host, não digitados. Viravam `L1-feature` — 22 e 36
+        disparos no corpus, precisão 1.000.
+        """
+        for texto in ("[Request interrupted by user]",
+                      "Continue from where you left off."):
+            with self.subTest(texto=texto):
+                fresh_state()
+                code, out, _ = run_hook(self.HOOK, {"prompt": texto})
+                self.assertEqual(code, 0)
+                self.assertIsNone(read_state()["task_id"])
+                self.assertNotIn("CLASSIFIED", out)
+
+    def test_38c_prefixo_so_vale_no_inicio(self):
+        """A trava inversa do prefixo, e a razão de ele não ser substring.
+
+        "you are running" cabe no meio de uma frase humana; `<task-notification>`
+        não cabe em lugar nenhum. Por isso as duas listas são testadas de formas
+        diferentes, e esta é a diferença que justifica a segunda lista existir.
+        """
+        pedido = "explica por que you are running aparece no log do hook e corrige"
+        code, out, _ = run_hook(self.HOOK, {"prompt": pedido})
+        self.assertEqual(code, 0)
+        self.assertIsNotNone(
+            read_state()["task_id"],
+            "frase humana que contém a assinatura no meio tem de classificar"
+        )
+
+    def test_38d_listas_de_assinatura_sincronizadas(self):
+        """O harvester recopia as duas listas do hook; divergir invalida o corpus.
+
+        `scripts/harvest_classify_labels.py` replica os guards para não medir o
+        classificador com prompts que o hook nunca vê. Se as listas separarem, a
+        tabela de calibração passa a descrever um hook que não existe.
+        """
+        sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+        import harvest_classify_labels as hcl
+
+        with open(os.path.join(HOOKS_DIR, "harness-classify.sh"), encoding="utf-8") as f:
+            fonte = f.read()
+        for lista, nome in ((hcl.AUTOMATION_SIGNATURES, "AUTOMATION_SIGNATURES"),
+                            (hcl.AUTOMATION_PREFIXES, "AUTOMATION_PREFIXES")):
+            self.assertIn(f"{nome} = (", fonte, f"{nome} sumiu do hook")
+            for assinatura in lista:
+                self.assertIn(
+                    f'"{assinatura}"', fonte,
+                    f"{nome}: '{assinatura}' está no harvester e não no hook"
+                )
+        self.assertIn(f"MAX_CLASSIFY_LEN = {hcl.MAX_CLASSIFY_LEN}", fonte)
+
 
 # ===========================================================================
 # RECLASSIFY TESTS (harness-reclassify.sh) — 4 cenários

@@ -233,7 +233,40 @@ AUTOMATION_SIGNATURES = (
     "[system notification - not user input]",
     "[cross-session idle notice]",
 )
-if any(sig in msg for sig in AUTOMATION_SIGNATURES):
+
+# Assinaturas que so valem no INICIO do prompt, testadas com startswith.
+#
+# 2026-09-04: colhidos 1.195 pares (prompt, arquivos escritos no turno) de 357
+# transcripts — `scripts/harvest_classify_labels.py`. Dos 1.040 prompts que o
+# regex classificou L1+, 713 (69%) nao produziram arquivo nenhum: pipeline
+# aberto em vazio. A hipotese de que isso se concentrava no prompt curto humano
+# foi medida e MORREU — a faixa 0-20 chars tem a MENOR taxa (0.544) e a de
+# 2000+ a maior (0.908); nenhum corte por comprimento passou de precisao 0.669
+# contra uma taxa base de 0.686, ou seja, comprimento nao carrega informacao
+# nenhuma sobre o rotulo.
+#
+# O que a amostragem achou no lugar foi outra automacao sem assinatura: harness
+# cientifico de outro projeto ("You are running screening stage 1...", ~21KB,
+# passa o backstop de 30000) e texto que o HOST reentrega pelo caminho do
+# prompt humano. Estas seis, medidas sobre o mesmo corpus: precisao 1.000,
+# ZERO falso positivo em 1.040 pares, cobertura conjunta 0.224.
+#
+# Por que prefixo e nao substring: a lista acima usa `in` porque `<task-
+# notification>` e inequivoco em qualquer posicao. "you are running" nao e —
+# cabe no meio de uma frase humana. Ancorar deu a MESMA cobertura medida (101
+# disparos das duas formas) com menos superficie, entao nao ha o que trocar.
+#
+# `you are extracting` e `you are evaluating` foram testados e NAO entraram:
+# zero disparos. Padrao que nunca dispara nao custa nada e nao serve para nada.
+AUTOMATION_PREFIXES = (
+    "[request interrupted by user]",
+    "continue from where you left off",
+    "you are running",
+    "you are screening",
+    "you are auditing",
+    "you are estimating",
+)
+if any(sig in msg for sig in AUTOMATION_SIGNATURES) or msg.startswith(AUTOMATION_PREFIXES):
     raise SystemExit(0)
 
 # ============================================================================

@@ -244,3 +244,32 @@ class TestSementeNaoRecursionaAteEstourar:
 
     def test_semente_normal_nao_e_truncada(self, seed, branch):
         assert "truncada" not in _render(seed, branch).lower()
+
+
+class TestLauncherNaoHerdaMarcadorDeFilho:
+    """O ramo e sessao de primeira classe, nao subprocesso do pai.
+
+    A janela do ramo nasce da arvore de processos da sessao mae, entao herda
+    `CLAUDE_CODE_CHILD_SESSION` — e com esse marcador o CLI desliga a gravacao
+    do transcript. Medido em 2026-09-04, no primeiro ramo real aberto por esta
+    skill: a janela subiu com "Transcript saving is off".
+
+    O dano e exatamente o que ramificar existe para evitar: sem transcript, o
+    ramo nao entra no `sessions-index`, `session_query` nao o acha, e a mae nao
+    tem como consultar o filho. O ramo viraria a sessao orfa que o plano
+    inteiro nomeia como o problema.
+    """
+
+    def test_launcher_limpa_o_marcador_e_forca_persistencia(self, seed, branch, tmp_path):
+        ps1 = seed.render_launcher(
+            branch=branch, cwd=str(tmp_path), seed_path=str(tmp_path / "s.md")
+        )
+        assert "CLAUDE_CODE_CHILD_SESSION" in ps1, "o marcador herdado precisa ser tratado"
+        assert "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE" in ps1
+
+    def test_tratamento_vem_antes_de_chamar_o_cli(self, seed, branch, tmp_path):
+        """Limpar depois de subir o CLI nao adianta: a decisao e na inicializacao."""
+        ps1 = seed.render_launcher(
+            branch=branch, cwd=str(tmp_path), seed_path=str(tmp_path / "s.md")
+        )
+        assert ps1.index("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE") < ps1.index("claude --session-id")

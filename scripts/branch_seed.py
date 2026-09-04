@@ -190,6 +190,14 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath {ps_quote(cwd)}
 $seed = Get-Content -Raw -LiteralPath {ps_quote(seed_path)}
 
+# O ramo e sessao de primeira classe, nao subprocesso da mae. A janela nasce da
+# arvore de processos dela e herda CLAUDE_CODE_CHILD_SESSION; com esse marcador
+# o CLI desliga a gravacao do transcript, e um ramo sem transcript nao entra no
+# sessions-index nem responde a session_query — vira a sessao orfa que
+# ramificar existe para evitar.
+Remove-Item Env:CLAUDE_CODE_CHILD_SESSION -ErrorAction SilentlyContinue
+$env:CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1'
+
 claude --session-id {ps_quote(branch['session_id'])} -n {ps_quote(branch['name'])} $seed
 """
 
