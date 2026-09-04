@@ -250,12 +250,38 @@ def classify_prompt(prompt: str) -> tuple[str, str]:
     has_l0 = _matches(L0_PATTERNS, normalized)
     has_l1 = _matches(L1_PATTERNS, normalized)
     has_l2 = _matches(L2_PATTERNS, normalized)
+
+    # `docs` e `review` decidem o kind mas nao estao em L1_PATTERNS, entao
+    # "revisa o codigo" e "documenta o modulo" chegam ao caminho de "nada
+    # casou" junto com "Sim!". Sem consultar os dois aqui, o default L0 abaixo
+    # tornaria `L1-docs` e `L1-review` pipelines que nenhum prompt alcanca.
+    has_kind = (_matches(DOCS_PATTERNS, normalized)
+                or _matches(REVIEW_PATTERNS, normalized))
+
     if has_l0 and not has_l1 and not has_l2:
         level = "L0"
     elif has_l2:
         level = "L2"
-    else:
+    elif has_l1 or has_kind:
         level = "L1"
+    else:
+        # Nenhuma palavra casou. Ate 2026-09-04 este caminho caia em L1, e a
+        # medicao mostrou que ele nao e borda: 673 dos 1.195 pares colhidos de
+        # 357 transcripts (56%) passam por aqui. Como L1 ele acertava 229 e
+        # abria pipeline em vazio nos outros 444 — precisao 0.340. Como L0
+        # acerta 436 de 656, precisao 0.665.
+        #
+        # O custo da troca esta medido e e assimetrico: nos 220 casos em que
+        # havia trabalho de verdade, o hook nao emite `CLASSIFIED`, a skill
+        # `harness-workflow` nao e convidada, e a perda do pipeline e
+        # SILENCIOSA. O erro antigo era visivel e desfazivel por
+        # `confirm_classification.py --final`. A troca foi decisao explicita do
+        # usuario com os dois numeros na mesa; reverter e trocar esta linha.
+        #
+        # `question` e obrigatorio, nao cosmetico: `L0-question` e o unico
+        # rotulo L0 em pipelines.json, e `L0-feature` seria recusado por
+        # `confirm_classification`. Tabela em calib/classify-guard-2026-09-04.txt.
+        return "L0", "question"
 
     # Ordem importa. `docs` vem primeiro porque "documenta o modulo novo" tem
     # marcador de feature e o pedido e doc. `review` vem antes de bug/refactor
