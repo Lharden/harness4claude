@@ -55,12 +55,63 @@ def _clean(raw: str | os.PathLike | None) -> str:
     return str(raw).strip().strip("\r\n\t ") if raw else ""
 
 
+def _repo_dono_do_worktree(dir_com_git: str) -> str | None:
+    """Se `.git` for o arquivo de um worktree, devolve o repositorio dono.
+
+    Num worktree, `.git` e um arquivo de uma linha: `gitdir: <repo>/.git/
+    worktrees/<nome>`. Subir dois niveis dali da o repositorio. Ler um arquivo e
+    mais barato que abrir um processo, e e por isso que a correcao cabe aqui sem
+    violar a regra de nao chamar `git` (ver o docstring de `find_repo_root`).
+
+    **Submodulo nao colapsa.** Ele tambem tem `.git` como arquivo, mas apontando
+    para `<pai>/.git/modules/<nome>` — e submodulo e outro repositorio de
+    verdade. Colapsa-lo no pai misturaria dois projetos, que e o oposto do que
+    se quer. So `worktrees/` colapsa.
+
+    Devolve None em qualquer duvida: arquivo ilegivel, formato inesperado, ou
+    alvo que nao existe. Quem chama cai no diretorio, que e o comportamento
+    anterior — degradar aqui e melhor que derrubar o hook.
+    """
+    marcador = os.path.join(dir_com_git, ".git")
+    try:
+        if not os.path.isfile(marcador):
+            return None
+        with open(marcador, encoding="utf-8", errors="replace") as fh:
+            linha = fh.readline(4096).strip()
+    except OSError:
+        return None
+    if not linha.startswith("gitdir:"):
+        return None
+    alvo = linha[len("gitdir:") :].strip()
+    if not alvo:
+        return None
+    try:
+        if not os.path.isabs(alvo):
+            alvo = os.path.join(dir_com_git, alvo)
+        alvo = os.path.normpath(alvo)
+    except (OSError, ValueError):
+        return None
+    partes = alvo.replace("\\", "/").rstrip("/").split("/")
+    if len(partes) < 3 or partes[-2] != "worktrees":
+        return None
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(alvo)))
+    return repo if os.path.isdir(repo) else None
+
+
 def find_repo_root(start: str | os.PathLike | None) -> str | None:
     """Sobe a arvore procurando `.git`. None se nao houver repo.
 
     Deliberadamente sem subprocess: isto roda em UserPromptSubmit, e um
     `git rev-parse` por prompt custaria mais que a resolucao inteira. Detecta
     worktree tambem, porque nela `.git` e um arquivo, nao um diretorio.
+
+    Desde 2026-09-05 o worktree nao so e detectado: ele **colapsa no repositorio
+    dono**. Antes, `harness4codex-worktrees/equipotence-v1` virava o projeto
+    `equipotence-v1-bf70fe21` e o repo dele virava `harness4codex-adfb74ad` —
+    dois projetos onde ha um, cada um com bucket de estado proprio, e uma tarefa
+    reivindicada de um lado invisivel do outro. O plano original pede o
+    contrario com todas as letras (aceite E1: "reconhecer worktrees como partes
+    do mesmo projeto").
     """
     start = _clean(start)
     if not start:
@@ -71,7 +122,7 @@ def find_repo_root(start: str | os.PathLike | None) -> str | None:
         return None
     while True:
         if os.path.exists(os.path.join(p, ".git")):
-            return p
+            return _repo_dono_do_worktree(p) or p
         parent = os.path.dirname(p)
         if parent == p:
             return None
