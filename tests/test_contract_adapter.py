@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -29,10 +30,26 @@ def test_contract_snapshot_lock_and_capability_report_are_complete():
 
 
 def test_claude_pipelines_are_the_canonical_contract_pipelines():
-    adapter = _load("contract_adapter_pipelines", ROOT / "scripts" / "contract_adapter.py")
-    configured = json.loads((ROOT / "scripts" / "pipelines.json").read_text(encoding="utf-8"))["pipelines"]
+    """A tabela do contrato e a do fallback do hook nao podem divergir.
 
-    assert configured == adapter.load_contract()["pipelines"]["pipelines"]
+    Ate 2026-09-05 este teste comparava `scripts/pipelines.json` com
+    `contract/pipelines.json` — duas copias byte-identicas, entao ele so provava
+    que a copia estava em dia. O arquivo de `scripts/` foi apagado, e o que
+    sobrou para guardar e mais util: o literal embutido em
+    `hooks/harness-classify.sh`, que existe como fallback para install quebrado.
+    Um fallback que diverge da tabela real classifica errado justamente quando
+    tudo o mais ja falhou.
+    """
+    adapter = _load("contract_adapter_pipelines", ROOT / "scripts" / "contract_adapter.py")
+    do_contrato = adapter.load_contract()["pipelines"]["pipelines"]
+
+    hook = (ROOT / "hooks" / "harness-classify.sh").read_text(encoding="utf-8")
+    bloco = hook.split("PIPELINES = {", 1)[1].split("\n}", 1)[0]
+    rotulos_do_fallback = set(re.findall(r'"(L\d-[a-z]+)":', bloco))
+
+    assert rotulos_do_fallback == set(do_contrato), (
+        "o fallback do hook divergiu da tabela do contrato"
+    )
 
 
 def test_transactional_state_and_policy_engines_are_shipped():

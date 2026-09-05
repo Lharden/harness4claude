@@ -23,7 +23,7 @@ corpus — não casam padrão nenhum**.
 
 - **REQ-1** — Prompt sem nenhum marcador L0/L1/L2/docs/review devolve
   `("L0", "question")`.
-- **REQ-2** — O rótulo emitido existe em `scripts/pipelines.json`. `L0-question`
+- **REQ-2** — O rótulo emitido existe na tabela de pipelines do contrato (`contract/pipelines.json`; até 2026-09-05 havia uma cópia em `scripts/pipelines.json`, apagada). `L0-question`
   é o único L0 na tabela; `L0-feature` seria recusado por
   `confirm_classification.py`.
 - **REQ-3** — `docs` e `review` continuam em `L1`. Não estão em `L1_PATTERNS`,

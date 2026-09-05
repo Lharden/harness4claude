@@ -67,8 +67,11 @@ class TestDefaultDoCaminhoNaoReconhecido:
         chega ao `confirm_classification`, que o recusa. O caminho novo tem de
         cair no rotulo que ja existe.
         """
+        # A tabela mora na arvore de contrato desde 2026-09-05.
+        # `scripts/pipelines.json` era uma copia byte-identica com leitores
+        # proprios, e a autoridade entre as duas era disputada por comentario.
         tabela = json.loads(
-            (ROOT / "scripts" / "pipelines.json").read_text(encoding="utf-8"))
+            (ROOT / "contract" / "pipelines.json").read_text(encoding="utf-8"))
         rotulos = set(tabela.get("pipelines", tabela))
         for prompt in ("Sim!", "pode seguir", "faca", "qualquer coisa solta"):
             nivel, kind = cp.classify_prompt(prompt)

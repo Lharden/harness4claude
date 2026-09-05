@@ -475,13 +475,22 @@ PIPELINES = {
     "L2-review":       ["graph-context", "code-review", "verify-multimodel"],
     "L2-docs":         ["source-selection", "graph-context", "documentation", "verify-against-spec"],
 }
-# Fonte unica: scripts/pipelines.json, compartilhada com confirm_classification.py
-# (que precisa trocar o pipeline quando a confirmacao semantica corrige o nivel).
-# O literal acima permanece como fallback: num install quebrado, classificar com
-# o pipeline conhecido vale mais do que nao classificar.
+# Fonte unica: a arvore de contrato que o `arvore_do_contrato` resolver — a
+# mesma que o adaptador e o `confirm_classification.py` leem.
+#
+# Ate 2026-09-05 este bloco lia `HARNESS_SCRIPTS_DIR/pipelines.json`, e o
+# comentario aqui dizia "fonte unica". Nao era: havia uma copia byte-identica em
+# `contract/pipelines.json` (md5 97ab5894...) com outros leitores, e o caminho
+# que de fato moldava o comportamento — este — nunca tocava `contract/`. Duas
+# copias, e a autoridade decidida por um comentario.
+#
+# O literal acima permanece como fallback, e a razao nao mudou: num install
+# quebrado, classificar com o pipeline conhecido vale mais do que nao classificar.
 try:
-    with open(os.path.join(os.environ["HARNESS_SCRIPTS_DIR"], "pipelines.json"),
-              encoding="utf-8") as _f:
+    import sys as _sys
+    _sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
+    from contract_adapter import arvore_do_contrato as _arvore
+    with open(os.path.join(str(_arvore()[0]), "pipelines.json"), encoding="utf-8") as _f:
         _loaded = json.load(_f).get("pipelines")
     if _loaded:
         PIPELINES = _loaded

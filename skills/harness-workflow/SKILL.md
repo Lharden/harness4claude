@@ -50,7 +50,7 @@ Para L0, NÃO ative — execute direto sem pipeline.
    ```
 
    - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
-   - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → passe o `--final` correto: o script grava `agreed = false`, corrige `classification` e **troca `pipeline`** sozinho, lendo `scripts/pipelines.json`.
+   - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → passe o `--final` correto: o script grava `agreed = false`, corrige `classification` e **troca `pipeline`** sozinho, lendo a arvore de contrato que estiver valendo (`contract/pipelines.json`, ou a canonica do master-harness quando ela estiver alcancavel).
    - Se o usuário corrigir explicitamente depois → rode de novo com `--source human_override`.
    - **Não edite `classification_meta` à mão.** Esse era o protocolo anterior e ele não era cumprido: a auditoria de 2026-07-28 encontrou `agreed = null` em 100% das tasks e `avg_classify_accuracy = null` desde sempre, porque `recompute_aggregates` só conta tasks com `agreed is not None`. Sem este passo a métrica de accuracy é matematicamente incapaz de sair de zero.
 3. **Anunciar** — exiba: "Harness v3: {level}-{type} → {pipeline}" (sinalize se houve correção semântica).

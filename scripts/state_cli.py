@@ -9,8 +9,19 @@ from transactional_state import HarnessDatabase, StateTransitionError
 
 
 def _pipelines() -> dict[str, list[str]]:
-    root = Path(__file__).resolve().parents[1]
-    return json.loads((root / "contract" / "pipelines.json").read_text(encoding="utf-8"))["pipelines"]
+    """A tabela de pipelines, da arvore de contrato que estiver valendo.
+
+    Lia `parents[1]/'contract'` direto — mais uma amarra por `__file__` numa
+    maquina que tinha onze arvores de contrato e nenhuma dona declarada. Passa
+    pelo mesmo resolvedor do adaptador, com o mesmo fallback para a vizinha.
+    """
+    try:
+        from contract_adapter import arvore_do_contrato
+
+        arvore, _ = arvore_do_contrato()
+    except Exception:  # noqa: BLE001 - o fallback nao pode ter buraco
+        arvore = Path(__file__).resolve().parents[1] / "contract"
+    return json.loads((arvore / "pipelines.json").read_text(encoding="utf-8"))["pipelines"]
 
 
 def _sync(home: Path, task: dict) -> None:

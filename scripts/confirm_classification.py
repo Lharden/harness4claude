@@ -39,12 +39,36 @@ def default_harness_dir() -> Path:
 
 
 def load_pipelines(scripts_dir: Path | None = None) -> dict[str, list[str]]:
-    """Le scripts/pipelines.json — fonte unica compartilhada com o hook de classify."""
-    base = scripts_dir or Path(__file__).resolve().parent
+    """A tabela de pipelines, lida da arvore de contrato que estiver valendo.
+
+    Ate 2026-09-05 esta funcao lia `scripts/pipelines.json`, e o docstring dizia
+    "fonte unica". Nao era: o arquivo era byte-identico a `contract/pipelines.json`
+    (md5 97ab5894...) e os dois tinham leitores diferentes — o caminho que
+    moldava o comportamento (hook -> HARNESS_SCRIPTS_DIR) nunca tocava
+    `contract/`. Duas copias com a autoridade disputada por um comentario.
+
+    Agora as duas viram uma so: a resolucao passa pelo mesmo
+    `arvore_do_contrato` que o adaptador usa, entao a tabela que classifica e a
+    tabela que o contrato declara sao literalmente o mesmo arquivo.
+
+    `scripts_dir` explicito continua sendo honrado sem consultar nada — quem
+    passa diretorio esta sendo especifico, e e assim que os testes montam o caso
+    de tabela ausente.
+    """
+    if scripts_dir is not None:
+        try:
+            with (Path(scripts_dir) / "pipelines.json").open(encoding="utf-8") as fh:
+                return json.load(fh).get("pipelines", {})
+        except (OSError, ValueError):
+            return {}
     try:
-        with (base / "pipelines.json").open(encoding="utf-8") as fh:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from contract_adapter import arvore_do_contrato
+
+        arvore, _ = arvore_do_contrato()
+        with (arvore / "pipelines.json").open(encoding="utf-8") as fh:
             return json.load(fh).get("pipelines", {})
-    except (OSError, ValueError):
+    except Exception:  # noqa: BLE001 - tabela vazia degrada, nao bloqueia
         return {}
 
 

@@ -51,7 +51,13 @@ def _state(suggested="L2-feature", pipeline=("discuss", "tdd"), current_step=Non
 
 
 class TestPipelinesSource:
-    """scripts/pipelines.json e a fonte compartilhada com o hook de classify."""
+    """A arvore de contrato e a fonte, compartilhada com o hook de classify.
+
+    Ate 2026-09-05 era `scripts/pipelines.json`, e o docstring dizia "fonte
+    unica" — nao era: havia uma copia byte-identica em `contract/pipelines.json`
+    com leitores diferentes, e o caminho que moldava o comportamento nunca
+    tocava `contract/`. O arquivo de `scripts/` foi apagado.
+    """
 
     def test_arquivo_existe_e_tem_as_classificacoes_do_contrato(self, cc):
         table = cc.load_pipelines()
