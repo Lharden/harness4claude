@@ -33,11 +33,6 @@ from pathlib import Path
 PROJECTS_SUBDIR = "projects"
 SESSIONS_SUBDIR = "sessions"
 
-#: Bucket unico para trabalho que nao acontece dentro de um repositorio.
-#: O nome diz o que e — `LHarden2-56540e5d` parecia um projeto e era o HOME,
-#: e essa confusao e o que produziu o B-19.
-SEM_REPOSITORIO = "sem-repositorio"
-
 
 def default_root() -> Path:
     """Raiz do harness: HARNESS_DIR se definida, senao ~/.claude/harness."""
@@ -143,28 +138,9 @@ def project_slug(cwd: str | os.PathLike | None) -> str:
     diferentes conforme quem chama.
     """
     cleaned = _clean(cwd)
-    if not cleaned:
-        return "unknown"
-    root = find_repo_root(cleaned)
+    root = find_repo_root(cleaned) or (os.path.abspath(cleaned) if cleaned else "")
     if not root:
-        # Diretorio que existe e nao e repositorio: NAO cunha projeto.
-        #
-        # Ate 2026-09-05 caia em `os.path.abspath(cleaned)` e virava
-        # `<basename>-<hash>`, entao qualquer pasta em que uma sessao comecasse
-        # ganhava bucket proprio. O resultado medido: 46 buckets para bem menos
-        # projetos reais, 24 deles com zero sessoes e ~200 bytes, e nomes como
-        # `1.1.0-ac1c74bb` (um diretorio de versao),
-        # `james-yu.latex-workshop-10.16.1-e94f54c4` (extensao do VSCode),
-        # `System32-014aa9d2` e `Temp-bee27afd`.
-        #
-        # Custou mais que espaco: no B-19 a mesma sessao andou entre pastas,
-        # ganhou tres tasks em tres buckets e travou o proprio portao de
-        # verificacao, com o trabalho ja feito.
-        #
-        # O isolamento por SESSAO continua — e ele que impede a mistura que
-        # motivou os buckets por projeto em 2026-07-28. O que sai e a pretensao
-        # de que toda pasta e um projeto.
-        return SEM_REPOSITORIO
+        return "unknown"
     base = os.path.basename(root.rstrip("/\\")) or "root"
     base = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-") or "root"
     digest = hashlib.sha256(os.path.normcase(root).encode("utf-8")).hexdigest()[:8]
