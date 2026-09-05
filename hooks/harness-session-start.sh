@@ -137,7 +137,7 @@ _harness_emit() {
     local texto
     texto="$(cat)"
     [ -z "$texto" ] && return 0
-    printf '%s' "$texto" | python "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
+    printf '%s' "$texto" | python "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --session-id "${HARNESS_SESSION_ID:-}"         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
 }
 
 MIGRATE_PY="$PLUGIN_DIR/scripts/migrate_state.py"
@@ -196,6 +196,22 @@ fi
 # (execucao manual) um `cat` puro bloquearia o hook.
 SESSION_INPUT=""
 if [ ! -t 0 ]; then SESSION_INPUT="$(cat 2>/dev/null || true)"; fi
+
+# Sem isto o `delivery_report` fica cego nesta superficie: ele so contabiliza
+# emissao que traz `session_id`, porque e por ele que acha o transcript e prova
+# que o texto chegou. Emitir com o campo vazio nao perde a emissao — perde a
+# unica ferramenta capaz de dizer se o canal entrega, e transforma o alarme em
+# artefato do instrumento. Medido em 2026-09-04: 106 emissoes de SessionStart
+# com session_id "", e `!! session_start: 0/24` permanente sobre elas.
+HARNESS_SESSION_ID="$(printf '%s' "$SESSION_INPUT" | python -c "
+import sys, json
+try:
+    print(json.load(sys.stdin).get('session_id') or '')
+except Exception:
+    print('')
+" 2>/dev/null || true)"
+HARNESS_SESSION_ID="${HARNESS_SESSION_ID%$'\r'}"
+export HARNESS_SESSION_ID
 if command -v cygpath &>/dev/null; then
     export HARNESS_SCRIPTS_DIR_PY="$(cygpath -w "$PLUGIN_DIR/scripts")"
 else

@@ -39,7 +39,13 @@ def mensagem(saida: str) -> str:
 needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash ausente no PATH")
 
 
-def run_hook(tmp_path: Path, *, cwd: str | None = None, **env_extra: str) -> str:
+def run_hook(
+    tmp_path: Path,
+    *,
+    cwd: str | None = None,
+    session_id: str | None = None,
+    **env_extra: str,
+) -> str:
     """Roda o hook com HOME e HARNESS_DIR isolados, sem tocar o state real."""
     env = {
         **os.environ,
@@ -54,7 +60,10 @@ def run_hook(tmp_path: Path, *, cwd: str | None = None, **env_extra: str) -> str
     env.pop("VAULT_PATH", None)
     env.update(env_extra)
     (tmp_path / "home").mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"cwd": cwd or str(tmp_path / "projeto")})
+    entrada: dict[str, str] = {"cwd": cwd or str(tmp_path / "projeto")}
+    if session_id is not None:
+        entrada["session_id"] = session_id
+    payload = json.dumps(entrada)
     proc = subprocess.run(
         ["bash", str(HOOK)], input=payload, capture_output=True, text=True,
         encoding="utf-8", errors="replace", env=env, timeout=90,
@@ -166,3 +175,35 @@ def test_pipeline_expirado_tambem_carrega_o_digest(tmp_path: Path) -> None:
 
     assert "HARNESS v3 EXPIRED" in texto
     assert "VAULT AI-Brain disponivel" in texto
+
+
+def emissoes(tmp_path: Path) -> list[dict]:
+    """Linhas de emissions.jsonl gravadas pelo hook nesta execucao isolada."""
+    extrato = tmp_path / "home" / ".claude" / "harness" / "emissions.jsonl"
+    if not extrato.exists():
+        return []
+    return [
+        json.loads(linha)
+        for linha in extrato.read_text(encoding="utf-8").splitlines()
+        if linha.strip()
+    ]
+
+
+@needs_bash
+def test_emissao_de_session_start_carrega_o_session_id_do_payload(tmp_path: Path) -> None:
+    """O extrato precisa saber de que sessao veio a emissao.
+
+    `delivery_report` so contabiliza linha com `session_id` — ele procura o
+    transcript daquela sessao para provar que o texto chegou. Emitir com o campo
+    vazio nao perde a emissao: perde a unica ferramenta capaz de dizer se o canal
+    entrega. Foi assim que `!! session_start: 0/24` virou alarme permanente sobre
+    24 emissoes que ninguem conseguia julgar — artefato do instrumento, nao canal
+    morto. Medido em 2026-09-04: 106 emissoes de SessionStart com session_id "".
+    """
+    raiz = montar_vault(tmp_path)
+
+    run_hook(tmp_path, AI_BRAIN_PATH=str(raiz), session_id="s-teste-4f2a")
+
+    linhas = emissoes(tmp_path)
+    assert linhas, "o hook nao gravou nenhuma emissao"
+    assert [linha["session_id"] for linha in linhas] == ["s-teste-4f2a"] * len(linhas)

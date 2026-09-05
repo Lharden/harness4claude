@@ -496,3 +496,42 @@ def test_scan_sessions_usa_o_registro_de_ramos(builder, tmp_path, monkeypatch):
     sessoes, chunks = builder.scan_sessions(str(tmp_path), days=0)
     assert chunks, "nenhum chunk — o fixture nao qualificou a sessao"
     assert all(c["branch_of"] == "PAI" for c in chunks)
+
+
+class TestMarcadorStale:
+    """O `.stale` precisa sumir quando o indice e reconstruido.
+
+    `mark_stale` grava no SessionEnd para o proximo build saber que ha
+    transcript novo. Mas `build()` nunca apagava o marcador, entao ele ficava
+    posto para sempre e parava de significar coisa alguma — indice fresco com
+    carimbo de sujo. Medido em 2026-09-04: `.stale` de 2026-09-05T01:50:06Z
+    sobrevivendo a um rebuild que deixou `--check-stale` respondendo `fresh`.
+
+    E a mesma familia do session_id vazio em `harness-session-start.sh`: o
+    sinal continua sendo emitido, ninguem o desliga, e o instrumento que
+    dependia dele para de discriminar.
+    """
+
+    def test_build_apaga_o_marcador(self, builder, tmp_path):
+        raiz = tmp_path / "proj"
+        _transcript(raiz, "s-uma", _turnos(4))
+        saida = tmp_path / "indice"
+        saida.mkdir()
+        builder.mark_stale(str(saida))
+        assert (saida / ".stale").exists()
+
+        builder.build(str(tmp_path), str(saida), no_embed=True, days=0,
+                      catalog=str(tmp_path / "catalog.json"))
+
+        assert not (saida / ".stale").exists()
+
+    def test_build_sem_marcador_nao_quebra(self, builder, tmp_path):
+        raiz = tmp_path / "proj"
+        _transcript(raiz, "s-uma", _turnos(4))
+        saida = tmp_path / "indice"
+        saida.mkdir()
+
+        builder.build(str(tmp_path), str(saida), no_embed=True, days=0,
+                      catalog=str(tmp_path / "catalog.json"))
+
+        assert not (saida / ".stale").exists()

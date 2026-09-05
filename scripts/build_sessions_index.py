@@ -514,6 +514,15 @@ def build(root=DEFAULT_ROOT, out_dir=DEFAULT_OUT, *, no_embed=False,
     atomic_write(os.path.join(out_dir, "meta.json"), json.dumps(meta).encode("utf-8"))
     if catalog:
         build_catalog(sessoes, catalog, links=links)
+    # O marcador so vale enquanto discrimina. `mark_stale` o poe no SessionEnd
+    # e ninguem o tirava: o indice era reconstruido, `check_stale` respondia
+    # `fresh`, e o `.stale` continuava em disco dizendo o contrario. Marcador
+    # que nunca sai deixa de ser sinal e vira ruido — mesma familia do
+    # session_id vazio que cegou o `delivery_report`.
+    try:
+        os.remove(os.path.join(out_dir, ".stale"))
+    except OSError:
+        pass
     return len(chunks), len(sessoes)
 
 
