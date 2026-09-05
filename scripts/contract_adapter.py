@@ -49,14 +49,50 @@ EVIDENCE = {
 }
 
 
+def arvore_do_contrato(root: str | Path | None = None) -> tuple[Path, str]:
+    """Devolve (arvore, origem): de onde o contrato foi lido, e por que dali.
+
+    Ate 2026-09-05 esta funcao nao existia e a arvore era sempre a copia
+    adjacente (`parents[1]/'contract'`). Havia onze arvores na maquina e nenhuma
+    linha de codigo elegendo dona — cada programa se amarrava a vizinha por
+    `__file__`.
+
+    A resolucao agora prefere a canonica do master-harness, mas **cai no vizinho
+    em qualquer tropeco**: `mh` nao instalado, flag em `vizinho`, canonica
+    ausente. Dependencia dura sobre o `mh` num sistema de uso diario seria trocar
+    duplicidade por fragilidade, e o custo de errar aqui e o harness nao subir.
+
+    A origem viaja junto de proposito. Cair para o vizinho em silencio seria a
+    mesma classe de defeito que B-14, B-16 e B-17: continua funcionando, ninguem
+    fica sabendo, e o proximo a investigar comeca do zero.
+
+    `root` explicito e honrado sem consultar nada: quem passa raiz esta sendo
+    especifico, e a maioria desses chamadores e teste com fixture.
+    """
+    vizinho = Path(root or Path(__file__).resolve().parents[1]) / "contract"
+    if root is not None:
+        return vizinho, "vizinho:raiz-explicita"
+    try:
+        from mh import contrato as _mh_contrato
+        from mh import flags as _mh_flags
+
+        if _mh_flags.get("contrato") == "vizinho":
+            return vizinho, "vizinho:flag"
+        if (_mh_contrato.CANONICA / "capabilities.json").is_file():
+            return _mh_contrato.CANONICA, "mh"
+        return vizinho, "vizinho:canonica-ausente"
+    except Exception as exc:  # noqa: BLE001 - o fallback nao pode ter buraco
+        return vizinho, f"vizinho:{type(exc).__name__}"
+
+
 def load_contract(root: str | Path | None = None) -> dict[str, Any]:
-    plugin = Path(root or Path(__file__).resolve().parents[1])
-    contract = plugin / "contract"
+    contract, origem = arvore_do_contrato(root)
     return {
         "capabilities": json.loads((contract / "capabilities.json").read_text(encoding="utf-8")),
         "pipelines": json.loads((contract / "pipelines.json").read_text(encoding="utf-8")),
         "lock": json.loads((contract / "contract.lock.json").read_text(encoding="utf-8")),
         "root": contract,
+        "origem": origem,
     }
 
 
@@ -129,7 +165,10 @@ def evidence_is_valid(root: str | Path, records: list) -> bool:
 
 def build_capability_report(root: str | Path | None = None) -> dict[str, Any]:
     plugin = Path(root or Path(__file__).resolve().parents[1]).resolve()
-    contract = load_contract(plugin)
+    # `plugin` continua servindo a EVIDENCIA (os testes nomeados vivem no repo),
+    # mas a arvore do contrato passa a se resolver sozinha. Eram dois papeis no
+    # mesmo argumento, e so um deles muda de dono nesta etapa.
+    contract = load_contract()
     required = [item["id"] for item in contract["capabilities"]["capabilities"] if item["level"] == "required"]
     capabilities = {}
     for capability in required:
@@ -148,6 +187,10 @@ def build_capability_report(root: str | Path | None = None) -> dict[str, Any]:
     )
     return {
         "contract_version": contract["capabilities"]["contract_version"],
+        # De qual arvore este relatorio saiu. Sem isto, um relatorio lido da
+        # canonica e um lido do vizinho sao indistinguiveis — e a diferenca
+        # entre os dois e justamente o que esta migracao muda.
+        "contract_origem": contract["origem"],
         "adapter": "harness4claude",
         "capabilities": capabilities,
         "snapshot_lock_valid": lock_valid,
