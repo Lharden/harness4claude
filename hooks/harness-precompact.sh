@@ -2,6 +2,14 @@
 # harness-precompact.sh — Snapshot de handoff antes de compaction
 set -euo pipefail
 
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+
 # Convert paths for Python on Windows (MSYS /c/... → C:\...)
 # Parametrizavel via env: testes isolam com HARNESS_DIR temporario (default = producao)
 HARNESS_DIR="${HARNESS_DIR:-$HOME/.claude/harness}"
@@ -29,7 +37,7 @@ INPUT=""
 if [ ! -t 0 ]; then INPUT="$(cat 2>/dev/null || true)"; fi
 export PYTHONUTF8=1
 export HARNESS_ROOT_WIN SCRIPTS_DIR_WIN
-STATE_DIR="$(printf '%s' "$INPUT" | python -c "
+STATE_DIR="$(printf '%s' "$INPUT" | "$PY" -c "
 import sys, json, os
 sys.path.insert(0, os.environ['SCRIPTS_DIR_WIN'])
 root = os.environ['HARNESS_ROOT_WIN']
@@ -70,7 +78,7 @@ fi
 
 # Read state + counter via single Python call (avoids path issues)
 export PYTHONUTF8=1
-read_result=$(python -c "
+read_result=$("$PY" -c "
 import json, os
 
 harness_dir = r'$HARNESS_DIR_WIN'
@@ -123,7 +131,7 @@ EOF
 PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VAULT_SYNC="$PLUGIN_DIR/scripts/vault_sync.py"
 if [ -f "$VAULT_SYNC" ]; then
-    python "$VAULT_SYNC" --quiet --harness-dir "$HARNESS_DIR_WIN" >/dev/null 2>&1 || true
+    "$PY" "$VAULT_SYNC" --quiet --harness-dir "$HARNESS_DIR_WIN" >/dev/null 2>&1 || true
 fi
 
 exit 0

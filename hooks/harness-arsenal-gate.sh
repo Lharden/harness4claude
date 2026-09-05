@@ -17,6 +17,14 @@
 
 set -euo pipefail
 
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+
 : "${HARNESS_DIR:=$HOME/.claude/harness}"
 
 { mkdir -p "$HARNESS_DIR/heartbeats" && printf '%s\n' "${EPOCHSECONDS:-0}" \
@@ -31,7 +39,7 @@ INPUT=$(cat)
 #
 # Aqui o extrator olha `command` (Bash) E as chaves que o PowerShell usa, porque
 # `claude plugin install` roda pelos dois no Windows.
-EXTRACT=$(printf '%s' "$INPUT" | python -c "
+EXTRACT=$(printf '%s' "$INPUT" | "$PY" -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -87,7 +95,7 @@ fi
 # O extrator quebra o comando em segmentos (`;`, `&&`, `||`, `|`, nova linha) e
 # so olha os que COMECAM com `claude` (aceitando prefixo de env `VAR=x`). O
 # segmento do printf comeca com `printf`, entao nao conta.
-TOOL=$(echo "$COMMAND" | python -c "
+TOOL=$(echo "$COMMAND" | "$PY" -c "
 import re, sys
 texto = sys.stdin.read()
 alvo = ''
@@ -107,7 +115,7 @@ TOOL="${TOOL%$'\r'}"
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULT=$(cd "$PLUGIN_DIR" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 \
-  python tools/arsenal.py gate --tool "$TOOL" 2>/dev/null) && GATE_OK=1 || GATE_OK=0
+  "$PY" tools/arsenal.py gate --tool "$TOOL" 2>/dev/null) && GATE_OK=1 || GATE_OK=0
 
 # Gate que nao consegue decidir NAO bloqueia — mas diz que nao decidiu. Vault
 # ausente ou registry ilegivel nao podem virar trava na instalacao de plugin.
@@ -118,7 +126,7 @@ if [[ -z "$RESULT" ]]; then
 fi
 
 if [[ "$GATE_OK" == "0" ]]; then
-  printf '%s' "$RESULT" | python -c "
+  printf '%s' "$RESULT" | "$PY" -c "
 import json, sys
 d = json.load(sys.stdin)
 motivo = (d.get('errors') or ['sem decisao no arsenal'])[0]
@@ -130,7 +138,7 @@ print(json.dumps({'decision': 'block',
 fi
 
 # Passou. Se veio aviso (custo fora do catalogo), mostra sem travar.
-printf '%s' "$RESULT" | python -c "
+printf '%s' "$RESULT" | "$PY" -c "
 import json, sys
 d = json.load(sys.stdin)
 for w in (d.get('warnings') or []):

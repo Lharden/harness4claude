@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+
 # ============================================================================
 # Bootstrap: create state directory and files on first run
 # ============================================================================
@@ -24,7 +32,7 @@ mkdir -p "$HARNESS_DIR"
 # instalacao. Este hook, que tem a variavel, persiste o valor resolvido para que
 # as skills o leiam:
 #
-#     python "$(cat ~/.claude/harness/plugin-root)/scripts/record_signal.py" ...
+#     "$PY" "$(cat ~/.claude/harness/plugin-root)/scripts/record_signal.py" ...
 #
 # Reescrito a cada sessao: acompanha update de versao ou mudanca de caminho.
 PLUGIN_ROOT_RESOLVED="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -121,7 +129,7 @@ PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 # nunca chegaram ao modelo.
 #
 # A migracao passa por CLI em vez de import inline de proposito. Os blocos que
-# emitem aqui vivem dentro de `python -c` numa string de aspas duplas do bash,
+# emitem aqui vivem dentro de `"$PY" -c` numa string de aspas duplas do bash,
 # onde escape de quebra de linha vira quebra real e crase vira substituicao de
 # comando — os dois quebraram este arquivo em 2026-08-13, com exit 1 e stderr
 # vazio. Um pipe de texto cru nao mexe nesse terreno.
@@ -137,14 +145,14 @@ _harness_emit() {
     local texto
     texto="$(cat)"
     [ -z "$texto" ] && return 0
-    printf '%s' "$texto" | python "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --session-id "${HARNESS_SESSION_ID:-}"         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
+    printf '%s' "$texto" | "$PY" "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --session-id "${HARNESS_SESSION_ID:-}"         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
 }
 
 MIGRATE_PY="$PLUGIN_DIR/scripts/migrate_state.py"
 if [ -f "$MIGRATE_PY" ] && command -v python >/dev/null 2>&1; then
     export PYTHONUTF8=1
     export HARNESS_DIR_PY
-    NEEDS_MIGRATE=$(python -c "
+    NEEDS_MIGRATE=$("$PY" -c "
 import json, os
 d = os.environ['HARNESS_DIR_PY']
 need = '0'
@@ -158,7 +166,7 @@ for name, key in (('state.json', 'schema_version'), ('signals.json', 'version'))
 print(need)
 " 2>/dev/null)
     if [ "$NEEDS_MIGRATE" = "1" ]; then
-        python "$MIGRATE_PY" >/dev/null 2>&1 || true
+        "$PY" "$MIGRATE_PY" >/dev/null 2>&1 || true
     fi
 fi
 
@@ -203,7 +211,7 @@ if [ ! -t 0 ]; then SESSION_INPUT="$(cat 2>/dev/null || true)"; fi
 # unica ferramenta capaz de dizer se o canal entrega, e transforma o alarme em
 # artefato do instrumento. Medido em 2026-09-04: 106 emissoes de SessionStart
 # com session_id "", e `!! session_start: 0/24` permanente sobre elas.
-HARNESS_SESSION_ID="$(printf '%s' "$SESSION_INPUT" | python -c "
+HARNESS_SESSION_ID="$(printf '%s' "$SESSION_INPUT" | "$PY" -c "
 import sys, json
 try:
     print(json.load(sys.stdin).get('session_id') or '')
@@ -218,7 +226,7 @@ else
     export HARNESS_SCRIPTS_DIR_PY="$PLUGIN_DIR/scripts"
 fi
 export HARNESS_ROOT_PY="$HARNESS_DIR_PY"
-STATE_DIR_PY="$(printf '%s' "$SESSION_INPUT" | python -c "
+STATE_DIR_PY="$(printf '%s' "$SESSION_INPUT" | "$PY" -c "
 import sys, json, os
 sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR_PY'])
 root = os.environ['HARNESS_ROOT_PY']
@@ -256,7 +264,7 @@ export PLUGIN_DIR_PY
 # `tr -d '\r'`: o print() do Windows emite CRLF e o \r vazaria para dentro do JSON do
 # systemMessage. E o mesmo defeito que fez raiz e subdiretorio virarem buckets distintos
 # (auditoria 2026-07-28) — silencioso e chato de rastrear depois.
-VAULT_DIGEST="$(python -c "
+VAULT_DIGEST="$("$PY" -c "
 import os, sys
 sys.path.insert(0, os.path.join(os.environ['PLUGIN_DIR_PY'], 'tools'))
 try:
@@ -283,7 +291,7 @@ case "$_LAST" in ''|*[!0-9]*) _LAST=0 ;; esac
 if [ "$_NOW" -eq 0 ] || [ $((_NOW - _LAST)) -ge 86400 ]; then
     mkdir -p "$HARNESS_DIR" 2>/dev/null || true
     printf '%s\n' "$_NOW" > "$_MARKER" 2>/dev/null || true
-    ARSENAL_DIGEST="$(python -c "
+    ARSENAL_DIGEST="$("$PY" -c "
 import json, os, subprocess, sys
 raiz = os.path.join(os.environ['PLUGIN_DIR_PY'], 'tools', 'arsenal.py')
 try:
@@ -297,7 +305,7 @@ if not n:
     raise SystemExit(0)   # silencioso quando nao ha novidade
 ids = ', '.join(c['id'] for c in d.get('candidatos', [])[:5])
 print(f'ARSENAL: {n} candidato(s) ainda sem decisao ({ids}). '
-      'Rode: python tools/arsenal.py candidates --report')
+      'Rode: "$PY" tools/arsenal.py candidates --report')
 " 2>/dev/null | tr -d '\r' || true)"
 fi
 export ARSENAL_DIGEST
@@ -314,7 +322,8 @@ export ARSENAL_DIGEST
 # hook aponta, e quem escolhe o que entra no contexto e ele.
 SESSIONS_DIGEST=""
 if [ -f "$PLUGIN_DIR/tools/session_query.py" ]; then
-    SESSIONS_DIGEST="$(python "$PLUGIN_DIR/tools/session_query.py" --recent "$PWD" --top-k 3 2>/dev/null | tr -d '' || true)"
+    SESSIONS_DIGEST="$("$PY" "$PLUGIN_DIR/tools/session_query.py" --recent "$PWD" --top-k 3 2>/dev/null | tr -d '
+' || true)"
     case "$SESSIONS_DIGEST" in
         "nenhuma sessao"*) SESSIONS_DIGEST="" ;;
     esac
@@ -323,7 +332,7 @@ export SESSIONS_DIGEST
 
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
-    python -c "
+    "$PY" -c "
 import json, os, sys
 d = sys.argv[1]
 os.makedirs(d, exist_ok=True)
@@ -334,11 +343,11 @@ json.dump({'task_id': None, 'schema_version': 3, 'classification': None,
 " "$STATE_DIR_PY" 2>/dev/null || exit 0
     # Bucket recem-criado: nao ha pipeline a retomar, mas o digest do vault ainda
     # vale — e a primeira sessao do projeto e onde ele mais rende.
-    python -c "
+    "$PY" -c "
 import json, os
 digest = os.environ.get('VAULT_DIGEST', '').strip()
 arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
-# Junta com chr(10) em vez de escape. Este bloco vive dentro de python -c
+# Junta com chr(10) em vez de escape. Este bloco vive dentro de "$PY" -c
 # numa string de aspas duplas do bash: escape de quebra de linha vira
 # quebra real e quebra a sintaxe, e crase vira substituicao de comando.
 # Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
@@ -369,13 +378,13 @@ fi
 
 EXPIRE_PY="$PLUGIN_DIR/scripts/expire_stale_pipeline.py"
 if [ -f "$EXPIRE_PY" ] && command -v python >/dev/null 2>&1; then
-    EXPIRED_TASK="$(python "$EXPIRE_PY" --harness-dir "$STATE_DIR_PY" \
+    EXPIRED_TASK="$("$PY" "$EXPIRE_PY" --harness-dir "$STATE_DIR_PY" \
         --signals-dir "$HARNESS_DIR_PY" 2>/dev/null || true)"
 fi
 
 if [ -n "$EXPIRED_TASK" ]; then
     export HARNESS_EXPIRED_TASK="${EXPIRED_TASK#EXPIRED }"
-    python -c "
+    "$PY" -c "
 import json, os
 tid = os.environ.get('HARNESS_EXPIRED_TASK', 'unknown')
 partes = [
@@ -397,7 +406,7 @@ print('\n\n'.join(partes))
     exit 0
 fi
 
-python -c "
+"$PY" -c "
 import json, os, sys
 sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR_PY'])
 from continuation_policy import should_continue

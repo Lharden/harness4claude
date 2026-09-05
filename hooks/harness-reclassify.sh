@@ -2,6 +2,14 @@
 # harness-reclassify.sh — Conta arquivos, reclassifica L0→L1 se 3+
 set -euo pipefail
 
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+
 # Resolve HARNESS_DIR ANTES do cygpath (INV-3): converter primeiro descartaria
 # o override, pois cygpath operaria sobre o default.
 : "${HARNESS_DIR:=$HOME/.claude/harness}"
@@ -24,7 +32,7 @@ fi
 # contador global chegou a 130 arquivos misturando dois projetos).
 INPUT=$(cat)
 export PYTHONUTF8=1
-EXTRACT=$(echo "$INPUT" | python -c "
+EXTRACT=$(echo "$INPUT" | "$PY" -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -81,7 +89,7 @@ else
 fi
 
 # All logic in single Python call to avoid path issues
-python -c "
+"$PY" -c "
 import json, os, sys
 
 harness_dir = r'$HARNESS_DIR_WIN'

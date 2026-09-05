@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+
 # Force UTF-8 for all Python subprocesses (fix for charmap codec bug on Windows)
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
@@ -66,7 +74,7 @@ INPUT="$(cat)"
 # O cwd vem primeiro porque nunca contem quebra de linha, enquanto a mensagem
 # pode — inverter a ordem tornaria o split ambiguo.
 # Errors logged to debug file instead of silently swallowed
-EXTRACT="$(printf '%s' "$INPUT" | python -c "
+EXTRACT="$(printf '%s' "$INPUT" | "$PY" -c "
 import sys, json, unicodedata
 try:
     data = json.load(sys.stdin)
@@ -135,7 +143,7 @@ export HARNESS_SESSION_CWD="$SESSION_CWD"
 export HARNESS_SESSION_ID="$SESSION_ID"
 export PYTHONUTF8=1
 
-python << 'PYEOF'
+"$PY" << 'PYEOF'
 import os, re, json, sys
 from datetime import datetime, timezone
 

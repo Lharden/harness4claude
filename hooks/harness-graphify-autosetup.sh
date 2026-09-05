@@ -12,6 +12,14 @@
 # Escopo: "qualquer repo git que eu abrir" (decisao do usuario, 2026-06-18).
 
 # Nunca deixar um erro abortar o SessionStart.
+
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
 set +e
 
 # ----------------------------------------------------------------------------
@@ -20,7 +28,7 @@ set +e
 STDIN_JSON="$(cat 2>/dev/null)"
 CWD=""
 if command -v python >/dev/null 2>&1; then
-    CWD="$(printf '%s' "$STDIN_JSON" | PYTHONUTF8=1 python -c \
+    CWD="$(printf '%s' "$STDIN_JSON" | PYTHONUTF8=1 "$PY" -c \
 "import sys,json
 try:
     print(json.load(sys.stdin).get('cwd','') or '')
@@ -77,7 +85,7 @@ rode a skill /graphify neste diretorio quando fizer sentido. Se for um projeto s
 o passe AST ja basta e nenhuma acao e necessaria."
 
 if command -v python >/dev/null 2>&1; then
-    PYTHONUTF8=1 MSG="$MSG" python -c \
+    PYTHONUTF8=1 MSG="$MSG" "$PY" -c \
 "import json,os
 print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':os.environ['MSG']}}))" 2>/dev/null
 fi

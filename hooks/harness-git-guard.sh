@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
+_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
+if [ -r "$_MH_MARCA" ]; then
+    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+
 : "${HARNESS_DIR:=$HOME/.claude/harness}"
 
 # Heartbeat de disparo — ver harness-classify.sh para o porque.
@@ -20,7 +28,7 @@ INPUT=$(cat)
 # passava a devolver exit 0 para TUDO e parava de bloquear operacoes
 # destrutivas, sem emitir um unico sinal. Guard que some em silencio e pior que
 # guard ausente, porque voce conta com ele.
-EXTRACT=$(printf '%s' "$INPUT" | python -c "
+EXTRACT=$(printf '%s' "$INPUT" | "$PY" -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -69,10 +77,10 @@ fi
 
 # Parser compartilhado com Harness4Contract: separa invocacoes reais de texto
 # citado e inspeciona cada segmento de uma cadeia shell.
-POLICY_JSON=$(python "$(dirname "${BASH_SOURCE[0]}")/../scripts/command_policy.py" \
+POLICY_JSON=$("$PY" "$(dirname "${BASH_SOURCE[0]}")/../scripts/command_policy.py" \
   --command "$COMMAND" 2>/dev/null || printf '{"action":"unknown","reason":"parser failure"}')
-POLICY_ACTION=$(printf '%s' "$POLICY_JSON" | python -c "import json,sys; print(json.load(sys.stdin).get('action','unknown'))" 2>/dev/null || echo unknown)
-POLICY_REASON=$(printf '%s' "$POLICY_JSON" | python -c "import json,sys; print(json.load(sys.stdin).get('reason',''))" 2>/dev/null || echo "")
+POLICY_ACTION=$(printf '%s' "$POLICY_JSON" | "$PY" -c "import json,sys; print(json.load(sys.stdin).get('action','unknown'))" 2>/dev/null || echo unknown)
+POLICY_REASON=$(printf '%s' "$POLICY_JSON" | "$PY" -c "import json,sys; print(json.load(sys.stdin).get('reason',''))" 2>/dev/null || echo "")
 case "$POLICY_ACTION" in
   deny)
     printf '{"decision":"block","reason":"BLOCKED: %s"}\n' "$POLICY_REASON" >&2
