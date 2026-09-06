@@ -28,7 +28,18 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sys
 from pathlib import Path
+
+try:
+    import _escopo
+except ImportError:  # pragma: no cover - so quando importado por caminho de arquivo
+    # `_escopo.py` mora ao lado deste arquivo. Importar `harness_paths` por
+    # `importlib.spec_from_file_location` nao poe o diretorio no `sys.path`, e
+    # sem este resgate a identidade morreria por um detalhe de como quem chama
+    # carregou o modulo.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import _escopo
 
 PROJECTS_SUBDIR = "projects"
 SESSIONS_SUBDIR = "sessions"
@@ -43,137 +54,27 @@ def default_root() -> Path:
 
 
 def _clean(raw: str | os.PathLike | None) -> str:
-    """Remove espacos e controles das pontas de um caminho vindo do shell.
-
-    Necessario porque o `print()` do Python no Windows emite `\\r\\n`, e os hooks
-    fatiam a saida por `\\n` — sobra um `\\r` grudado no fim. Um caminho com `\\r`
-    nao existe, entao `find_repo_root` falhava e caia no cwd cru: a raiz de um
-    repo e um subdiretorio dele geravam buckets DIFERENTES, fragmentando o
-    estado de um mesmo projeto. Os hooks tambem limpam do lado do bash; esta e a
-    segunda barreira, no unico ponto por onde todo caminho passa.
-    """
-    return str(raw).strip().strip("\r\n\t ") if raw else ""
-
-
-def _repo_dono_do_worktree(dir_com_git: str) -> str | None:
-    """Se `.git` for o arquivo de um worktree, devolve o repositorio dono.
-
-    Num worktree, `.git` e um arquivo de uma linha: `gitdir: <repo>/.git/
-    worktrees/<nome>`. Subir dois niveis dali da o repositorio. Ler um arquivo e
-    mais barato que abrir um processo, e e por isso que a correcao cabe aqui sem
-    violar a regra de nao chamar `git` (ver o docstring de `find_repo_root`).
-
-    **Submodulo nao colapsa.** Ele tambem tem `.git` como arquivo, mas apontando
-    para `<pai>/.git/modules/<nome>` — e submodulo e outro repositorio de
-    verdade. Colapsa-lo no pai misturaria dois projetos, que e o oposto do que
-    se quer. So `worktrees/` colapsa.
-
-    Devolve None em qualquer duvida: arquivo ilegivel, formato inesperado, ou
-    alvo que nao existe. Quem chama cai no diretorio, que e o comportamento
-    anterior — degradar aqui e melhor que derrubar o hook.
-    """
-    marcador = os.path.join(dir_com_git, ".git")
-    try:
-        if not os.path.isfile(marcador):
-            return None
-        with open(marcador, encoding="utf-8", errors="replace") as fh:
-            linha = fh.readline(4096).strip()
-    except OSError:
-        return None
-    if not linha.startswith("gitdir:"):
-        return None
-    alvo = linha[len("gitdir:") :].strip()
-    if not alvo:
-        return None
-    try:
-        if not os.path.isabs(alvo):
-            alvo = os.path.join(dir_com_git, alvo)
-        alvo = os.path.normpath(alvo)
-    except (OSError, ValueError):
-        return None
-    partes = alvo.replace("\\", "/").rstrip("/").split("/")
-    if len(partes) < 3 or partes[-2] != "worktrees":
-        return None
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(alvo)))
-    return repo if os.path.isdir(repo) else None
-
-
-def _canonico(caminho: str) -> str:
-    """Resolve junction e symlink, para que dois caminhos nao virem dois escopos.
-
-    Sem isto, o MESMO repositorio alcancado por uma junction produz dois escopos
-    — reproduzido nesta maquina:
-
-        real: repo:real-49a2172a
-        link: repo:link-43b54d04
-
-    Duas sessoes "no mesmo projeto" nao se veriam, e o estado fragmentaria. E a
-    classe do incidente de 2026-07-28, chegando por outra porta.
-
-    **Custa 94,5 us contra 0,5 do `abspath`** — 190x mais, medido. Entra assim
-    mesmo porque e UMA chamada por resolucao (na raiz achada, e nao a cada passo
-    da subida), o que da 0,2% do corpo python do hook.
-
-    E foi medido que nao renomeia nada: em 22 diretorios reais desta maquina,
-    ZERO slugs mudariam. Se algum mudasse, aplicar isto fragmentaria os baldes
-    existentes — que e exatamente o defeito que ele conserta.
-
-    Degrada para o proprio caminho em qualquer erro: identidade pior e melhor
-    que hook morto.
-    """
-    try:
-        return os.path.realpath(caminho)
-    except (OSError, ValueError):
-        return caminho
+    """Delega para a fonte. Ver `_escopo._limpo`."""
+    return _escopo._limpo(raw)
 
 
 def find_repo_root(start: str | os.PathLike | None) -> str | None:
-    """Sobe a arvore procurando `.git`. None se nao houver repo.
-
-    Deliberadamente sem subprocess: isto roda em UserPromptSubmit, e um
-    `git rev-parse` por prompt custaria mais que a resolucao inteira. Detecta
-    worktree tambem, porque nela `.git` e um arquivo, nao um diretorio.
-
-    Desde 2026-09-05 o worktree nao so e detectado: ele **colapsa no repositorio
-    dono**. Antes, `harness4codex-worktrees/equipotence-v1` virava o projeto
-    `equipotence-v1-bf70fe21` e o repo dele virava `harness4codex-adfb74ad` —
-    dois projetos onde ha um, cada um com bucket de estado proprio, e uma tarefa
-    reivindicada de um lado invisivel do outro. O plano original pede o
-    contrario com todas as letras (aceite E1: "reconhecer worktrees como partes
-    do mesmo projeto").
-    """
-    start = _clean(start)
-    if not start:
-        return None
-    try:
-        p = os.path.abspath(start)
-    except (OSError, ValueError):
-        return None
-    while True:
-        if os.path.exists(os.path.join(p, ".git")):
-            return _canonico(_repo_dono_do_worktree(p) or p)
-        parent = os.path.dirname(p)
-        if parent == p:
-            return None
-        p = parent
+    """Delega para a fonte. Ver `_escopo.raiz_do_repo`."""
+    return _escopo.raiz_do_repo(start)
 
 
 def project_slug(cwd: str | os.PathLike | None) -> str:
-    """Identificador estavel e legivel do projeto: `<basename>-<hash8>`.
+    """Delega para a fonte. Ver `_escopo.de_caminho`.
 
-    O basename sozinho colidiria entre dois checkouts de mesmo nome; o hash
-    sozinho seria ilegivel ao inspecionar `~/.claude/harness/projects/`.
-    `normcase` porque no Windows o mesmo diretorio aparece com caixas
-    diferentes conforme quem chama.
+    **`escopo_env=""` e deliberado, e nao e um detalhe.** Nesta camada o slug
+    identifica um DIRETORIO; quem aplica `HARNESS_SCOPE=global` e `state_dir`,
+    escolhendo o balde. Deixar o override entrar aqui faria o slug virar
+    "maquina" e `state_dir` aninhar um balde global dentro de `projects/`.
+
+    Passar a string vazia diz isso em codigo, em vez de depender de esta funcao
+    nunca ser chamada com a variavel ligada.
     """
-    cleaned = _clean(cwd)
-    root = find_repo_root(cleaned) or (_canonico(os.path.abspath(cleaned)) if cleaned else "")
-    if not root:
-        return "unknown"
-    base = os.path.basename(root.rstrip("/\\")) or "root"
-    base = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-") or "root"
-    digest = hashlib.sha256(os.path.normcase(root).encode("utf-8")).hexdigest()[:8]
-    return f"{base[:40]}-{digest}"
+    return _escopo.de_caminho(cwd, escopo_env="").id
 
 
 def session_slug(session_id: str | None) -> str | None:

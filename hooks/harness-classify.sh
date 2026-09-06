@@ -247,10 +247,21 @@ def _marcar_presenca():
 
 
 def _escopo_atual():
-    """`repo:<slug>` / `dir:<slug>`, com `harness_paths` e sem importar o `mh`.
+    """O escopo desta sessao, pela fonte vendorizada, sem importar o `mh`.
 
-    O valor sai byte-identico ao que `mh.escopo` produziria, e isso e PROVADO
-    executando este hook em `test_hook_presenca.py`, nao suposto aqui.
+    Antes esta funcao montava o prefixo a mao:
+
+        ("repo:" if _raiz(_cwd) else "dir:") + _slug(_cwd)
+
+    Duas coisas erradas nisso. A primeira e que era a quarta reimplementacao da
+    mesma regra. A segunda e que ela **ignorava `HARNESS_SCOPE=global`**: com a
+    variavel ligada, o `mh quem` procurava balizas em `global:maquina` enquanto
+    este hook as escrevia em `repo:<slug>`, e a presenca reportava ninguem em
+    silencio. `_escopo.de_caminho` honra a variavel, entao os dois passam a
+    olhar para o mesmo lugar.
+
+    `_escopo.py` e copia entregue por `mh identidade semear`, e `mh identidade
+    check` reprova se ela derivar da fonte.
 
     **O `sys.path` e montado aqui dentro, e nao herdado.** Em 2026-09-06 a
     presenca ficou horas sem funcionar em producao por causa disto: esta funcao
@@ -271,9 +282,8 @@ def _escopo_atual():
     _scripts = os.environ.get("HARNESS_SCRIPTS_DIR") or ""
     if _scripts and _scripts not in sys.path:
         sys.path.insert(0, _scripts)
-    from harness_paths import find_repo_root as _raiz, project_slug as _slug
-    _cwd = os.environ.get("HARNESS_SESSION_CWD") or ""
-    return ("repo:" if _raiz(_cwd) else "dir:") + _slug(_cwd)
+    import _escopo
+    return _escopo.de_caminho(os.environ.get("HARNESS_SESSION_CWD") or "").valor
 
 
 def _bloco_de_presenca():
