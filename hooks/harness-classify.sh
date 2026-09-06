@@ -747,8 +747,21 @@ try:
         _nome = "".join(c if c.isalnum() or c in "-._" else "-" for c in f"claude-{_token}")[:120]
         _out = os.path.join(_casa, "spool", "outbox", _nome + ".ndjson")
         os.makedirs(os.path.dirname(_out), exist_ok=True)
-        with open(_out, "a", encoding="utf-8", newline="\n") as _f:
-            _f.write(json.dumps(_reg, ensure_ascii=False, sort_keys=True) + "\n")
+        # Retentativa contra a janela do `os.replace` do DRENO. Medido por teste
+        # de carga em 2026-09-06: com 12 sessoes escrevendo e um dreno em
+        # paralelo, 0,56% a 1,11% dos appends morriam com `PermissionError`
+        # [Errno 13] — e o evento sumia em silencio, porque quem chama ignora.
+        import time as _time
+        _linha = json.dumps(_reg, ensure_ascii=False, sort_keys=True) + "\n"
+        for _espera in (0.0, 0.002, 0.01):
+            if _espera:
+                _time.sleep(_espera)
+            try:
+                with open(_out, "a", encoding="utf-8", newline="\n") as _f:
+                    _f.write(_linha)
+                break
+            except OSError:
+                continue
 except Exception:
     pass
 
