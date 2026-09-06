@@ -737,7 +737,14 @@ try:
         }
         # Mesma regra de `mh.spool.caminho_outbox(casa, "claude", <slug nu>)`:
         # o prefixo do host ja esta no nome do arquivo, entao o slug entra nu.
-        _nome = "".join(c if c.isalnum() or c in "-._" else "-" for c in f"claude-{_sess or 'sem-sessao'}")[:120]
+        #
+        # Sem sessao, cai no pid do ESCRITOR e nao num rotulo fixo. `sem-sessao`
+        # colocava TODAS as sessoes sem id no mesmo arquivo, e e justamente a
+        # exclusividade do arquivo que torna `open(path,'a')` seguro sem lock —
+        # a garantia deixava de valer em silencio. Medido: 9,4% das emissoes
+        # desta maquina nao tem session_id (todas do session_start).
+        _token = _sess or f"pid-{os.getpid()}"
+        _nome = "".join(c if c.isalnum() or c in "-._" else "-" for c in f"claude-{_token}")[:120]
         _out = os.path.join(_casa, "spool", "outbox", _nome + ".ndjson")
         os.makedirs(os.path.dirname(_out), exist_ok=True)
         with open(_out, "a", encoding="utf-8", newline="\n") as _f:
