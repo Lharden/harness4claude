@@ -584,6 +584,62 @@ except Exception as exc:
         pass
 
 # ============================================================================
+# Espelho de coordenacao (master-harness, degrau `store_mode: dual_write`)
+# ============================================================================
+# O painel de tres arquiteturas escolheu spool append-only justamente porque a
+# unica escrita que Claude e Codex executam de forma identica e anexar a um
+# arquivo: sem lock, sem rede, sem API de host. Abrir uma segunda conexao SQLite
+# aqui seria o desenho obvio e o errado — custo no turno comum e contencao entre
+# os dois hosts na mesma maquina.
+#
+# NAO importa `mh`. O escopo e cunhado com `harness_paths`, que ja esta no path
+# deste hook, e o valor sai byte-identico ao que `mh.escopo` produziria — isso e
+# provado em master-harness por `test_preludio_spool.py`, nao suposto aqui.
+#
+# Silencioso e best-effort por construcao: hook que morre por causa do canal de
+# coordenacao e pior que hook sem canal nenhum.
+#
+# Sob pytest, a casa PADRAO nao recebe. Medido em 2026-09-05, minutos depois de
+# o espelho entrar: as suites dos dois harness escreveram 44 linhas no spool de
+# producao, com `scope_id: "dir:unknown"` e `session_id: null`. Evento falso num
+# ledger de coordenacao e pior que evento ausente — ele parece trabalho de
+# verdade. Casa EXPLICITA continua recebendo, porque os testes de integracao do
+# canal precisam escrever em algum lugar; o que se recusa e o caso em que a
+# suite polui sem ter pedido.
+try:
+    _degraus = ["shadow", "dual_read", "dual_write", "new_primary", "legacy_ro"]
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("MASTER_HARNESS_HOME"):
+        raise RuntimeError("suite sem MASTER_HARNESS_HOME proprio: nao polui o spool de producao")
+    _casa = os.environ.get("MASTER_HARNESS_HOME") or os.path.join(os.path.expanduser("~"), ".master-harness")
+    with open(os.path.join(_casa, "flags.json"), encoding="utf-8") as _f:
+        _degrau = ((json.load(_f) or {}).get("flags") or {}).get("store_mode") or _degraus[0]
+    if _degraus.index(_degrau) >= _degraus.index("dual_write"):
+        import uuid as _uuid
+        from harness_paths import find_repo_root as _raiz, project_slug as _slug, session_slug as _ss
+        _cwd = os.environ.get("HARNESS_SESSION_CWD") or ""
+        _especie = "repo" if _raiz(_cwd) else "dir"
+        _sess = _ss(os.environ.get("HARNESS_SESSION_ID") or "")
+        _reg = {
+            "dados": {"kind": task_type, "level": level, "pipeline": pipeline, "task_id": task_id},
+            "epoch": int(new_state.get("owner_epoch") or 1),
+            "event_id": _uuid.uuid4().hex,
+            "host": "claude",
+            "scope_id": f"{_especie}:{_slug(_cwd)}",
+            "session_id": f"claude:{_sess}" if _sess else None,
+            "tipo": "task.start",
+            "ts": started_at,
+        }
+        # Mesma regra de `mh.spool.caminho_outbox(casa, "claude", <slug nu>)`:
+        # o prefixo do host ja esta no nome do arquivo, entao o slug entra nu.
+        _nome = "".join(c if c.isalnum() or c in "-._" else "-" for c in f"claude-{_sess or 'sem-sessao'}")[:120]
+        _out = os.path.join(_casa, "spool", "outbox", _nome + ".ndjson")
+        os.makedirs(os.path.dirname(_out), exist_ok=True)
+        with open(_out, "a", encoding="utf-8", newline="\n") as _f:
+            _f.write(json.dumps(_reg, ensure_ascii=False, sort_keys=True) + "\n")
+except Exception:
+    pass
+
+# ============================================================================
 # Reset counter file
 # ============================================================================
 counter = {"count": 0, "files": [], "task_id": task_id}
