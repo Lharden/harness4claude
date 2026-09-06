@@ -330,6 +330,60 @@ if [ -f "$PLUGIN_DIR/tools/session_query.py" ]; then
 fi
 export SESSIONS_DIGEST
 
+# ---------------------------------------------------------------------------
+# Dreno do canal de coordenacao (master-harness)
+# ---------------------------------------------------------------------------
+# Aqui e nao no classify: drenar e SQLite, e `docs/DECISAO-CANAL.md` proibe
+# SQLite no turno comum. O SessionStart roda UMA vez por sessao contra um
+# timeout de 15s, e o hook inteiro ja gasta ~5s — ha folga, e o custo nao se
+# repete a cada prompt.
+#
+# **Silencioso quando corre bem, uma linha quando falha.** E o unico jeito de a
+# automacao nao trocar um problema visivel por um invisivel: enquanto o dreno
+# era manual, o humano via o traceback; movido para ca, o outbox cresceria e o
+# ledger continuaria um tijolo sem nada dizer. `mh spool ver` tambem reporta,
+# mas ninguem roda `mh spool ver` — este digest e o lugar que alguem le.
+DRENO_DIGEST="$("$PY" -c "
+import json, os, sqlite3, sys
+casa = os.environ.get('MASTER_HARNESS_HOME') or os.path.join(os.path.expanduser('~'), '.master-harness')
+try:
+    with open(os.path.join(casa, 'mh-root'), encoding='utf-8') as fh:
+        raiz = fh.readline(4096).strip()
+    if not raiz or not os.path.isdir(raiz):
+        raise SystemExit(0)      # master-harness nao instalado: nada a drenar
+    sys.path.insert(0, raiz)
+    from mh import spool
+except Exception:
+    raise SystemExit(0)
+con = None
+try:
+    os.makedirs(casa, exist_ok=True)
+    con = sqlite3.connect(os.path.join(casa, 'ledger.db'), timeout=2.0)
+    con.execute('PRAGMA journal_mode = WAL')
+    con.execute('PRAGMA busy_timeout = 250')
+    rel = spool.drenar(casa, con)
+except sqlite3.Error as exc:
+    rel = spool.RelatorioDreno(falha=f'{type(exc).__name__}: {exc}')
+except Exception:
+    raise SystemExit(0)
+finally:
+    if con is not None:
+        con.close()
+try:
+    spool.registrar_dreno(casa, rel)
+except Exception:
+    pass
+if not rel.correu:
+    print(f'CANAL: o dreno de coordenacao FALHOU ({rel.falha}). '
+          'O outbox nao foi consumido e nada foi perdido; '
+          'rode \`mh spool drenar\` para ver.')
+elif rel.cercados or rel.ilegiveis:
+    print(f'CANAL: dreno com {len(rel.cercados)} evento(s) cercado(s) pela epoca '
+          f'e {len(rel.ilegiveis)} linha(s) ilegivel(is). Rode \`mh spool ver\`.')
+" 2>/dev/null | tr -d '
+' || true)"
+export DRENO_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     "$PY" -c "
@@ -352,7 +406,8 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 # quebra real e quebra a sintaxe, e crase vira substituicao de comando.
 # Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
 sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
-partes_saida = [x for x in (digest, arsenal, sessoes) if x]
+dreno = os.environ.get('DRENO_DIGEST', '').strip()
+partes_saida = [x for x in (digest, arsenal, sessoes, dreno) if x]
 if partes_saida:
     print((chr(10) * 2).join(partes_saida))
 " 2>/dev/null | _harness_emit digest || true
@@ -401,6 +456,9 @@ if arsenal:
 sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
 if sessoes:
     partes.append(sessoes)
+dreno = os.environ.get('DRENO_DIGEST', '').strip()
+if dreno:
+    partes.append(dreno)
 print('\n\n'.join(partes))
 " 2>/dev/null | _harness_emit resuming || true
     exit 0
@@ -446,6 +504,9 @@ if arsenal:
 sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
 if sessoes:
     parts.append(sessoes)
+dreno = os.environ.get('DRENO_DIGEST', '').strip()
+if dreno:
+    parts.append(dreno)
 
 if parts:
     print('\n\n'.join(parts))
