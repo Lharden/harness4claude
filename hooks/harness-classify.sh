@@ -182,17 +182,104 @@ def _falar(kind, texto):
         spec.loader.exec_module(mod)
         mod.Emitter("UserPromptSubmit", hook="classify",
                     session_id=os.environ.get("HARNESS_SESSION_ID") or "",
-                    cwd=os.environ.get("HARNESS_SESSION_CWD") or "").add(kind, texto).flush()
+                    cwd=os.environ.get("HARNESS_SESSION_CWD") or ""
+                    ).add(kind, texto + _bloco_de_presenca()).flush()
     except Exception:
         # Sem o emissor, o canal provado escrito a mao. Perder a classificacao
         # por causa do mensageiro repetiria a falha que isto veio consertar.
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
-            "additionalContext": texto,
+            "additionalContext": texto + _bloco_de_presenca(),
         }}, ensure_ascii=False))
 
 
+# ============================================================================
+# Presenca: quem mais trabalha neste escopo agora (master-harness)
+# ============================================================================
+# Duas funcoes, e as duas sao best-effort e SILENCIOSAS. Presenca e informacao
+# util; hook que morre por causa dela custaria o turno do usuario, que e pior
+# que nao ter presenca nenhuma.
+#
+# O `mh` NAO e importado diretamente: o caminho vem do marcador
+# `~/.master-harness/mh-root`, mesmo padrao do `plugin-root` deste harness.
+# Dependencia dura de um pacote que pode nao estar instalado transformaria
+# "nao ha presenca" em "o hook morreu"; com o marcador, a ausencia do `mh` e
+# simplesmente a ausencia do marcador.
+
+
+def _mh():
+    """Importa `mh.presenca` pelo marcador, ou devolve (None, None)."""
+    try:
+        casa = os.environ.get("MASTER_HARNESS_HOME") or os.path.join(
+            os.path.expanduser("~"), ".master-harness")
+        with open(os.path.join(casa, "mh-root"), encoding="utf-8") as fh:
+            raiz = fh.readline(4096).strip()
+        if not raiz or not os.path.isdir(raiz):
+            return (None, None)
+        if raiz not in sys.path:
+            sys.path.insert(0, raiz)
+        from mh import presenca as _p
+        return (_p, casa)
+    except Exception:
+        return (None, None)
+
+
+def _marcar_presenca():
+    """Anuncia esta sessao. Roda ANTES de qualquer saida antecipada.
+
+    Medido em 2026-09-05: `classified` 63 contra `continuing` 61 — metade dos
+    prompts sai em `raise SystemExit(0)` antes de chegar ao fim deste arquivo.
+    Marcar la embaixo faria a baliza envelhecer em toda sessao que continua um
+    pipeline, que sao justamente as sessoes que estao trabalhando.
+    """
+    try:
+        _p, casa = _mh()
+        if _p is None:
+            return
+        _p.marcar(
+            casa,
+            host="claude",
+            session_id=os.environ.get("HARNESS_SESSION_ID") or "",
+            escopo=_escopo_atual(),
+        )
+    except Exception:
+        pass
+
+
+def _escopo_atual():
+    """`repo:<slug>` / `dir:<slug>`, com `harness_paths` e sem importar o `mh`.
+
+    O valor sai byte-identico ao que `mh.escopo` produziria, e isso e PROVADO
+    executando este hook em `test_hook_spool.py`, nao suposto aqui.
+    """
+    from harness_paths import find_repo_root as _raiz, project_slug as _slug
+    _cwd = os.environ.get("HARNESS_SESSION_CWD") or ""
+    return ("repo:" if _raiz(_cwd) else "dir:") + _slug(_cwd)
+
+
+def _bloco_de_presenca():
+    """A linha da vizinhanca, ou "" quando nao ha o que afirmar.
+
+    **So faz afirmacao positiva.** `sozinho` e `nao_verificado` saem vazios, e
+    isso nao e violacao de L-09: o hook nunca diz "voce esta sozinho". Quem
+    distingue os tres estados e `mh quem`, que sai 0/1/2 — esta superficie so
+    fala quando ha alguem.
+    """
+    try:
+        _p, casa = _mh()
+        if _p is None:
+            return ""
+        r = _p.vizinhos(casa, _escopo_atual(), host="claude")
+        if r.resposta != _p.ACOMPANHADO:
+            return ""
+        return "\n\nHARNESS v3 VIZINHANCA: " + r.linha()
+    except Exception:
+        return ""
+
+
 msg = os.environ["HARNESS_MSG_LOWER"]
+
+_marcar_presenca()
 
 # ============================================================================
 # Escopo do estado: bucket do projeto (default) ou raiz global
@@ -660,7 +747,13 @@ type: {task_type}
 status: {status}
 pipeline: {pipeline_display}
 started_at: {started_at}
-</harness-classification>""")
+</harness-classification>{_bloco_de_presenca()}""")
+    # Aqui a presenca sai por stdout CRU, e nao pelo emissor — o caminho L0 nao
+    # chama `_falar`. O canal esta certo mesmo assim: o CLAUDE.md separa stdout
+    # cru (vira `content`, sem marca de proveniencia, "so para DADO") de
+    # `additionalContext` (rotulado, "para toda INSTRUCAO"), e "ha outra sessao
+    # neste repositorio" e um FATO, nao uma ordem. Continua sendo um unico
+    # `print` — dois objetos no stdout do mesmo hook quebrariam o parse.
 elif pipeline_unmapped:
     # Classificado L1+ porem sem pipeline mapeado: avisa em vez de seguir vazio.
     _falar("warning", (
