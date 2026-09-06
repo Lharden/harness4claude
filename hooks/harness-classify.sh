@@ -250,8 +250,27 @@ def _escopo_atual():
     """`repo:<slug>` / `dir:<slug>`, com `harness_paths` e sem importar o `mh`.
 
     O valor sai byte-identico ao que `mh.escopo` produziria, e isso e PROVADO
-    executando este hook em `test_hook_spool.py`, nao suposto aqui.
+    executando este hook em `test_hook_presenca.py`, nao suposto aqui.
+
+    **O `sys.path` e montado aqui dentro, e nao herdado.** Em 2026-09-06 a
+    presenca ficou horas sem funcionar em producao por causa disto: esta funcao
+    e chamada por `_marcar_presenca()` na linha 282, e o
+    `sys.path.insert(0, HARNESS_SCRIPTS_DIR)` do hook so acontece na 292 — dez
+    linhas depois. O `from harness_paths import ...` levantava `ModuleNotFound`,
+    o `except Exception: pass` de quem chama engolia, e nao havia baliza.
+
+    Nao apareceu em teste porque os testes passavam `PYTHONPATH` no ambiente do
+    subprocess. Em producao ele esta VAZIO — conferido no ambiente desta sessao,
+    no `settings.json` e no `settings.local.json`. O teste media uma condicao
+    que a producao nao tem: blindava em vez de detectar, que e exatamente o
+    enxerto que os juizes exigiram do painel.
+
+    Montar o caminho aqui torna a funcao independente de onde ela e chamada, que
+    e mais forte que mover a chamada para depois da linha 292.
     """
+    _scripts = os.environ.get("HARNESS_SCRIPTS_DIR") or ""
+    if _scripts and _scripts not in sys.path:
+        sys.path.insert(0, _scripts)
     from harness_paths import find_repo_root as _raiz, project_slug as _slug
     _cwd = os.environ.get("HARNESS_SESSION_CWD") or ""
     return ("repo:" if _raiz(_cwd) else "dir:") + _slug(_cwd)
