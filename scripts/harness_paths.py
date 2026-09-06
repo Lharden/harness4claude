@@ -98,6 +98,35 @@ def _repo_dono_do_worktree(dir_com_git: str) -> str | None:
     return repo if os.path.isdir(repo) else None
 
 
+def _canonico(caminho: str) -> str:
+    """Resolve junction e symlink, para que dois caminhos nao virem dois escopos.
+
+    Sem isto, o MESMO repositorio alcancado por uma junction produz dois escopos
+    — reproduzido nesta maquina:
+
+        real: repo:real-49a2172a
+        link: repo:link-43b54d04
+
+    Duas sessoes "no mesmo projeto" nao se veriam, e o estado fragmentaria. E a
+    classe do incidente de 2026-07-28, chegando por outra porta.
+
+    **Custa 94,5 us contra 0,5 do `abspath`** — 190x mais, medido. Entra assim
+    mesmo porque e UMA chamada por resolucao (na raiz achada, e nao a cada passo
+    da subida), o que da 0,2% do corpo python do hook.
+
+    E foi medido que nao renomeia nada: em 22 diretorios reais desta maquina,
+    ZERO slugs mudariam. Se algum mudasse, aplicar isto fragmentaria os baldes
+    existentes — que e exatamente o defeito que ele conserta.
+
+    Degrada para o proprio caminho em qualquer erro: identidade pior e melhor
+    que hook morto.
+    """
+    try:
+        return os.path.realpath(caminho)
+    except (OSError, ValueError):
+        return caminho
+
+
 def find_repo_root(start: str | os.PathLike | None) -> str | None:
     """Sobe a arvore procurando `.git`. None se nao houver repo.
 
@@ -122,7 +151,7 @@ def find_repo_root(start: str | os.PathLike | None) -> str | None:
         return None
     while True:
         if os.path.exists(os.path.join(p, ".git")):
-            return _repo_dono_do_worktree(p) or p
+            return _canonico(_repo_dono_do_worktree(p) or p)
         parent = os.path.dirname(p)
         if parent == p:
             return None
@@ -138,7 +167,7 @@ def project_slug(cwd: str | os.PathLike | None) -> str:
     diferentes conforme quem chama.
     """
     cleaned = _clean(cwd)
-    root = find_repo_root(cleaned) or (os.path.abspath(cleaned) if cleaned else "")
+    root = find_repo_root(cleaned) or (_canonico(os.path.abspath(cleaned)) if cleaned else "")
     if not root:
         return "unknown"
     base = os.path.basename(root.rstrip("/\\")) or "root"
