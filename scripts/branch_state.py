@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 import unicodedata
@@ -174,7 +175,72 @@ def _transaction_context(
         if dona is None:
             continue
         return home, database, dona
+    if branch_id:
+        varrido = _sweep_sessions(cwd, str(branch_id), candidates)
+        if varrido is not None:
+            return varrido
     return fallback
+
+
+def _owns_branch(home: Path, branch_id: str) -> bool:
+    """O banco deste bucket tem a linha do ramo? Leitura pura.
+
+    Deliberadamente sqlite cru em vez de `HarnessDatabase`: o construtor abre
+    conexao de escrita e roda migracao. Numa varredura isso tocaria o banco de
+    toda sessao do projeto para responder uma pergunta de leitura.
+    """
+    try:
+        connection = sqlite3.connect((home / "harness.db").as_uri() + "?mode=ro", uri=True)
+    except (sqlite3.Error, ValueError):
+        return False
+    try:
+        return (
+            connection.execute(
+                "SELECT 1 FROM branches WHERE branch_id = ?", (branch_id,)
+            ).fetchone()
+            is not None
+        )
+    except sqlite3.Error:
+        return False
+    finally:
+        connection.close()
+
+
+def _sweep_sessions(
+    cwd: str | os.PathLike | None, branch_id: str, visitados: list[Path]
+):
+    """Ultimo recurso: procura o dono do ramo entre os buckets do projeto.
+
+    As duas pistas que montam a lista de candidatos podem estar ambas erradas
+    ao mesmo tempo. O `session_id` do `branch-sensor.json` e sobrescrito por
+    quem rodou por ultimo no projeto; o `parent_session` de `branches.json` e
+    do ARQUIVO, nao do ramo — quem escreve primeiro fica, entao o segundo ramo
+    de um projeto herda o ponteiro do primeiro. Quando nenhuma das duas aponta
+    para a sessao que criou o ramo, o banco dono fica fora da lista, e uma
+    busca por conteudo sobre candidatos que nao incluem o dono nao e busca por
+    conteudo nenhuma (medido 2026-09-09, com o ramo em `sessions/1f008ff6-...`
+    e as pistas apontando para `2f61e400-...` e `49fde96d-...`).
+
+    Roda so depois de as pistas falharem: o custo cai no caminho que ja ia dar
+    erro, e o caminho quente continua sendo duas leituras.
+    """
+    sessions = harness_paths.state_dir(cwd=cwd) / harness_paths.SESSIONS_SUBDIR
+    try:
+        buckets = sorted(sessions.iterdir())
+    except OSError:
+        return None
+    for home in buckets:
+        if home in visitados or not (home / "harness.db").is_file():
+            continue
+        if not _owns_branch(home, branch_id):
+            continue
+        try:
+            database = HarnessDatabase(home)
+            registro = database.branch(branch_id)
+            return home, database, database.task(str(registro["task_id"]))
+        except (OSError, ValueError, StateTransitionError):
+            continue
+    return None
 
 
 def _projected_task(home: Path, database: HarnessDatabase) -> dict | None:

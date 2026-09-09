@@ -211,6 +211,48 @@ class TestTransicoes:
         # precisou desfazer a mao.
         assert bs.HarnessDatabase(mae).branch(b["session_id"])["status"] == "closed"
 
+    def test_ramo_fecha_quando_nenhum_ponteiro_aponta_para_o_banco_dono(self, bs, tmp_path):
+        """As pistas apontam para tres sessoes; o ramo esta numa quarta.
+
+        Medido em 2026-09-09, quando este proprio ramo tentou se fechar pelo
+        CLI depois de a busca por conteudo passar a rodar: falhou de novo. A
+        lista de candidatos e montada de duas pistas — o `session_id` do
+        `branch-sensor.json`, sobrescrito por quem rodou por ultimo, e o
+        `parent_session` de `branches.json`, que e do ARQUIVO e nao do ramo:
+        quem escreve primeiro fica, entao o segundo ramo do projeto herda o
+        ponteiro do primeiro. Nenhuma das duas precisa apontar para a sessao
+        que criou o ramo, e quando nenhuma aponta o banco dono fica fora da
+        lista — busca por conteudo sobre candidatos que nao incluem o dono nao
+        e busca por conteudo.
+
+        Por isso, esgotadas as pistas, os buckets de sessao do projeto sao
+        varridos. So no caminho de erro: o custo fica onde ja se ia falhar.
+        """
+        _active_transaction(bs, tmp_path, session_id="sessao-criadora")
+        # `parent_session` de branches.json aponta para OUTRA sessao, como faz
+        # o segundo ramo de qualquer projeto.
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
+                   parent_session="sessao-antiga")
+        semente = tmp_path / "semente.md"
+        semente.write_text("# semente", encoding="utf-8")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open",
+                      seed_path=str(semente))
+
+        # A sessao apontada existe e tem banco proprio, mas nao conhece o ramo;
+        # e o sensor ja migrou para uma terceira.
+        _active_transaction(bs, tmp_path, session_id="sessao-antiga")
+        _active_transaction(bs, tmp_path, session_id="sessao-atual")
+
+        fechado = bs.set_status(
+            cwd=str(tmp_path), slug=b["slug"], status="closed",
+            conclusion="fechou pelo CLI com todos os ponteiros errados",
+        )
+        assert fechado["status"] == "closed"
+        criadora = bs.harness_paths.ensure_state_dir(
+            cwd=str(tmp_path), session_id="sessao-criadora"
+        )
+        assert bs.HarnessDatabase(criadora).branch(b["session_id"])["status"] == "closed"
+
     def test_ramo_ausente_de_todo_banco_continua_falhando_alto(self, bs, tmp_path):
         """O fallback existe para o erro vir do banco, nao de um `None` calado.
 
