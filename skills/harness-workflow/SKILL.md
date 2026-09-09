@@ -44,15 +44,28 @@ Para L0, NÃO ative — execute direto sem pipeline.
 
    ```bash
    ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
+   # --session-id NAO e opcional: sem ele o CLI devolve o bucket do PROJETO,
+   # e o hook escreve no bucket da SESSAO. Substitua <session_id> pelo id desta
+   # sessao. Mesma forma do preambulo "Harness4Contract v1", acima.
+   STATE_DIR="$(python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>")"
    python "$PR/scripts/confirm_classification.py" \
      --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>" \
-     --harness-dir "$(python "$PR/scripts/harness_paths.py")"
+     --harness-dir "$STATE_DIR"
    ```
 
    - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
    - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → passe o `--final` correto: o script grava `agreed = false`, corrige `classification` e **troca `pipeline`** sozinho, lendo a arvore de contrato que estiver valendo (`contract/pipelines.json`, ou a canonica do master-harness quando ela estiver alcancavel).
    - Se o usuário corrigir explicitamente depois → rode de novo com `--source human_override`.
    - **Não edite `classification_meta` à mão.** Esse era o protocolo anterior e ele não era cumprido: a auditoria de 2026-07-28 encontrou `agreed = null` em 100% das tasks e `avg_classify_accuracy = null` desde sempre, porque `recompute_aggregates` só conta tasks com `agreed is not None`. Sem este passo a métrica de accuracy é matematicamente incapaz de sair de zero.
+
+     Só que não era só desobediência. Entre a mudança para bucket por sessão e
+     2026-09-09, os três blocos deste arquivo resolviam `harness_paths.py` **sem
+     `--session-id`** — e o CLI, sem ele, devolve o bucket do PROJETO enquanto os
+     hooks escrevem no da SESSÃO. Quem seguia o protocolo ao pé da letra apontava
+     `confirm_classification.py` e `record_signal.py` para um `state.json` órfão,
+     de `task_id: null`, e recebia exit 2 com uma mensagem que acusava outra
+     sessão de ter sobrescrito o estado. A obediência falhava igual à omissão, e
+     por isso a métrica não distinguia as duas.
 3. **Anunciar** — exiba: "Harness v3: {level}-{type} → {pipeline}" (sinalize se houve correção semântica).
 4. **Atualizar estado** — registre artefato e avance com `state_cli.py`, sempre passando a revisão esperada; o helper sincroniza `state.json`.
 5. **Invocar skills** — na sequência do pipeline, usando Skill tool.
@@ -60,9 +73,10 @@ Para L0, NÃO ative — execute direto sem pipeline.
 7. **DONE** — grave evidência fresca, execute `state_cli.py ... complete`, então registre a task:
    ```bash
    ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
+   STATE_DIR="$(python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>")"
    python "$PR/scripts/record_signal.py" --completed --steps "step1,step2,..." \
      --expect-task "<task_id>" \
-     --harness-dir "$(python "$PR/scripts/harness_paths.py")" --signals-dir "$ROOT"
+     --harness-dir "$STATE_DIR" --signals-dir "$ROOT"
    ```
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
    **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma — nesse caso, restaure o state da sua task antes de registrar.
@@ -362,11 +376,11 @@ Use o Edit tool para atualizar state.json. Custo: ~20 tokens por transição.
 Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. Use o helper:
 
 ```bash
-# Resolva uma vez: raiz do harness, plugin, e o bucket DESTE projeto.
+# Resolva uma vez: raiz do harness, plugin, e o bucket DESTA SESSAO.
 # state.json e o contador vivem no bucket; signals.json e agregado na raiz.
 ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"
 PR="$(cat "$ROOT/plugin-root")"
-STATE_DIR="$(python "$PR/scripts/harness_paths.py")"
+STATE_DIR="$(python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>")"
 
 # Pipeline concluído com sucesso (--expect-task = task_id do INÍCIO do pipeline;
 # aborta com exit 2 se o state foi trocado por outra sessão no meio)

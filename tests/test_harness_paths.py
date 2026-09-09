@@ -197,3 +197,51 @@ class TestCli:
         root = tmp_path / "root"
         res = self._run("--root", str(root), "--cwd", str(_repo(tmp_path, "alpha")), "--signals")
         assert Path(res.stdout.strip()) == root
+
+
+class TestSkillResolveBucketDaSessao:
+    """O comando DOCUMENTADO tem de cair no mesmo bucket em que o hook escreve.
+
+    Incidente 2026-09-09: entre a mudanca para bucket por sessao e esta data, os
+    tres blocos bash de `skills/harness-workflow/SKILL.md` chamavam
+    `harness_paths.py` SEM `--session-id`. O CLI, sem ele, devolve o bucket do
+    PROJETO — enquanto `harness-classify.sh` escreve no da SESSAO. Resultado:
+    quem seguia o protocolo apontava `confirm_classification.py` e
+    `record_signal.py` para um `state.json` orfao de `task_id: null` e recebia
+    exit 2. `agreed` ficou null em 100% das tasks, e o proprio SKILL.md atribuia
+    isso a desobediencia — obedecer falhava do mesmo jeito.
+
+    O teste e sobre a DOCUMENTACAO porque o defeito estava nela: o codigo sempre
+    aceitou `--session-id`.
+    """
+
+    SKILL = ROOT / "skills" / "harness-workflow" / "SKILL.md"
+
+    def test_toda_invocacao_documentada_passa_session_id(self):
+        import re
+
+        texto = self.SKILL.read_text(encoding="utf-8")
+        # So INVOCACAO conta: a linha tem de chamar o interpretador. Sem isso o
+        # teste falha na prosa que apenas cita o script — inclusive a nota
+        # historica que este proprio incidente deixou no SKILL.md.
+        # `--slug`/`--signals` nao dependem de sessao e ficam de fora.
+        chamadas = [
+            linha
+            for linha in re.findall(r"^.*python[^\n]*harness_paths\.py.*$", texto, flags=re.M)
+            if "--slug" not in linha and "--signals" not in linha
+        ]
+        assert chamadas, "SKILL.md deixou de documentar a resolucao do bucket"
+        sem_sessao = [c.strip() for c in chamadas if "--session-id" not in c]
+        assert not sem_sessao, (
+            "invocacao documentada resolve o bucket do projeto, nao o da sessao: "
+            + " | ".join(sem_sessao)
+        )
+
+    def test_bucket_do_projeto_e_da_sessao_sao_diferentes(self, hp, tmp_path):
+        """A premissa do teste acima: omitir a sessao muda mesmo o destino."""
+        repo = _repo(tmp_path, "alpha")
+        root = tmp_path / "root"
+        projeto = hp.state_dir(root=root, cwd=repo)
+        sessao = hp.state_dir(root=root, cwd=repo, session_id="s-1")
+        assert projeto != sessao
+        assert sessao.parent.parent == projeto

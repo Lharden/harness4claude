@@ -201,8 +201,11 @@ def main() -> int:
     state = load_json(args.harness_dir / "state.json")
     if args.expect_task and (state or {}).get("task_id") != args.expect_task:
         logger.error(
-            "state.json contem task %s, esperado %s — nada registrado "
-            "(state sobrescrito por outra sessao?)",
+            "state.json de %s contem task %s, esperado %s — nada registrado. "
+            "Causas, nesta ordem: (1) --harness-dir aponta para o bucket do "
+            "PROJETO e nao o da SESSAO (resolva com harness_paths.py "
+            "--session-id <id>); (2) state sobrescrito por outra sessao.",
+            args.harness_dir,
             (state or {}).get("task_id"),
             args.expect_task,
         )
