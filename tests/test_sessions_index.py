@@ -368,7 +368,15 @@ class TestFechamentoDeSessao:
 # sessao. Os dois campos convivem de proposito.
 
 
-def _bucket_com_ramos(raiz: Path, slug: str, parent: str, ramos: list) -> Path:
+def _bucket_com_ramos(raiz: Path, slug: str, parent: str | None, ramos: list) -> Path:
+    """Monta um `branches.json`.
+
+    `parent` e o campo do ARQUIVO — primeiro-escritor-fica, e por isso mente do
+    segundo ramo do projeto em diante. Cada ramo pode trazer o seu proprio
+    `parent_session_id`, que e o que deve mandar quando existir; passar `None`
+    em `parent` produz a forma que hoje faz `branch_links` abandonar o bucket
+    inteiro antes de olhar ramo nenhum.
+    """
     bucket = raiz / "projects" / slug
     bucket.mkdir(parents=True, exist_ok=True)
     (bucket / "branches.json").write_text(
@@ -376,6 +384,41 @@ def _bucket_com_ramos(raiz: Path, slug: str, parent: str, ramos: list) -> Path:
         encoding="utf-8",
     )
     return bucket
+
+
+def test_hoje_o_campo_de_arquivo_nulo_apaga_o_bucket_inteiro(builder, tmp_path):
+    """Caracterizacao: o buraco medido em 2026-09-09, antes de consertar.
+
+    `branch_links` le `pai` UMA vez, fora do laco de ramos, e `if not pai:
+    continue` abandona o bucket. Um registro cujo ponteiro de arquivo e nulo
+    mas cujos ramos trazem o proprio `parent_session_id` some do indice em
+    silencio — e essa forma ja e alcancavel hoje (`add` sem `--parent-session`).
+
+    Quando `branch_links` passar a ler por ramo, esta expectativa vira o
+    vermelho da fase: o esperado passa a ser o vinculo, nao o vazio.
+    """
+    _bucket_com_ramos(tmp_path, "proj", None, [
+        {"session_id": "F1", "slug": "um", "parent_session_id": "MAE-A"},
+        {"session_id": "F2", "slug": "dois", "parent_session_id": "MAE-B"},
+    ])
+    assert builder.branch_links(tmp_path) == {}
+
+
+def test_hoje_duas_maes_no_mesmo_arquivo_colapsam_numa_so(builder, tmp_path):
+    """Caracterizacao: o campo de arquivo atribui a MESMA mae a todo ramo.
+
+    Estado que `add` torna impossivel de construir hoje (o campo so e escrito
+    uma vez), e que e exatamente o que a mudanca existe para permitir. Sem este
+    teste, nenhuma fixture da suite tem duas maes — e o comportamento novo
+    nasceria sem cobertura.
+    """
+    _bucket_com_ramos(tmp_path, "proj", "MAE-A", [
+        {"session_id": "F1", "slug": "um", "parent_session_id": "MAE-A"},
+        {"session_id": "F2", "slug": "dois", "parent_session_id": "MAE-B"},
+    ])
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["F2"]["branch_of"] == "MAE-A", "hoje o ramo de MAE-B e atribuido a MAE-A"
+    assert "MAE-B" not in mapa
 
 
 def test_ac1_vinculo_de_mao_dupla(builder, tmp_path):

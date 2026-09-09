@@ -223,6 +223,13 @@ def _sweep_sessions(
 
     Roda so depois de as pistas falharem: o custo cai no caminho que ja ia dar
     erro, e o caminho quente continua sendo duas leituras.
+
+    Emite `signal("sweep")` **so quando acha**. Sem esse rastro, um teste que
+    fecha o ramo com sucesso nao consegue distinguir "achou pela pista" de
+    "achou pela varredura" — e foi assim que a medicao de 2026-09-09 pegou dois
+    testes trocando de mecanismo em silencio, verdes dos dois jeitos. Contar so
+    o acerto tambem e a telemetria que interessa: a razao `sweep / created` diz
+    com que frequencia as pistas falham.
     """
     sessions = harness_paths.state_dir(cwd=cwd) / harness_paths.SESSIONS_SUBDIR
     try:
@@ -237,9 +244,11 @@ def _sweep_sessions(
         try:
             database = HarnessDatabase(home)
             registro = database.branch(branch_id)
-            return home, database, database.task(str(registro["task_id"]))
+            dona = database.task(str(registro["task_id"]))
         except (OSError, ValueError, StateTransitionError):
             continue
+        signal("sweep")
+        return home, database, dona
     return None
 
 

@@ -52,6 +52,56 @@ def _active_transaction(bs, cwd: Path, session_id: str = "session-branch"):
     return database, task
 
 
+def _sweeps(bs) -> int:
+    """Quantas vezes a varredura de buckets ACHOU o dono, segundo `signals.json`.
+
+    A medicao de 2026-09-09 mostrou por que isto precisa existir: os testes de
+    "o ramo fecha" asserem so o resultado, entao ficam verdes tanto quando a
+    pista resolve quanto quando a varredura salva. Dois deles ja tinham trocado
+    de mecanismo em silencio. Resultado igual, caminho diferente — e era o
+    caminho que estava sendo testado.
+    """
+    caminho = Path(bs.harness_paths.signals_dir(None)) / "signals.json"
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    bloco = dados.get("branch") if isinstance(dados, dict) else None
+    return int(bloco.get("sweep", 0)) if isinstance(bloco, dict) else 0
+
+
+def _proibir_varredura(bs, monkeypatch):
+    """Falha o teste se a varredura for acionada.
+
+    Quem monta um cenario para provar que a PISTA resolve precisa que a rede
+    embaixo dela nao entre em campo. Sem isto, remover o candidato
+    `parent_session` inteiro de `_transaction_context` deixava a suite verde:
+    a varredura assumia o trabalho e ninguem via.
+    """
+
+    def _recusa(*_a, **_k):
+        pytest.fail("resolveu pela varredura, nao pela pista que o teste monta")
+
+    monkeypatch.setattr(bs, "_sweep_sessions", _recusa)
+
+
+def _ramo_legado(bs, cwd, slug: str):
+    """Deixa o registro do ramo na forma que o codigo ANTIGO gravava.
+
+    Um ramo legado nao tem ponteiro proprio: quem responde por ele e o campo do
+    ARQUIVO, herdado do primeiro ramo do projeto. E a forma que vai existir em
+    disco depois do merge, e a unica que mantem o cenario da varredura fiel ao
+    que ela protege — diferente de "o chamador mentiu o uuid", que e artificial
+    e some quando o campo por ramo existir.
+    """
+    dados = bs.load(cwd=str(cwd))
+    for ramo in dados["branches"]:
+        if ramo.get("slug") == slug:
+            ramo.pop("parent_session_id", None)
+    bs.save(dados, cwd=str(cwd))
+    return dados
+
+
 @pytest.fixture(scope="module")
 def bs():
     """Carrega o modulo pelo path (scripts/ nao e um pacote instalavel)."""
@@ -129,7 +179,7 @@ class TestTransicoes:
         with pytest.raises(KeyError):
             bs.set_status(cwd=str(tmp_path), slug="nao-existe", status="open")
 
-    def test_ramo_fecha_depois_que_o_sensor_troca_de_sessao(self, bs, tmp_path):
+    def test_ramo_fecha_depois_que_o_sensor_troca_de_sessao(self, bs, tmp_path, monkeypatch):
         """O ramo tem de fechar A PARTIR DO RAMO, que e onde a skill manda fechar.
 
         Medido em 2026-09-04, na primeira vez que um ramo real tentou se fechar:
@@ -142,7 +192,12 @@ class TestTransicoes:
         esta na mae; da mae, porque o sensor ja apontava para o ramo. Um ramo
         aberto nao tinha caminho nenhum de volta, que e exatamente o trabalho
         que ramificar existe para preservar.
+
+        O cenario aqui e o da PISTA `parent_session` funcionando: a mae esta na
+        lista de candidatos e tem a linha. A varredura fica proibida de propos —
+        senao este teste passa a provar a rede em vez do fio que ele nomeia.
         """
+        _proibir_varredura(bs, monkeypatch)
         _active_transaction(bs, tmp_path, session_id="sessao-mae")
         b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
                    parent_session="sessao-mae")
@@ -163,7 +218,7 @@ class TestTransicoes:
         assert fechado["conclusion"].startswith("mediu")
         assert fechado["closed_at"]
 
-    def test_ramo_fecha_sem_task_ativa_em_candidato_nenhum(self, bs, tmp_path):
+    def test_ramo_fecha_sem_task_ativa_em_candidato_nenhum(self, bs, tmp_path, monkeypatch):
         """A busca por CONTEUDO nao pode depender de haver task ativa.
 
         Medido em 2026-09-09, no segundo ramo real: `branch not found`. O filtro
@@ -176,7 +231,13 @@ class TestTransicoes:
         ao terminar, expira a task travada da mae — ou seja, um ramo que faz o
         seu trabalho remove o `task_id` de que o resolvedor dependia para
         fecha-lo depois.
+
+        A pista `parent_session` continua apontando para a mae, que tem a linha
+        — o que se removeu foi so a exigencia de task ativa. Varredura proibida:
+        o que este teste prova e que o candidato SEM task passa a ser
+        consultado, nao que exista uma rede depois dele.
         """
+        _proibir_varredura(bs, monkeypatch)
         _active_transaction(bs, tmp_path, session_id="sessao-mae")
         b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
                    parent_session="sessao-mae")
@@ -227,6 +288,11 @@ class TestTransicoes:
 
         Por isso, esgotadas as pistas, os buckets de sessao do projeto sao
         varridos. So no caminho de erro: o custo fica onde ja se ia falhar.
+
+        O contador de `sweep` e parte do teste, nao enfeite: sem ele a assercao
+        de resultado ficaria verde tambem quando alguma pista resolvesse por
+        acaso, e a varredura poderia sair da cobertura sem a suite mudar de cor
+        (medido em 2026-09-09).
         """
         _active_transaction(bs, tmp_path, session_id="sessao-criadora")
         # `parent_session` de branches.json aponta para OUTRA sessao, como faz
@@ -237,12 +303,15 @@ class TestTransicoes:
         semente.write_text("# semente", encoding="utf-8")
         bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open",
                       seed_path=str(semente))
+        # Forma de registro legado: sem ponteiro proprio, so o campo do arquivo.
+        _ramo_legado(bs, tmp_path, b["slug"])
 
         # A sessao apontada existe e tem banco proprio, mas nao conhece o ramo;
         # e o sensor ja migrou para uma terceira.
         _active_transaction(bs, tmp_path, session_id="sessao-antiga")
         _active_transaction(bs, tmp_path, session_id="sessao-atual")
 
+        antes = _sweeps(bs)
         fechado = bs.set_status(
             cwd=str(tmp_path), slug=b["slug"], status="closed",
             conclusion="fechou pelo CLI com todos os ponteiros errados",
@@ -252,6 +321,59 @@ class TestTransicoes:
             cwd=str(tmp_path), session_id="sessao-criadora"
         )
         assert bs.HarnessDatabase(criadora).branch(b["session_id"])["status"] == "closed"
+        assert _sweeps(bs) == antes + 1, "fechou, mas nao foi a varredura que achou"
+
+    def test_attach_files_resolve_o_banco_pela_mesma_pista(self, bs, tmp_path, monkeypatch):
+        """`attach_files` nao tinha UM teste, e e o caminho real de abrir ramo.
+
+        O unico chamador em producao e `branch_seed.py`, quando escreve semente
+        e launcher. A funcao passa `parent_session` a `_transaction_context`
+        exatamente como `set_status`, e esse call site ia ser editado sem rede
+        nenhuma — descoberto na medicao de cobertura de 2026-09-09.
+        """
+        _proibir_varredura(bs, monkeypatch)
+        _active_transaction(bs, tmp_path, session_id="sessao-mae")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
+                   parent_session="sessao-mae")
+        semente = tmp_path / "semente.md"
+        launcher = tmp_path / "launcher.ps1"
+        semente.write_text("# semente", encoding="utf-8")
+        launcher.write_text("# launcher", encoding="utf-8")
+
+        # O sensor migra: a pista que sobra e o `parent_session` do registro.
+        _active_transaction(bs, tmp_path, session_id="sessao-filha")
+
+        ligado = bs.attach_files(
+            cwd=str(tmp_path), slug=b["slug"],
+            seed_path=str(semente), launcher_path=str(launcher),
+        )
+        assert ligado["seed_path"] == str(semente)
+        assert ligado["launcher_path"] == str(launcher)
+        # E o registro transacional recebeu a semente, nao so o JSON.
+        mae = bs.harness_paths.ensure_state_dir(cwd=str(tmp_path), session_id="sessao-mae")
+        assert bs.HarnessDatabase(mae).branch(b["session_id"])["seed_path"] == str(semente)
+
+    def test_decide_park_resolve_o_banco_pela_mesma_pista(self, bs, tmp_path, monkeypatch):
+        """`decide` so era exercitado com `parent_session` nulo.
+
+        `test_descarte_e_explicito` nao tem transacao nenhuma — o bloco
+        transacional inteiro e pulado. Com mae registrada, a pista precisa
+        levar `decide` ao banco certo, e "agora nao" tem de PARKEAR: o ramo
+        continua no registro.
+        """
+        _proibir_varredura(bs, monkeypatch)
+        _active_transaction(bs, tmp_path, session_id="sessao-mae")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
+                   parent_session="sessao-mae")
+
+        _active_transaction(bs, tmp_path, session_id="sessao-filha")
+
+        parkeado = bs.decide(cwd=str(tmp_path), slug=b["slug"], decision="park")
+        assert parkeado["slug"] == b["slug"]
+        # Recusar parkeia; so `discard` apaga.
+        assert [r["slug"] for r in bs.load(cwd=str(tmp_path))["branches"]] == [b["slug"]]
+        mae = bs.harness_paths.ensure_state_dir(cwd=str(tmp_path), session_id="sessao-mae")
+        assert bs.HarnessDatabase(mae).branch(b["session_id"])["status"] == "pending"
 
     def test_ramo_ausente_de_todo_banco_continua_falhando_alto(self, bs, tmp_path):
         """O fallback existe para o erro vir do banco, nao de um `None` calado.
