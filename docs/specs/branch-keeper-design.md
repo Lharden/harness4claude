@@ -91,7 +91,10 @@ Pagar embed em todo prompt seria cobrar do foco para proteger o foco.
 `~/.claude/harness/projects/<slug>/`:
 
 - `branches.json` — registro (`schema_version: 1`), autômato
-  `pending → open → closed` / `open → recalled`, terminais fechados
+  `pending → open → closed` / `open → recalled`, terminais fechados. Cada ramo
+  guarda `session_id` (o **filho**) e `parent_session_id` (a **mãe**); o
+  `parent_session` no topo do arquivo é fallback de registro anterior a
+  2026-09-09, escrito uma vez só e por isso errado do segundo ramo em diante
 - `branch-anchor.json` — objetivo da sessão + embedding; âncora de outra sessão
   é ignorada
 - `branch-sensor.json` — orçamento, streak de deriva, contador de turno

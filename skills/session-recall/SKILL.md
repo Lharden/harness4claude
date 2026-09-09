@@ -41,7 +41,10 @@ python "$H4C/tools/session_query.py" "<pergunta em linguagem natural>"
 - O usuário referencia trabalho anterior: *"a gente já discutiu"*, *"o que
   decidimos sobre X"*, *"em qual sessão eu vi aquilo"*.
 - Você está num **ramo** e precisa do que a sessão-mãe decidiu — use
-  `--session <parent_session>`, que está em `branches.json`.
+  `--session <mãe>`, que está em `branches.json`, no `parent_session_id` **do
+  próprio ramo**. O campo homônimo no topo do arquivo é fallback de registro
+  antigo: ele é escrito uma vez só, então do segundo ramo do projeto em diante
+  nomeia a sessão errada, e seguir por ele retoma a conversa errada.
 - Você suspeita que o assunto já foi tratado. Suspeitar e não checar é como o
   mesmo problema é resolvido duas vezes com respostas diferentes.
 

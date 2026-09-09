@@ -20,7 +20,14 @@
 | ALWAYS degradar em silêncio | REQ-4 acima | coberto |
 | ALWAYS `git_branch` intocado | campo preservado; `branch_of` é adicional | coberto |
 | NEVER build falhar por `branches.json` | `test_ac3_...` (JSON quebrado não propaga) | coberto |
-| NEVER inventar vínculo por heurística | `branch_links` só lê `parent_session`/`session_id`; nenhum teste de similaridade existe | coberto por construção |
+| NEVER inventar vínculo por heurística | `branch_links` só lê `parent_session_id`/`parent_session`/`session_id`; nenhum teste de similaridade existe | coberto por construção |
+
+> **Atualizado em 2026-09-09.** `branch_links` passou a ler a mãe do **próprio
+> ramo** (`parent_session_id`), com o campo do arquivo como fallback de registro
+> antigo. Enquanto lia só o campo do arquivo — escrito uma vez, primeiro-escritor-fica
+> — o índice gravava aresta falsa do segundo ramo do projeto em diante, e um
+> ponteiro de arquivo nulo fazia o bucket **inteiro** sumir do índice, em silêncio.
+> Os ACs acima continuam válidos: nenhum deles depende de qual campo carrega a mãe.
 
 ## Item que a spec não previu e o teste cobre
 
