@@ -163,6 +163,75 @@ class TestTransicoes:
         assert fechado["conclusion"].startswith("mediu")
         assert fechado["closed_at"]
 
+    def test_ramo_fecha_sem_task_ativa_em_candidato_nenhum(self, bs, tmp_path):
+        """A busca por CONTEUDO nao pode depender de haver task ativa.
+
+        Medido em 2026-09-09, no segundo ramo real: `branch not found`. O filtro
+        `if not task_id: continue` descartava todo candidato cujo `state.json`
+        nao tivesse task, e o laco nunca chegava a perguntar aos bancos QUEM
+        conhece o ramo. A linha estava em disco, com `status=open`, e o CLI
+        dizia que ela nao existia.
+
+        O agravante e que o ciclo de vida normal PRODUZ essa condicao: o ramo,
+        ao terminar, expira a task travada da mae — ou seja, um ramo que faz o
+        seu trabalho remove o `task_id` de que o resolvedor dependia para
+        fecha-lo depois.
+        """
+        _active_transaction(bs, tmp_path, session_id="sessao-mae")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
+                   parent_session="sessao-mae")
+        semente = tmp_path / "semente.md"
+        semente.write_text("# semente", encoding="utf-8")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open",
+                      seed_path=str(semente))
+
+        # A task da mae expira e o `state.json` dela perde o `task_id`; o do
+        # projeto nunca teve. O sensor aponta para a janela do ramo, que e uma
+        # sessao sem bucket nenhum.
+        mae = bs.harness_paths.ensure_state_dir(cwd=str(tmp_path), session_id="sessao-mae")
+        (mae / "state.json").write_text(
+            json.dumps({"task_id": None, "status": "idle"}), encoding="utf-8"
+        )
+        projeto = bs.harness_paths.ensure_state_dir(cwd=str(tmp_path))
+        (projeto / "state.json").write_text(
+            json.dumps({"task_id": None, "status": "idle"}), encoding="utf-8"
+        )
+        (projeto / "branch-sensor.json").write_text(
+            json.dumps({"session_id": "sessao-filha-sem-bucket", "turn": 12}),
+            encoding="utf-8",
+        )
+
+        fechado = bs.set_status(
+            cwd=str(tmp_path), slug=b["slug"], status="closed",
+            conclusion="fechou pelo CLI, sem task ativa em lugar nenhum",
+        )
+        assert fechado["status"] == "closed"
+        # E o registro transacional acompanhou: fechar so no JSON deixaria o
+        # banco dizendo `open` para sempre, que e o estado que este ramo
+        # precisou desfazer a mao.
+        assert bs.HarnessDatabase(mae).branch(b["session_id"])["status"] == "closed"
+
+    def test_ramo_ausente_de_todo_banco_continua_falhando_alto(self, bs, tmp_path):
+        """O fallback existe para o erro vir do banco, nao de um `None` calado.
+
+        A busca por conteudo nao pode transformar "ramo realmente inexistente"
+        em sucesso silencioso: enquanto houver um candidato com task ativa, um
+        `branch_id` que banco nenhum conhece tem de levantar.
+        """
+        _active_transaction(bs, tmp_path, session_id="sessao-mae")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x",
+                   parent_session="sessao-mae")
+        semente = tmp_path / "semente.md"
+        semente.write_text("# semente", encoding="utf-8")
+
+        dados = bs.load(cwd=str(tmp_path))
+        dados["branches"][0]["session_id"] = "uuid-que-banco-nenhum-conhece"
+        bs.save(dados, cwd=str(tmp_path))
+
+        with pytest.raises(ValueError, match="branch not found"):
+            bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open",
+                          seed_path=str(semente))
+
 
 class TestOrcamento:
     def test_recusar_parkeia_em_vez_de_descartar(self, bs, tmp_path):

@@ -110,9 +110,24 @@ def _transaction_context(
     sessao de origem.
 
     Sem `branch_id` — o caso de `add`, que cria o ramo — nada muda: o primeiro
-    candidato valido responde, como antes. E quando nenhum banco conhece o ramo,
-    o primeiro valido volta como fallback, para a mensagem de erro continuar
-    sendo a do banco e nao um `None` silencioso.
+    candidato com task ativa responde, como antes. E quando nenhum banco conhece
+    o ramo, o primeiro desses volta como fallback, para a mensagem de erro
+    continuar sendo a do banco e nao um `None` silencioso.
+
+    Com `branch_id`, porem, task ativa NAO e requisito. Ate 2026-09-09 era: o
+    laco descartava todo candidato cujo `state.json` estivesse sem `task_id`, e
+    por isso nunca chegava a perguntar aos bancos quem conhece o ramo — a busca
+    por conteudo que esta docstring descreve nao rodava. O ciclo de vida normal
+    produz exatamente essa condicao: um ramo, ao terminar, expira a task travada
+    da mae, entao um ramo que faz o seu trabalho apaga o `task_id` de que o
+    resolvedor dependia para fecha-lo depois. Medido no segundo ramo real, que
+    precisou ser fechado por escrita direta no sqlite.
+
+    Achado o ramo, a task que responde por ele e a do PROPRIO registro
+    (`branches.task_id`), nao a que estiver ativa no `state.json` daquele
+    bucket: `open_branch`, `update_branch` e `resolve_branch_decision` todas
+    chaveiam por `branch["task_id"]`, entao sincronizar outra projecao seria
+    sincronizar a task errada.
     """
     project_home = harness_paths.state_dir(cwd=cwd)
     session_id = None
@@ -133,25 +148,48 @@ def _transaction_context(
 
     fallback = None
     for home in candidates:
+        if not (home / "harness.db").is_file():
+            continue
         try:
-            projection = json.loads((home / "state.json").read_text(encoding="utf-8"))
-            task_id = projection.get("task_id") if isinstance(projection, dict) else None
-            if not task_id or not (home / "harness.db").is_file():
-                continue
             database = HarnessDatabase(home)
-            task = database.task(str(task_id))
         except (OSError, ValueError, StateTransitionError):
             continue
+        ativa = _projected_task(home, database)
         if not branch_id:
-            return home, database, task
+            if ativa is None:
+                continue
+            return home, database, ativa
         try:
-            database.branch(str(branch_id))
+            registro = database.branch(str(branch_id))
         except StateTransitionError:
-            if fallback is None:
-                fallback = (home, database, task)
+            if fallback is None and ativa is not None:
+                fallback = (home, database, ativa)
             continue
-        return home, database, task
+        dona = ativa
+        if dona is None or dona["task_id"] != registro["task_id"]:
+            try:
+                dona = database.task(str(registro["task_id"]))
+            except StateTransitionError:
+                dona = ativa
+        if dona is None:
+            continue
+        return home, database, dona
     return fallback
+
+
+def _projected_task(home: Path, database: HarnessDatabase) -> dict | None:
+    """Task ativa segundo a projecao `state.json` deste bucket, se houver."""
+    try:
+        projection = json.loads((home / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    task_id = projection.get("task_id") if isinstance(projection, dict) else None
+    if not task_id:
+        return None
+    try:
+        return database.task(str(task_id))
+    except StateTransitionError:
+        return None
 
 
 def _sync_task(home: Path, task: dict) -> None:
