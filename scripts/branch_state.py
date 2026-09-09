@@ -106,9 +106,13 @@ def _transaction_context(
     mae porque o sensor aponta para o ramo (medido 2026-09-04).
 
     Por isso a busca e por CONTEUDO quando ha um ramo em questao: entre os
-    candidatos, ganha o banco que de fato contem aquele `branch_id`. `parent_session`
-    entra na lista porque e o unico campo que o registro guarda apontando para a
-    sessao de origem.
+    candidatos, ganha o banco que de fato contem aquele `branch_id`.
+
+    `parent_session` e o segundo candidato, e quem o fornece e `_origin_of`: a
+    mae do PROPRIO ramo (`parent_session_id`), e so na falta dela o campo do
+    topo do arquivo. Ate 2026-09-09 so existia o campo do arquivo, escrito uma
+    vez — do segundo ramo do projeto em diante ele nomeava a sessao errada, e o
+    banco dono ficava fora da lista.
 
     Sem `branch_id` — o caso de `add`, que cria o ramo — nada muda: o primeiro
     candidato com task ativa responde, como antes. E quando nenhum banco conhece
@@ -213,13 +217,18 @@ def _sweep_sessions(
 
     As duas pistas que montam a lista de candidatos podem estar ambas erradas
     ao mesmo tempo. O `session_id` do `branch-sensor.json` e sobrescrito por
-    quem rodou por ultimo no projeto; o `parent_session` de `branches.json` e
-    do ARQUIVO, nao do ramo — quem escreve primeiro fica, entao o segundo ramo
-    de um projeto herda o ponteiro do primeiro. Quando nenhuma das duas aponta
-    para a sessao que criou o ramo, o banco dono fica fora da lista, e uma
-    busca por conteudo sobre candidatos que nao incluem o dono nao e busca por
-    conteudo nenhuma (medido 2026-09-09, com o ramo em `sessions/1f008ff6-...`
-    e as pistas apontando para `2f61e400-...` e `49fde96d-...`).
+    quem rodou por ultimo no projeto; e o `parent_session` pode nao apontar
+    para quem criou o ramo. Quando nenhuma das duas aponta para a sessao dona,
+    o banco fica fora da lista, e uma busca por conteudo sobre candidatos que
+    nao incluem o dono nao e busca por conteudo nenhuma (medido 2026-09-09, com
+    o ramo em `sessions/1f008ff6-...` e as pistas apontando para
+    `2f61e400-...` e `49fde96d-...`).
+
+    Desde que cada ramo guarda a propria mae (`parent_session_id`), a segunda
+    pista erra menos — mas nao deixa de errar: registro gravado pelo codigo
+    antigo so tem o campo do ARQUIVO, escrito uma vez, que do segundo ramo do
+    projeto em diante nomeia a sessao errada. Esses registros existem em disco
+    e nao se curam sozinhos. A varredura e a rede deles.
 
     Roda so depois de as pistas falharem: o custo cai no caminho que ja ia dar
     erro, e o caminho quente continua sendo duas leituras.
@@ -436,6 +445,11 @@ def add(
             "topic": str(topic),
             "status": "pending",
             "session_id": str(uuid.uuid4()),
+            # `session_id` e o FILHO; `parent_session_id` e a MAE. O par vive no
+            # ramo porque a mae e propriedade dele: o campo homonimo no topo do
+            # arquivo e escrito uma vez so, e do segundo ramo do projeto em
+            # diante nomeia a sessao errada para todo mundo que o le.
+            "parent_session_id": str(parent_session) if parent_session else None,
             "seed_path": None,
             "launcher_path": None,
             "created_at": _now(),
@@ -472,6 +486,17 @@ def add(
     return branch
 
 
+def _origin_of(data: dict, branch: dict) -> str | None:
+    """A mae deste ramo: a dele, e so entao a do arquivo.
+
+    O campo do arquivo continua valendo como FALLBACK, e ele e a razao de esta
+    mudanca ser reversivel: registro gravado pelo codigo antigo nao tem ponteiro
+    proprio, e sem o fallback todo ramo ja em disco viraria orfao no instante do
+    merge. Nao e legado tolerado — e a unica pista que aqueles registros tem.
+    """
+    return branch.get("parent_session_id") or data.get("parent_session")
+
+
 def get(*, cwd: str | os.PathLike | None = None, slug: str) -> dict:
     for b in load(cwd)["branches"]:
         if b.get("slug") == slug:
@@ -503,7 +528,7 @@ def set_status(
             branch_id = str(b.get("session_id") or "")
             transaction = _transaction_context(
                 cwd, branch_id=branch_id,
-                parent_session=data.get("parent_session"),
+                parent_session=_origin_of(data, b),
             )
             if transaction is not None:
                 home, database, task = transaction
@@ -571,7 +596,7 @@ def attach_files(
                 continue
             transaction = _transaction_context(
                 cwd, branch_id=str(branch.get("session_id") or ""),
-                parent_session=data.get("parent_session"),
+                parent_session=_origin_of(data, branch),
             )
             if transaction is not None:
                 home, database, task = transaction
@@ -604,7 +629,7 @@ def decide(
                 continue
             transaction = _transaction_context(
                 cwd, branch_id=str(branch.get("session_id") or ""),
-                parent_session=data.get("parent_session"),
+                parent_session=_origin_of(data, branch),
             )
             if transaction is not None:
                 home, database, task = transaction

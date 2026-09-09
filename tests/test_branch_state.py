@@ -323,6 +323,74 @@ class TestTransicoes:
         assert bs.HarnessDatabase(criadora).branch(b["session_id"])["status"] == "closed"
         assert _sweeps(bs) == antes + 1, "fechou, mas nao foi a varredura que achou"
 
+    def test_add_grava_a_mae_no_proprio_ramo(self, bs, tmp_path):
+        """A mae e propriedade do RAMO, nao do arquivo.
+
+        `parent_session` no topo de `branches.json` e escrito uma vez — quem
+        escreve primeiro fica (`add`, guarda `if not data.get(...)`). Do segundo
+        ramo do projeto em diante ele nomeia a sessao errada, e tres leitores
+        acreditam nele: o resolvedor, o parking e o indice de sessoes.
+        """
+        _active_transaction(bs, tmp_path, session_id="mae-a")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x", parent_session="mae-a")
+        registro = bs.get(cwd=str(tmp_path), slug=b["slug"])
+        assert registro["parent_session_id"] == "mae-a"
+        # O campo do arquivo continua escrito: e o fallback do registro legado,
+        # e a garantia de que reverter nao exige limpar dado.
+        assert bs.load(cwd=str(tmp_path))["parent_session"] == "mae-a"
+
+    def test_segundo_ramo_do_projeto_resolve_pela_propria_mae(self, bs, tmp_path, monkeypatch):
+        """O ponteiro herdado do primeiro ramo nao pode responder pelo segundo.
+
+        Medido em `RSL_Project-aa99cfb0` (2026-09-09): o arquivo dizia
+        `49fde96d` para um ramo criado por `1f008ff6`. Aqui o cenario e o mesmo,
+        reduzido: mae-A cria o primeiro ramo e fixa o campo do arquivo; mae-B
+        cria o segundo; o sensor migra para uma terceira sessao. A unica pista
+        que pode achar o banco de mae-B e o campo do PROPRIO ramo.
+
+        Varredura proibida de proposito — ela e a rede, e o que este teste
+        precisa provar e que o fio existe.
+        """
+        _proibir_varredura(bs, monkeypatch)
+        _active_transaction(bs, tmp_path, session_id="mae-a")
+        bs.add(cwd=str(tmp_path), name="Primeiro", topic="tema a", parent_session="mae-a")
+
+        _active_transaction(bs, tmp_path, session_id="mae-b")
+        segundo = bs.add(cwd=str(tmp_path), name="Segundo", topic="tema b",
+                         parent_session="mae-b")
+        assert bs.load(cwd=str(tmp_path))["parent_session"] == "mae-a", (
+            "premissa: o campo do arquivo continua sendo o do primeiro ramo"
+        )
+
+        _active_transaction(bs, tmp_path, session_id="sessao-atual")
+
+        fechado = bs.set_status(
+            cwd=str(tmp_path), slug=segundo["slug"], status="closed",
+            conclusion="fechou pela propria mae, nao pela do primeiro ramo",
+        )
+        assert fechado["status"] == "closed"
+        mae_b = bs.harness_paths.ensure_state_dir(cwd=str(tmp_path), session_id="mae-b")
+        assert bs.HarnessDatabase(mae_b).branch(segundo["session_id"])["status"] == "closed"
+
+    def test_ramo_legado_ainda_responde_pelo_campo_do_arquivo(self, bs, tmp_path, monkeypatch):
+        """Registro gravado pelo codigo antigo nao tem ponteiro proprio.
+
+        O fallback e o que impede que a mudanca transforme todo ramo ja em disco
+        em orfao. Sem ele, `.get("parent_session_id")` devolve `None` e o
+        resolvedor perde a unica pista que aquele registro tem.
+        """
+        _proibir_varredura(bs, monkeypatch)
+        _active_transaction(bs, tmp_path, session_id="mae-a")
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x", parent_session="mae-a")
+        _ramo_legado(bs, tmp_path, b["slug"])
+        assert "parent_session_id" not in bs.get(cwd=str(tmp_path), slug=b["slug"])
+
+        _active_transaction(bs, tmp_path, session_id="sessao-atual")
+
+        fechado = bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed",
+                                conclusion="legado fechou pelo campo do arquivo")
+        assert fechado["status"] == "closed"
+
     def test_attach_files_resolve_o_banco_pela_mesma_pista(self, bs, tmp_path, monkeypatch):
         """`attach_files` nao tinha UM teste, e e o caminho real de abrir ramo.
 
@@ -595,10 +663,20 @@ class TestComandosDaSkillRodamMesmo:
         achados = list((tmp_path / "h").rglob("branches.json"))
         assert achados, "branches.json nao nasceu — o defeito historico"
         registro = json.loads(achados[0].read_text(encoding="utf-8"))
+        # O campo do RAMO e quem manda; o do arquivo sobrevive como fallback de
+        # registro legado. Assertar so o de arquivo deixava a camada inteira
+        # poder ser esquecida sem a suite mudar de cor (medido 2026-09-09).
+        assert registro["branches"][0]["parent_session_id"] == "sessao-mae-uuid"
         assert registro["parent_session"] == "sessao-mae-uuid"
 
     def test_sem_parent_session_o_ramo_fica_orfao(self, tmp_path):
-        """Documenta o custo de omitir a flag, para o teste acima ter contraste."""
+        """Documenta o custo de omitir a flag, para o teste acima ter contraste.
+
+        E o lugar onde a decisao de D1 fica VISIVEL em teste: o campo por ramo
+        guarda a mae DECLARADA, entao omitir a flag deixa os dois nulos. Se
+        algum dia ele passar a guardar o bucket de disco, este teste fica
+        vermelho — que e o comportamento correto para uma troca dessas.
+        """
         projeto = tmp_path / "proj"
         projeto.mkdir()
         proc = self._rodar(["add", "--name", "Ramo Solto", "--topic", "tema qualquer"],
@@ -607,6 +685,7 @@ class TestComandosDaSkillRodamMesmo:
         registro = json.loads(
             list((tmp_path / "h").rglob("branches.json"))[0].read_text(encoding="utf-8"))
         assert registro["parent_session"] is None
+        assert registro["branches"][0]["parent_session_id"] is None
 
 
 class TestConclusaoVoltaParaAMae:
