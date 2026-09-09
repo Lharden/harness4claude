@@ -154,14 +154,25 @@ def branch_links(harness_root=DEFAULT_HARNESS) -> dict:
             continue
         if not isinstance(dados, dict):
             continue
-        pai = dados.get("parent_session")
-        if not pai:
-            continue
+        # Campo do ARQUIVO: escrito uma vez, entao do segundo ramo do projeto em
+        # diante ele nomeia a sessao errada. Vale como FALLBACK de registro
+        # legado, que nao tem ponteiro proprio. Mesma regra de
+        # `branch_state._origin_of`, inlinada porque este modulo nao importa
+        # `branch_state` (o indice roda sem o harness carregado).
+        padrao = dados.get("parent_session")
         for ramo in dados.get("branches") or []:
+            ramo = ramo or {}
             # Ramo `pending` ainda nao abriu janela e nao tem sessao. Incluir
             # `None` como chave criaria um no que a busca nunca poderia devolver.
-            filho = (ramo or {}).get("session_id")
+            filho = ramo.get("session_id")
             if not filho:
+                continue
+            pai = ramo.get("parent_session_id") or padrao
+            # O mesmo guarda vale para a mae, e por ele estar aqui dentro e nao
+            # antes do laco: ate 2026-09-09 um `parent_session` nulo abandonava
+            # o bucket INTEIRO antes de olhar ramo nenhum — o projeto sumia do
+            # indice em silencio, e `branch_links` degrada calada por desenho.
+            if not pai:
                 continue
             entrada(filho)["branch_of"] = pai
             filhos = entrada(pai)["branches"]

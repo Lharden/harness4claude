@@ -386,39 +386,70 @@ def _bucket_com_ramos(raiz: Path, slug: str, parent: str | None, ramos: list) ->
     return bucket
 
 
-def test_hoje_o_campo_de_arquivo_nulo_apaga_o_bucket_inteiro(builder, tmp_path):
-    """Caracterizacao: o buraco medido em 2026-09-09, antes de consertar.
+def test_ponteiro_de_arquivo_nulo_nao_apaga_o_bucket(builder, tmp_path):
+    """O buraco medido em 2026-09-09: `if not pai: continue` fora do laco.
 
-    `branch_links` le `pai` UMA vez, fora do laco de ramos, e `if not pai:
-    continue` abandona o bucket. Um registro cujo ponteiro de arquivo e nulo
-    mas cujos ramos trazem o proprio `parent_session_id` some do indice em
-    silencio — e essa forma ja e alcancavel hoje (`add` sem `--parent-session`).
-
-    Quando `branch_links` passar a ler por ramo, esta expectativa vira o
-    vermelho da fase: o esperado passa a ser o vinculo, nao o vazio.
+    `branch_links` lia `pai` UMA vez, antes de olhar ramo nenhum, e abandonava
+    o bucket inteiro quando o ponteiro de arquivo era nulo. Nao "criava um no
+    None" — o projeto sumia do indice, em silencio, porque a funcao degrada
+    calada por desenho. E a forma e alcancavel: `add` sem `--parent-session`
+    deixa o campo de arquivo nulo.
     """
     _bucket_com_ramos(tmp_path, "proj", None, [
         {"session_id": "F1", "slug": "um", "parent_session_id": "MAE-A"},
         {"session_id": "F2", "slug": "dois", "parent_session_id": "MAE-B"},
     ])
-    assert builder.branch_links(tmp_path) == {}
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["F1"]["branch_of"] == "MAE-A"
+    assert mapa["F2"]["branch_of"] == "MAE-B"
 
 
-def test_hoje_duas_maes_no_mesmo_arquivo_colapsam_numa_so(builder, tmp_path):
-    """Caracterizacao: o campo de arquivo atribui a MESMA mae a todo ramo.
+def test_duas_maes_no_mesmo_arquivo_nao_colapsam(builder, tmp_path):
+    """O campo de arquivo atribuia a MESMA mae a todo ramo do projeto.
 
-    Estado que `add` torna impossivel de construir hoje (o campo so e escrito
-    uma vez), e que e exatamente o que a mudanca existe para permitir. Sem este
-    teste, nenhuma fixture da suite tem duas maes — e o comportamento novo
-    nasceria sem cobertura.
+    Ele e escrito uma vez — quem escreve primeiro fica —, entao do segundo ramo
+    em diante o indice gravava uma aresta falsa e `session-recall` devolvia mae
+    e filho errados. Estado que `add` tornava impossivel de construir ate a
+    Fase 1, e que e exatamente o que a mudanca existe para permitir.
     """
     _bucket_com_ramos(tmp_path, "proj", "MAE-A", [
         {"session_id": "F1", "slug": "um", "parent_session_id": "MAE-A"},
         {"session_id": "F2", "slug": "dois", "parent_session_id": "MAE-B"},
     ])
     mapa = builder.branch_links(tmp_path)
-    assert mapa["F2"]["branch_of"] == "MAE-A", "hoje o ramo de MAE-B e atribuido a MAE-A"
-    assert "MAE-B" not in mapa
+    assert mapa["F1"]["branch_of"] == "MAE-A"
+    assert mapa["F2"]["branch_of"] == "MAE-B"
+    assert mapa["MAE-A"]["branches"] == ["F1"]
+    assert mapa["MAE-B"]["branches"] == ["F2"]
+
+
+def test_arquivo_misto_legado_e_novo_convivem(builder, tmp_path):
+    """Registro legado nao tem ponteiro proprio e cai no campo do arquivo.
+
+    E a forma que existe em disco: um `branches.json` gravado antes da Fase 1
+    ganhando ramos novos depois dela. O guarda por ramo tem de espelhar o que
+    ja existe para o filho — sem ele, um ramo sem mae nenhuma cria um no `None`
+    que a busca nunca poderia devolver.
+    """
+    _bucket_com_ramos(tmp_path, "proj", "MAE-A", [
+        {"session_id": "LEGADO", "slug": "velho"},
+        {"session_id": "NOVO", "slug": "novo", "parent_session_id": "MAE-B"},
+    ])
+    mapa = builder.branch_links(tmp_path)
+    assert mapa["LEGADO"]["branch_of"] == "MAE-A", "legado responde pelo fallback"
+    assert mapa["NOVO"]["branch_of"] == "MAE-B"
+    assert None not in mapa
+
+
+def test_ramo_sem_mae_alguma_nao_cria_no_nulo(builder, tmp_path):
+    _bucket_com_ramos(tmp_path, "proj", None, [
+        {"session_id": "ORFAO", "slug": "sem-mae"},
+        {"session_id": "COM", "slug": "com-mae", "parent_session_id": "MAE-A"},
+    ])
+    mapa = builder.branch_links(tmp_path)
+    assert "ORFAO" not in mapa, "sem mae nao ha aresta para gravar"
+    assert mapa["COM"]["branch_of"] == "MAE-A"
+    assert None not in mapa
 
 
 def test_ac1_vinculo_de_mao_dupla(builder, tmp_path):
