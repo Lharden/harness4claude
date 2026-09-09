@@ -780,7 +780,6 @@ def main() -> int:
     _save_budget(cwd, b)
 
     msg = evaluate(cwd=cwd, text=texto, session_id=session_id, turn=turn)
-    parked = branch_state.parked_block(cwd, session_id=session_id)
 
     # Ate 2026-09-01 o sinal saia por `systemMessage` e o parking por
     # `additionalContext`. So o segundo chegava ao modelo — e como o parking
@@ -800,6 +799,15 @@ def main() -> int:
             mod.Emitter(evento, hook="branch_sensor", session_id=session_id,
                         cwd=cwd).add("branch", msg).flush()
         return 0
+
+    # So DEPOIS do desvio de Stop. `parked_block` roda `_marcar_entregues`, e a
+    # conclusao de um ramo e entregue UMA vez: le-la aqui em cima significava,
+    # no Stop, marcar como vista uma conclusao que o Emitter daquele caminho
+    # nunca chega a emitir — a mae perdia o resultado do proprio ramo, todo
+    # turno, em silencio. E o defeito de 2026-09-04 por outra porta: la era a
+    # sessao errada lendo, aqui era o evento errado da sessao certa.
+    # Regra: nunca marcar entrega num caminho que nao emite.
+    parked = branch_state.parked_block(cwd, session_id=session_id)
 
     # Um sinal guardado vem primeiro: ele nasceu no turno anterior e envelhece.
     pendente = take_pending(cwd=cwd, session_id=session_id)

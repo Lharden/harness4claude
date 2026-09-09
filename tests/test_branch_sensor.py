@@ -301,6 +301,79 @@ class TestPayloadDoHook:
         assert sensor.text_from_payload(payload) == ""
 
 
+class TestStopNaoConsomeAConclusao:
+    """O `Stop` nao fala — mas consumia a entrega unica da conclusao.
+
+    `main()` chamava `parked_block` ANTES do desvio de Stop, e `parked_block`
+    roda `_marcar_entregues`. No Stop o bloco nunca entra no `Emitter` (so
+    `branch` entra) e a funcao retorna: a conclusao era marcada como vista e
+    jogada fora, sem nunca ter sido emitida.
+
+    E o mesmo defeito de 2026-09-04 — a conclusao morrendo por ser lida por
+    quem nao ia entregar — reaparecendo por outra porta: la era a sessao
+    errada, aqui e o evento errado da sessao certa. A regra que fecha as duas:
+    **nunca marcar entrega num caminho que nao emite.**
+    """
+
+    MAE = "aaaaaaaa-1111-2222-3333-444444444444"
+
+    def _payload(self, tmp_path, evento, session_id):
+        # `main()` sai em `if not texto: return 0` antes de tocar o parking. Um
+        # Stop sem transcript nunca chega ao ponto do defeito — o teste passaria
+        # verde sem ter exercitado nada.
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            "\n".join([
+                json.dumps({"type": "user", "message": {"content": "faz X"}}),
+                json.dumps({
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "terminei o passo"}]},
+                }),
+            ]),
+            encoding="utf-8",
+        )
+        return {
+            "hook_event_name": evento,
+            "cwd": str(tmp_path),
+            "session_id": session_id,
+            "prompt": "seguindo o trabalho",
+            "transcript_path": str(transcript),
+        }
+
+    def _run_main(self, sensor, monkeypatch, payload):
+        import io
+
+        monkeypatch.setattr(sensor.sys, "stdin", io.StringIO(json.dumps(payload)))
+        return sensor.main()
+
+    def _ramo_fechado(self, sensor, tmp_path):
+        bs = sensor.branch_state
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="tema do ramo",
+                   parent_session=self.MAE)
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed",
+                      conclusion="a hipotese morreu")
+        return bs, b
+
+    def test_stop_nao_marca_a_conclusao_como_entregue(self, sensor, tmp_path, monkeypatch):
+        bs, b = self._ramo_fechado(sensor, tmp_path)
+
+        assert self._run_main(
+            sensor, monkeypatch, self._payload(tmp_path, "Stop", self.MAE)
+        ) == 0
+
+        registro = bs.get(cwd=str(tmp_path), slug=b["slug"])
+        assert not registro.get("conclusion_delivered"), (
+            "o Stop consumiu a entrega sem emitir o bloco"
+        )
+
+    def test_o_prompt_seguinte_ainda_recebe_a_conclusao(self, sensor, tmp_path, monkeypatch):
+        """O que o Stop nao pode fazer e PERDER — a entrega e do turno seguinte."""
+        bs, b = self._ramo_fechado(sensor, tmp_path)
+        self._run_main(sensor, monkeypatch, self._payload(tmp_path, "Stop", self.MAE))
+
+        assert "a hipotese morreu" in bs.parked_block(cwd=str(tmp_path), session_id=self.MAE)
+
+
 class TestAncoraCega:
     """Ancora que nasce sem embedding tem que ser recuperada depois.
 
