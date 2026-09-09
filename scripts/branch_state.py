@@ -770,6 +770,30 @@ def _conclusoes_pendentes(dados: dict) -> list[dict]:
     ]
 
 
+def _para_esta_sessao(dados: dict, branch: dict, session_id: str | None) -> bool:
+    """Este ramo fala com quem esta lendo?
+
+    Duas isencoes, e as duas sao a mesma regra: na duvida, entregar. Um bloco de
+    parking a mais custa cinco linhas de contexto; um bloco a menos e o ramo
+    desaparecendo em silencio, que e o modo de falha que este modulo inteiro
+    existe para evitar.
+
+    - **Chamador anonimo** recebe tudo. Degradar e melhor que calar por nao saber
+      quem pergunta.
+    - **Ramo orfao** e de todos. `add` sem `--parent-session` e caminho
+      suportado, e registro gravado pelo codigo antigo tambem chega aqui sem
+      ponteiro proprio. Compara-lo com `==` faria o orfao sumir de TODO bloco
+      assim que o chamador se identificasse — e em producao o sensor sempre se
+      identifica.
+    """
+    if not session_id:
+        return True
+    origem = _origin_of(dados, branch)
+    if not origem:
+        return True
+    return str(session_id) == str(origem)
+
+
 def _marcar_entregues(cwd, slugs: list) -> None:
     """Marca as conclusoes como vistas.
 
@@ -807,13 +831,26 @@ def parked_block(cwd: str | os.PathLike | None = None, session_id: str | None = 
 
     Chamador que nao se identifica continua recebendo: degradar e melhor que
     calar um bloco por falta de informacao sobre quem pergunta.
+
+    O filtro e por RAMO (`_para_esta_sessao`), nao pelo campo do arquivo. Ate a
+    Fase 1 a mae era uma so por projeto, entao um portao no topo da funcao dava
+    a resposta certa; com duas maes ele passou a dar a errada para uma delas.
+
+    E sao DUAS listas, filtradas em separado de proposito. O portao antigo
+    saia da funcao antes de `_conclusoes_pendentes`, entao filtrar so os ramos
+    vivos reintroduziria o bug de 2026-09-04 numa forma mais sutil: a mae A,
+    lendo o proprio parking, consumiria a entrega unica da conclusao de um ramo
+    da mae B — `_marcar_entregues` marca por slug e nao olha mae.
     """
     dados = load(cwd)
-    mae = str(dados.get("parent_session") or "")
-    if session_id and mae and str(session_id) != mae:
-        return ""
-    vivos = [b for b in dados["branches"] if b.get("status") in LIVE_STATUSES]
-    entregar = _conclusoes_pendentes(dados)
+    vivos = [
+        b for b in dados["branches"]
+        if b.get("status") in LIVE_STATUSES and _para_esta_sessao(dados, b, session_id)
+    ]
+    entregar = [
+        b for b in _conclusoes_pendentes(dados)
+        if _para_esta_sessao(dados, b, session_id)
+    ]
     if not vivos and not entregar:
         return ""
 

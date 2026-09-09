@@ -801,3 +801,84 @@ class TestParkingSoFalaComAMae:
                    parent_session="11111111-2222-3333-4444-555555555555")
         bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
         assert "tema do ramo" in bs.parked_block(cwd=str(tmp_path))
+
+
+class TestParkingComDuasMaes:
+    """Duas maes no mesmo projeto — o estado que `add` tornava impossivel.
+
+    Enquanto a mae era um campo do ARQUIVO, escrito uma vez, nenhuma fixture da
+    suite conseguia montar dois ramos de maes diferentes. Com um ramo so, campo
+    de arquivo e campo de ramo carregam o mesmo valor, e os testes de parking
+    passavam com qualquer implementacao — inclusive com uma errada.
+
+    E o estado que a Fase 1 passou a permitir, e que o parking precisa entender:
+    cada sessao ve os ramos que ELA abriu, e a conclusao volta para quem perdeu
+    o assunto.
+    """
+
+    MAE_A = "aaaaaaaa-1111-2222-3333-444444444444"
+    MAE_B = "bbbbbbbb-1111-2222-3333-444444444444"
+
+    def _duas_maes(self, bs, tmp_path):
+        a = bs.add(cwd=str(tmp_path), name="Ramo de A", topic="tema da mae A",
+                   parent_session=self.MAE_A)
+        b = bs.add(cwd=str(tmp_path), name="Ramo de B", topic="tema da mae B",
+                   parent_session=self.MAE_B)
+        for ramo in (a, b):
+            bs.set_status(cwd=str(tmp_path), slug=ramo["slug"], status="open")
+        return a, b
+
+    def test_cada_mae_ve_so_o_proprio_ramo(self, bs, tmp_path):
+        self._duas_maes(bs, tmp_path)
+
+        bloco_a = bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_A)
+        bloco_b = bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_B)
+
+        assert "tema da mae A" in bloco_a and "tema da mae B" not in bloco_a
+        assert "tema da mae B" in bloco_b and "tema da mae A" not in bloco_b
+
+    def test_a_conclusao_de_uma_mae_nao_e_consumida_pela_outra(self, bs, tmp_path):
+        """A entrega e UNICA — entregar para a mae errada mata a conclusao.
+
+        `_marcar_entregues` marca por slug, sem olhar mae. Filtrar so a lista de
+        ramos vivos e deixar a de conclusoes sem filtro reproduz, mais sutil, o
+        bug de 2026-09-04: quem le primeiro queima a entrega do outro.
+        """
+        a, b = self._duas_maes(bs, tmp_path)
+        for ramo, texto in ((a, "A mediu e reprovou"), (b, "B achou outra causa")):
+            bs.set_status(cwd=str(tmp_path), slug=ramo["slug"], status="closed",
+                          conclusion=texto)
+
+        bloco_a = bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_A)
+        assert "A mediu e reprovou" in bloco_a
+        assert "B achou outra causa" not in bloco_a
+
+        bloco_b = bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_B)
+        assert "B achou outra causa" in bloco_b, "a leitura de A queimou a entrega de B"
+
+    def test_ramo_orfao_continua_visivel_para_qualquer_sessao(self, bs, tmp_path):
+        """Sem mae registrada, calar seria PERDER o ramo, nao proteger ninguem.
+
+        `add` sem `--parent-session` e caminho suportado, e registro gravado pelo
+        codigo antigo tambem chega aqui sem ponteiro. Um filtro ingenuo
+        (`origem == session_id`) faz o orfao sumir de TODO bloco assim que o
+        chamador se identifica — e em producao o sensor sempre se identifica.
+        Perda silenciosa no caminho quente, que e o pior modo de falha deste
+        modulo.
+        """
+        b = bs.add(cwd=str(tmp_path), name="Ramo Solto", topic="tema sem mae")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+
+        assert "tema sem mae" in bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_A)
+        assert "tema sem mae" in bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_B)
+        assert "tema sem mae" in bs.parked_block(cwd=str(tmp_path))
+
+    def test_ramo_legado_responde_a_mae_do_arquivo(self, bs, tmp_path):
+        """Registro antigo nao tem ponteiro proprio — o fallback e quem responde."""
+        b = bs.add(cwd=str(tmp_path), name="Legado", topic="tema legado",
+                   parent_session=self.MAE_A)
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+        _ramo_legado(bs, tmp_path, b["slug"])
+
+        assert "tema legado" in bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_A)
+        assert bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_B) == ""
