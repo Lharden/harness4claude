@@ -803,6 +803,92 @@ class TestParkingSoFalaComAMae:
         assert "tema do ramo" in bs.parked_block(cwd=str(tmp_path))
 
 
+class TestLockNaoDerrubaOLockAlheio:
+    """`_Lock` e fail-open, e ate 2026-09-09 o fail-open contaminava terceiros.
+
+    `__enter__` devolvia `self` no timeout SEM ter adquirido, e `__exit__` fazia
+    `os.rmdir` incondicional. Duas sessoes dividem um `branches.json` — o
+    caminho vem de `state_dir(cwd)` sem `session_id` —, entao a que furou o lock
+    apagava o lockdir da que o tinha, e uma TERCEIRA entrava enquanto a primeira
+    ainda escrevia. O fail-open nao degradava a exclusao mutua so para quem
+    furou: quebrava para todo mundo.
+
+    A escrita seguinte e `save()`, que reescreve o documento INTEIRO. O que se
+    perde nao e um campo: e a arvore de ramos de quem carregou primeiro. E `add`
+    ja commitou `create_branch` no sqlite antes do `save`, entao o ramo some do
+    JSON e PERMANECE no banco — e `can_open` conta pelo banco. Tres fantasmas e
+    `may_offer` devolve `max_open` para sempre: o Branch Keeper cala em
+    definitivo, com aparencia de funcionamento normal.
+
+    Nao havia um unico teste de `_Lock`, de fail-open ou de escrita concorrente.
+    """
+
+    def _lock_ocupado(self, bs, tmp_path, monkeypatch):
+        """Segura o lock de fora e encurta o timeout para o teste nao dormir."""
+        monkeypatch.setattr(bs, "LOCK_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(bs, "LOCK_STALE_S", 3600)
+        alvo = bs.branches_path(str(tmp_path))
+        Path(alvo).parent.mkdir(parents=True, exist_ok=True)
+        lockdir = Path(alvo + ".lockdir")
+        lockdir.mkdir()
+        return lockdir
+
+    def test_quem_nao_adquiriu_nao_remove_o_lockdir(self, bs, tmp_path, monkeypatch):
+        lockdir = self._lock_ocupado(bs, tmp_path, monkeypatch)
+        alvo = bs.branches_path(str(tmp_path))
+
+        with bs._Lock(alvo) as segundo:
+            assert segundo.owned is False, "furou o lock e acha que e dono"
+        assert lockdir.is_dir(), "quem furou o lock apagou o lockdir do dono"
+
+    def test_quem_adquiriu_remove_ao_sair(self, bs, tmp_path, monkeypatch):
+        monkeypatch.setattr(bs, "LOCK_TIMEOUT_S", 0.05)
+        alvo = bs.branches_path(str(tmp_path))
+        Path(alvo).parent.mkdir(parents=True, exist_ok=True)
+
+        with bs._Lock(alvo) as dono:
+            assert dono.owned is True
+            assert Path(alvo + ".lockdir").is_dir()
+        assert not Path(alvo + ".lockdir").exists()
+
+    def test_escrita_aborta_em_vez_de_sobrescrever(self, bs, tmp_path, monkeypatch):
+        """Ramo nao registrado e recuperavel; ramo fantasma no teto nao e."""
+        bs.add(cwd=str(tmp_path), name="Ja Existia", topic="tema anterior")
+        self._lock_ocupado(bs, tmp_path, monkeypatch)
+
+        with pytest.raises(bs.LockUnavailable):
+            bs.add(cwd=str(tmp_path), name="Concorrente", topic="tema novo")
+
+        # A arvore de quem estava la continua intacta.
+        nomes = [b["name"] for b in bs.load(cwd=str(tmp_path))["branches"]]
+        assert nomes == ["Ja Existia"]
+
+    def test_leitura_nao_e_bloqueada_por_lock_ocupado(self, bs, tmp_path, monkeypatch):
+        """`load` e `parked_block` rodam no caminho quente e nao podem travar."""
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="tema do ramo")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="open")
+        self._lock_ocupado(bs, tmp_path, monkeypatch)
+
+        assert bs.load(cwd=str(tmp_path))["branches"], "leitura travou por lock alheio"
+        assert "tema do ramo" in bs.parked_block(cwd=str(tmp_path))
+
+    def test_marcar_entregues_desiste_em_silencio(self, bs, tmp_path, monkeypatch):
+        """Perder a marca custa uma repeticao; sobrescrever custa a arvore.
+
+        `_marcar_entregues` nunca levanta, entao a recusa do lock vira "nao
+        marquei" — e a conclusao e entregue duas vezes em vez de o registro ser
+        clobbered. E o custo que a docstring dela ja declarava aceitavel.
+        """
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x")
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed",
+                      conclusion="a hipotese morreu")
+        self._lock_ocupado(bs, tmp_path, monkeypatch)
+
+        assert "a hipotese morreu" in bs.parked_block(cwd=str(tmp_path))
+        registro = bs.get(cwd=str(tmp_path), slug=b["slug"])
+        assert not registro.get("conclusion_delivered"), "marcou apesar do lock ocupado"
+
+
 class TestParkingComDuasMaes:
     """Duas maes no mesmo projeto — o estado que `add` tornava impossivel.
 

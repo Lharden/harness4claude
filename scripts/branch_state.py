@@ -318,22 +318,65 @@ def _sensor_turn(cwd: str | os.PathLike | None) -> int:
         return 0
 
 
+class LockUnavailable(RuntimeError):
+    """O lock nao foi adquirido e a operacao exigia exclusividade."""
+
+
 class _Lock:
     """Lock por diretorio, mesmo protocolo de `scripts/state-lock.sh`.
 
     `mkdir` e atomico em todo filesystem que nos importa, e o bash ja usa esse
     protocolo para `state.json`. Reimplementar com outro mecanismo (flock,
     arquivo .lock) criaria dois locks que nao se enxergam — pior que nenhum.
+
+    **`owned` distingue "adquiri" de "furei".** Ate 2026-09-09 nao havia essa
+    distincao: no timeout o `__enter__` devolvia `self` e o `__exit__` fazia
+    `os.rmdir` incondicional, entao quem furou o lock apagava o lockdir de quem
+    o tinha — e uma TERCEIRA sessao entrava enquanto a primeira ainda escrevia.
+    O fail-open nao degradava a exclusao mutua so para quem furou: quebrava para
+    todo mundo.
+
+    **`required` decide o que fazer quando o lock nao vem.** Duas sessoes
+    dividem um `branches.json` — o caminho vem de `state_dir(cwd)` sem
+    `session_id` — e a escrita e `save()`, que reescreve o documento INTEIRO.
+    Escrever sem exclusividade nao perde um campo: perde a arvore de ramos de
+    quem carregou primeiro. Pior, `add` ja commitou `create_branch` no sqlite
+    antes do `save`, entao o ramo some do JSON e PERMANECE no banco — e
+    `can_open` conta pelo banco. Tres fantasmas e `may_offer` devolve `max_open`
+    para sempre: o Branch Keeper cala em definitivo, parecendo normal.
+
+    Por isso operacao de escrita passa `required=True` e aborta; leitura e
+    contador seguem fail-open, porque um ramo nao registrado e recuperavel e um
+    ramo fantasma no teto nao e.
     """
 
-    def __init__(self, target: str):
+    def __init__(self, target: str, *, required: bool = False):
         self.dir = target + ".lockdir"
+        self.owned = False
+        self.required = required
+
+    def _desistir(self):
+        if self.required:
+            raise LockUnavailable(f"lock ocupado: {self.dir}")
+        # Fail-open: um ramo perdido e menos grave que um hook travado.
+        return self
 
     def __enter__(self):
+        # O diretorio do bucket so nasce dentro de `save()`, que roda DENTRO do
+        # lock. Em projeto novo o `mkdir` do lockdir falhava com
+        # `FileNotFoundError` — e o `except OSError` fail-open engolia isso em
+        # silencio. Com `required` o mesmo caminho passou a levantar, e a suite
+        # inteira ficou vermelha: 34 testes, todos em projeto novo. O lock
+        # garante o proprio pai em vez de depender de quem chama.
+        try:
+            os.makedirs(os.path.dirname(self.dir), exist_ok=True)
+        except OSError:
+            pass
         deadline = time.monotonic() + LOCK_TIMEOUT_S
         while True:
             try:
                 os.mkdir(self.dir)
+                self.owned = True
                 return self
             except FileExistsError:
                 try:
@@ -344,17 +387,17 @@ class _Lock:
                 except OSError:
                     pass
                 if time.monotonic() >= deadline:
-                    # Fail-open: um ramo perdido e menos grave que um hook travado.
-                    return self
+                    return self._desistir()
                 time.sleep(LOCK_POLL_S)
             except OSError:
-                return self
+                return self._desistir()
 
     def __exit__(self, *exc):
-        try:
-            os.rmdir(self.dir)
-        except OSError:
-            pass
+        if self.owned:
+            try:
+                os.rmdir(self.dir)
+            except OSError:
+                pass
         return False
 
 
@@ -436,7 +479,7 @@ def add(
 ) -> dict:
     """Registra um ramo novo como `pending` e devolve o registro criado."""
     target = branches_path(cwd)
-    with _Lock(target):
+    with _Lock(target, required=True):
         data = load(cwd)
         existing = {b.get("slug") for b in data["branches"]}
         branch = {
@@ -517,7 +560,7 @@ def set_status(
     if status not in ALL_STATUSES:
         raise ValueError(f"status desconhecido: {status}")
     target = branches_path(cwd)
-    with _Lock(target):
+    with _Lock(target, required=True):
         data = load(cwd)
         for b in data["branches"]:
             if b.get("slug") != slug:
@@ -589,7 +632,7 @@ def attach_files(
     launcher_path: str,
 ) -> dict:
     target = branches_path(cwd)
-    with _Lock(target):
+    with _Lock(target, required=True):
         data = load(cwd)
         for branch in data["branches"]:
             if branch.get("slug") != slug:
@@ -622,7 +665,7 @@ def decide(
     if decision not in {"park", "discard"}:
         raise ValueError(f"decisao desconhecida: {decision}")
     target = branches_path(cwd)
-    with _Lock(target):
+    with _Lock(target, required=True):
         data = load(cwd)
         for branch in data["branches"]:
             if branch.get("slug") != slug:
@@ -804,7 +847,7 @@ def _marcar_entregues(cwd, slugs: list) -> None:
         return
     try:
         target = branches_path(cwd)
-        with _Lock(target):
+        with _Lock(target, required=True):
             dados = load(cwd)
             for b in dados["branches"]:
                 if b.get("slug") in slugs:
