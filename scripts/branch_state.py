@@ -857,7 +857,12 @@ def _marcar_entregues(cwd, slugs: list) -> None:
         pass
 
 
-def parked_block(cwd: str | os.PathLike | None = None, session_id: str | None = None) -> str:
+def parked_block(
+    cwd: str | os.PathLike | None = None,
+    session_id: str | None = None,
+    *,
+    deliver: bool = True,
+) -> str:
     """Bloco `<harness-parked>` injetado no contexto a cada turno.
 
     Limitado a `MAX_PARKED_LINES` itens com tema truncado. O orcamento e o
@@ -874,6 +879,14 @@ def parked_block(cwd: str | os.PathLike | None = None, session_id: str | None = 
 
     Chamador que nao se identifica continua recebendo: degradar e melhor que
     calar um bloco por falta de informacao sobre quem pergunta.
+
+    `deliver=False` espia sem marcar. Ler daqui CONSOME a entrega unica da
+    conclusao, e essa e a semantica certa para o hook, que de fato entrega — mas
+    ela transforma toda ferramenta de diagnostico numa mina. Em 2026-09-09, ao
+    verificar que o proprio conserto do parking funcionava, a leitura de
+    inspecao gastou a conclusao de um ramo real, que teve de ser restaurada a
+    mao. E a mesma regra das outras duas vezes: nunca marcar entrega num caminho
+    que nao emite — faltava o caminho que nao emite poder dizer isso.
 
     O filtro e por RAMO (`_para_esta_sessao`), nao pelo campo do arquivo. Ate a
     Fase 1 a mae era uma so por projeto, entao um portao no topo da funcao dava
@@ -914,7 +927,7 @@ def parked_block(cwd: str | os.PathLike | None = None, session_id: str | None = 
             f'- ramo "{b.get("name")}" FECHOU: {conclusao} '
             f'(sessao {str(b.get("session_id", ""))[:8]})'
         )
-    if entregar:
+    if entregar and deliver:
         _marcar_entregues(cwd, [b["slug"] for b in entregar])
 
     corpo = "\n".join(linhas)
@@ -936,6 +949,9 @@ def main() -> int:
     p.add_argument("--cwd", default=None)
     p.add_argument("--session-id", dest="session_id", default=None,
                    help="quem esta lendo; `parked` so responde a sessao mae")
+    p.add_argument("--peek", action="store_true",
+                   help="`parked` sem consumir a entrega unica da conclusao; "
+                        "use em diagnostico, nunca no hook que entrega")
     p.add_argument("--slug", default=None)
     p.add_argument("--name", default=None)
     p.add_argument("--topic", default="")
@@ -956,7 +972,7 @@ def main() -> int:
     elif args.acao == "list":
         print(json.dumps(load(cwd), ensure_ascii=False, indent=2))
     elif args.acao == "parked":
-        print(parked_block(cwd, session_id=args.session_id))
+        print(parked_block(cwd, session_id=args.session_id, deliver=not args.peek))
     elif args.acao == "add":
         if not args.name:
             p.error("add exige --name")

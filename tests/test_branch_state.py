@@ -803,6 +803,55 @@ class TestParkingSoFalaComAMae:
         assert "tema do ramo" in bs.parked_block(cwd=str(tmp_path))
 
 
+class TestPeekNaoConsomeAEntrega:
+    """Inspecionar o parking nao pode gastar a entrega unica da conclusao.
+
+    `parked_block` marca como visto ao ler — e essa e a semantica certa para o
+    hook, que de fato entrega. Mas ela transforma toda ferramenta de diagnostico
+    numa mina: em 2026-09-09, ao verificar que o proprio conserto funcionava, a
+    leitura de inspecao consumiu a conclusao de um ramo real e ela teve de ser
+    restaurada a mao no JSON.
+
+    E o mesmo defeito das duas vezes anteriores, pela terceira porta: 09-04 era
+    a sessao errada lendo, 09-09 era o evento errado da sessao certa, e aqui e
+    quem le sem ir entregar. A regra ja estava escrita — nunca marcar entrega
+    num caminho que nao emite — e faltava o caminho que nao emite ter como
+    dizer isso.
+    """
+
+    MAE = "aaaaaaaa-1111-2222-3333-444444444444"
+
+    def _com_conclusao(self, bs, tmp_path):
+        b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x", parent_session=self.MAE)
+        bs.set_status(cwd=str(tmp_path), slug=b["slug"], status="closed",
+                      conclusion="a hipotese morreu")
+        return b
+
+    def test_peek_mostra_a_conclusao_sem_marcar(self, bs, tmp_path):
+        b = self._com_conclusao(bs, tmp_path)
+
+        espiada = bs.parked_block(cwd=str(tmp_path), session_id=self.MAE, deliver=False)
+
+        assert "a hipotese morreu" in espiada
+        assert not bs.get(cwd=str(tmp_path), slug=b["slug"]).get("conclusion_delivered")
+
+    def test_entrega_de_verdade_ainda_acontece_depois_do_peek(self, bs, tmp_path):
+        """Espiar nao pode nem consumir nem impedir: a mae ainda recebe."""
+        b = self._com_conclusao(bs, tmp_path)
+        bs.parked_block(cwd=str(tmp_path), session_id=self.MAE, deliver=False)
+
+        entregue = bs.parked_block(cwd=str(tmp_path), session_id=self.MAE)
+        assert "a hipotese morreu" in entregue
+        assert bs.get(cwd=str(tmp_path), slug=b["slug"])["conclusion_delivered"]
+        assert bs.parked_block(cwd=str(tmp_path), session_id=self.MAE) == "", "entrega e unica"
+
+    def test_deliver_e_true_por_default(self, bs, tmp_path):
+        """O hook chama sem o parametro, e para ele a semantica nao muda."""
+        b = self._com_conclusao(bs, tmp_path)
+        assert "a hipotese morreu" in bs.parked_block(cwd=str(tmp_path), session_id=self.MAE)
+        assert bs.get(cwd=str(tmp_path), slug=b["slug"])["conclusion_delivered"]
+
+
 class TestLockNaoDerrubaOLockAlheio:
     """`_Lock` e fail-open, e ate 2026-09-09 o fail-open contaminava terceiros.
 
