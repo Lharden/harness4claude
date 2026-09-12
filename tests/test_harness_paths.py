@@ -245,3 +245,171 @@ class TestSkillResolveBucketDaSessao:
         sessao = hp.state_dir(root=root, cwd=repo, session_id="s-1")
         assert projeto != sessao
         assert sessao.parent.parent == projeto
+
+
+class TestPinDeSessao:
+    """Incidente 2026-09-12: uma sessao, dois buckets, gate escalando sozinho.
+
+    A sessao `86459dbf` trabalhou em `master_project/slb-mestrado-projeto` e em
+    `science-harness`. O bucket e `projects/<slug do cwd>/sessions/<slug da
+    sessao>` — projeto ANTES de sessao — e o `cwd` muda no meio da sessao. Medido
+    nos dois `harness.db`:
+
+        02:00:07  classify cria t-20260912-020007618177  -> bucket science
+        02:07-02:40  agente grava 3x evidence            -> bucket slb
+        02:41:18  Stop le o bucket science: 0 evidence   -> gate escalation
+
+    A task tida por "fantasma" estava inteira no outro banco. O gate estava
+    certo: `select count(*) from evidence where task_id='t-20260912-020007618177'`
+    devolve 0 ate hoje.
+
+    O conserto fixa o bucket na SESSAO. O projeto passa a ser rotulo dela.
+    """
+
+    def test_cwd_muda_no_meio_da_sessao_e_o_bucket_nao(self, hp, tmp_path):
+        """O teste central. Sem ele o estado de uma sessao se parte em dois."""
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "science-harness")
+        b = _repo(tmp_path, "slb-mestrado-projeto")
+
+        primeiro = hp.ensure_state_dir(root, str(a), session_id="s-86459dbf")
+        segundo = hp.ensure_state_dir(root, str(b), session_id="s-86459dbf")
+
+        assert primeiro == segundo, (
+            "mudar de diretorio no meio da sessao partiu o estado em dois buckets"
+        )
+
+    def test_o_pin_sobrevive_a_um_processo_novo(self, hp, tmp_path):
+        """Hook e tool call sao processos distintos: cache em memoria nao basta."""
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        b = _repo(tmp_path, "beta")
+
+        esperado = hp.ensure_state_dir(root, str(a), session_id="s-1")
+        code = (
+            "import importlib.util,sys;"
+            f"spec=importlib.util.spec_from_file_location('hp',r'{PATHS_PY}');"
+            "m=importlib.util.module_from_spec(spec);sys.modules['hp']=m;"
+            "spec.loader.exec_module(m);"
+            f"print(m.state_dir(r'{root}',r'{b}',session_id='s-1'))"
+        )
+        env = dict(os.environ)
+        env.pop("HARNESS_SCOPE", None)
+        res = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                             text=True, env=env)
+        assert res.returncode == 0, res.stderr
+        assert Path(res.stdout.strip()) == esperado
+
+    def test_sessoes_diferentes_no_mesmo_cwd_seguem_isoladas(self, hp, tmp_path):
+        """O pin nao pode desfazer o isolamento por thread."""
+        root = tmp_path / "root"
+        repo = _repo(tmp_path, "alpha")
+        a = hp.ensure_state_dir(root, str(repo), session_id="s-a")
+        b = hp.ensure_state_dir(root, str(repo), session_id="s-b")
+        assert a != b
+
+    def test_projetos_distintos_sem_sessao_seguem_isolados(self, hp, tmp_path):
+        """A invariante de 2026-07-28 continua de pe: sem sessao, sem pin."""
+        root = tmp_path / "root"
+        a = hp.ensure_state_dir(root, str(_repo(tmp_path, "alpha")))
+        b = hp.ensure_state_dir(root, str(_repo(tmp_path, "beta")))
+        assert a != b
+
+    def test_sem_session_id_o_pin_nao_existe(self, hp, tmp_path):
+        """9,4% das emissoes desta maquina nao tem session_id. Nao ha chave."""
+        root = tmp_path / "root"
+        hp.ensure_state_dir(root, str(_repo(tmp_path, "alpha")))
+        assert not (root / hp.PINS_SUBDIR).exists()
+
+    def test_global_ignora_o_pin(self, hp, tmp_path):
+        root = tmp_path / "root"
+        d = hp.state_dir(root, str(_repo(tmp_path, "alpha")),
+                         scope="global", session_id="s-1")
+        assert d == root
+        assert not (root / hp.PINS_SUBDIR).exists()
+
+    def test_pin_corrompido_degrada_para_o_cwd(self, hp, tmp_path):
+        """Invariante de `ensure_state_dir`: hook nao pode falhar."""
+        root = tmp_path / "root"
+        repo = _repo(tmp_path, "alpha")
+        pins = root / hp.PINS_SUBDIR
+        pins.mkdir(parents=True)
+        (pins / f"{hp.session_slug('s-1')}.json").write_text("{ nao e json",
+                                                             encoding="utf-8")
+
+        d = hp.state_dir(root, str(repo), session_id="s-1")
+        assert d == (root / hp.PROJECTS_SUBDIR / hp.project_slug(str(repo))
+                     / hp.SESSIONS_SUBDIR / hp.session_slug("s-1"))
+
+    def test_pins_bloqueado_nao_levanta(self, hp, tmp_path):
+        """`pins` ocupado por um ARQUIVO: escrever e impossivel, resolver nao."""
+        root = tmp_path / "root"
+        root.mkdir()
+        (root / hp.PINS_SUBDIR).write_text("ocupado", encoding="utf-8")
+        d = hp.ensure_state_dir(root, str(_repo(tmp_path, "alpha")), session_id="s-1")
+        assert d.exists()
+
+    def test_adota_o_bucket_existente_mais_recente(self, hp, tmp_path):
+        """Sessao que JA rodou antes da mudanca: o pin nasce onde o trabalho esta.
+
+        Para a sessao `86459dbf` isso escolhe `science-harness` (mtime 02:49)
+        sobre `slb` (02:40) — que e onde a task viva estava.
+        """
+        root = tmp_path / "root"
+        velho = _repo(tmp_path, "slb-mestrado-projeto")
+        novo = _repo(tmp_path, "science-harness")
+        outro = _repo(tmp_path, "harness4claude")
+        sess = hp.session_slug("s-86459dbf")
+
+        for repo, quando in ((velho, 1_700_000_000), (novo, 1_700_000_600)):
+            b = root / hp.PROJECTS_SUBDIR / hp.project_slug(str(repo)) / hp.SESSIONS_SUBDIR / sess
+            b.mkdir(parents=True)
+            os.utime(b, (quando, quando))
+
+        d = hp.state_dir(root, str(outro), session_id="s-86459dbf")
+        assert d.parent.parent.name == hp.project_slug(str(novo)), (
+            "adocao escolheu o bucket abandonado em vez do que tem trabalho vivo"
+        )
+
+    def test_a_deriva_fica_registrada(self, hp, tmp_path):
+        """Discordancia visivel e o que separa este conserto de um pin mudo."""
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        b = _repo(tmp_path, "beta")
+        hp.ensure_state_dir(root, str(a), session_id="s-1")
+        hp.ensure_state_dir(root, str(b), session_id="s-1")
+
+        pin = json.loads((root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json")
+                         .read_text(encoding="utf-8"))
+        assert pin["project_slug"] == hp.project_slug(str(a))
+        assert hp.project_slug(str(b)) in [d["project_slug"] for d in pin["drifts"]]
+
+    def test_deriva_repetida_nao_incha_o_pin(self, hp, tmp_path):
+        """O mesmo `cd` repetido em 200 prompts nao pode virar 200 linhas."""
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        b = _repo(tmp_path, "beta")
+        hp.ensure_state_dir(root, str(a), session_id="s-1")
+        for _ in range(5):
+            hp.ensure_state_dir(root, str(b), session_id="s-1")
+
+        pin = json.loads((root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json")
+                         .read_text(encoding="utf-8"))
+        assert len(pin["drifts"]) == 1
+
+    def test_cli_com_a_mesma_sessao_cai_no_mesmo_lugar(self, tmp_path):
+        """O contrato que o agente e os hooks usam de fato."""
+        env = dict(os.environ)
+        env.pop("HARNESS_SCOPE", None)
+        root = tmp_path / "root"
+        saidas = []
+        for nome in ("science-harness", "slb-mestrado-projeto"):
+            r = tmp_path / nome
+            (r / ".git").mkdir(parents=True)
+            res = subprocess.run(
+                [sys.executable, str(PATHS_PY), "--root", str(root),
+                 "--cwd", str(r), "--session-id", "86459dbf"],
+                capture_output=True, text=True, env=env)
+            assert res.returncode == 0, res.stderr
+            saidas.append(res.stdout.strip())
+        assert saidas[0] == saidas[1]

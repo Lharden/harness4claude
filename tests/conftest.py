@@ -29,6 +29,7 @@ BASH_REQUIRED_CLASSES = {
         "TestInlinePythonLayer",
         "TestOverrideLeavesTrace",
     },
+    "test_classify_anuncio_fantasma.py": {"TestAnuncioSoPromete0QueOBancoRecebeu"},
     "test_health_check_smoke.py": {"TestSmokeDetectaSabotagem", "TestSmokeNaoTocaEstadoReal"},
     "test_hook_liveness.py": {"TestHooksGravamHeartbeat"},
     "test_host_contract_resilience.py": {"TestGitGuardFailsLoud", "TestCrlfNaoFragmentaBucket"},

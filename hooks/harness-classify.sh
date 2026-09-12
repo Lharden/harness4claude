@@ -671,6 +671,13 @@ _atomic_write_json(state_file, new_state)
 
 # Dual-write transacional: state.json continua sendo a projecao legivel pelos
 # hooks legados; harness.db valida unicidade de scope, revisao, gates e evidencia.
+#
+# O resultado importa para o ANUNCIO, la embaixo. Ate 2026-09-12 esta falha era
+# invisivel: o `state.json` ja tinha sido escrito com o `task_id` novo (linha
+# acima), o except so anexava ao log, e o bloco CLASSIFIED anunciava o id assim
+# mesmo. O modelo entao abria pipeline sobre uma task que nao existe em `tasks`
+# — sem revisao, sem scope, e que nenhum `state_cli.py` consegue resolver.
+transactional_ok = False
 try:
     from transactional_state import HarnessDatabase
     transactional = HarnessDatabase(os.path.dirname(state_file)).start_task(
@@ -691,6 +698,7 @@ try:
         "scope_id": transactional["scope_id"],
     })
     _atomic_write_json(state_file, new_state)
+    transactional_ok = True
 except Exception as exc:
     # O prompt continua; health-check e contract adapter tornam a degradacao visivel.
     try:
@@ -809,6 +817,19 @@ elif pipeline_unmapped:
         f"HARNESS v3 WARNING: classificacao '{classification}' (task {task_id}) "
         f"nao tem pipeline mapeado. Trate como L1-feature ou confirme o tipo "
         f"manualmente — nao ha fases a executar. Nao prossiga em silencio."
+    ))
+elif not transactional_ok:
+    # O banco nao recebeu a task. Anunciar o id assim mesmo — o que este hook fez
+    # ate 2026-09-12 — manda o modelo abrir pipeline sobre algo que `state_cli.py`
+    # nao consegue resolver: `_locked_task` nao acha a linha e toda transicao
+    # morre. Dizer o que houve custa uma frase e evita o pipeline inteiro.
+    _falar("warning", (
+        f"HARNESS v3 WARNING: classificacao '{classification}' foi calculada, mas "
+        f"a escrita transacional falhou — a task {task_id} existe apenas no "
+        f"state.json e NAO esta na tabela `tasks`. Nao invoque 'harness-workflow' "
+        f"nem tente transicionar fases: nao ha task para resolver. Trate como L0, "
+        f"responda direto, e avise que o harness esta degradado (a causa esta em "
+        f"transactional-state-error.log, no bucket da sessao)."
     ))
 else:
     # L1+: ativa o workflow. O texto manda CONFIRMAR antes de executar porque
