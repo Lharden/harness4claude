@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -567,17 +568,72 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
         return ""
     task = database.register_stop_continuation(task["task_id"], limit=2)
     _sync_projection(bucket, projection, task)
-    if task["pending_gate"] == "escalation":
-        reason = (
-            "HARNESS v3 escalation gate: verification remains incomplete after two continuations. "
-            "Ask the user for direction with the concrete blocker and evidence."
-        )
-    else:
-        reason = (
-            "HARNESS v3 verification gate: continue the active harness-workflow pipeline and attach "
-            "fresh test evidence before the final response."
-        )
+    reason = _motivo_do_gate(bucket, database, task)
     return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+
+
+def _conta_evidencia(database, task_id: str, code_revision: int) -> str:
+    """Quantas linhas de evidencia esta task tem, e quantas na revisao atual."""
+    try:
+        with sqlite3.connect(database.path) as raw:
+            total = raw.execute(
+                "SELECT COUNT(*) FROM evidence WHERE task_id = ?", (task_id,)
+            ).fetchone()[0]
+            desta = raw.execute(
+                "SELECT COUNT(*) FROM evidence WHERE task_id = ? AND code_revision = ?",
+                (task_id, code_revision),
+            ).fetchone()[0]
+    except sqlite3.Error:
+        return "nao foi possivel ler a tabela `evidence`"
+    if not total:
+        return "a tabela `evidence` desta task esta VAZIA (0 linhas)"
+    return f"{total} linha(s) de evidence nesta task, {desta} na code_revision atual"
+
+
+def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
+    """A mensagem do bloqueio, dizendo o que o portao LEU.
+
+    Ate 2026-09-16 ela nao citava `task_id`, nem o balde, nem o comando que
+    registraria evidencia. Quem a recebia nao tinha como confirmar nada, e a
+    saida mais barata era inventar um diagnostico — duas sessoes diferentes
+    concluiram "a task e fantasma" sobre uma task que existia e que de fato
+    nunca tinha recebido evidencia. Um portao que nao mostra a leitura obriga
+    quem le a adivinhar a leitura.
+    """
+    contagem = _conta_evidencia(database, task["task_id"], task["code_revision"])
+    pipeline = task["pipeline"] or []
+    fase = task["phase"]
+    posicao = (
+        f"{pipeline.index(fase) + 1} de {len(pipeline)}"
+        if fase in pipeline else f"? de {len(pipeline)}"
+    )
+    leitura = (
+        f"task_id={task['task_id']} | balde={bucket} | fase={fase} ({posicao}) | "
+        f"code_revision={task['code_revision']} | verified={task['verified']} | {contagem}"
+    )
+    comando = (
+        'PR="$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")"; '
+        f'python "$PR/scripts/state_cli.py" evidence --home "{bucket}" '
+        f'--task {task["task_id"]} --type test --command-text "python -m pytest -q" '
+        "--exit-code 0 --tests-collected <N> --tests-passed <P> --tests-skipped <S>"
+    )
+    regua = (
+        "A regua: exit 0, tests_passed > 0, e tests_passed + tests_skipped == "
+        "tests_collected. Teste pulado NAO reprova; teste que falhou, sim."
+    )
+    if task["pending_gate"] == "escalation":
+        return (
+            "HARNESS v3 escalation gate: a verificacao segue incompleta depois de duas "
+            f"continuacoes.\nO que o portao leu: {leitura}\n"
+            "Leve ao usuario o bloqueio concreto e esta leitura — nao reformule o "
+            "diagnostico sem antes conferir os numeros acima."
+        )
+    return (
+        "HARNESS v3 verification gate: continue o pipeline do harness-workflow e anexe "
+        f"evidencia de teste fresca antes da resposta final.\n"
+        f"O que o portao leu: {leitura}\n{regua}\n"
+        f"Rodar a suite em primeiro plano ja grava sozinho. Para registrar a mao:\n{comando}"
+    )
 
 
 def handle_payload(

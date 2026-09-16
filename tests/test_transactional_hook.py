@@ -653,3 +653,50 @@ def test_gate_do_stop_continua_saindo_cru(tmp_path: Path):
     saida = hook.handle_payload(_payload("Stop", cwd), harness_root=raiz)
 
     assert json.loads(saida)["decision"] == "block"
+
+
+# ---------------------------------------------------------------------------
+# Achado 1 — a mensagem do gate nao dizia o que ele leu
+# ---------------------------------------------------------------------------
+# Medido 2026-09-16: duas sessoes diferentes receberam o bloqueio e concluiram
+# "a task e fantasma", sobre uma task que existia e que de fato nunca tinha
+# recebido evidencia. O portao contou certo as duas vezes. O que faltava era
+# ele MOSTRAR a contagem — sem task_id, sem balde e sem o comando que
+# registraria, a saida mais barata para quem le e inventar um diagnostico.
+
+
+def test_mensagem_do_gate_cita_o_que_leu(tmp_path: Path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    bucket, _database, task = _active_task(tmp_path / "harness", cwd)
+
+    saida = hook.handle_payload(_payload("Stop", cwd), harness_root=tmp_path / "harness")
+
+    motivo = json.loads(saida)["reason"]
+    assert task["task_id"] in motivo, "tem de citar a task que foi lida"
+    assert str(bucket) in motivo, "tem de citar o balde que foi lido"
+    assert "state_cli.py" in motivo, "tem de dizer como registrar evidencia"
+    assert "--tests-skipped" in motivo, "a regua nova tem de aparecer no comando"
+    assert "VAZIA" in motivo, "sem evidencia nenhuma, tem de dizer isso com todas as letras"
+
+
+def test_mensagem_do_gate_conta_a_evidencia_que_existe(tmp_path: Path):
+    """Com evidencia gravada mas insuficiente, a contagem tem de aparecer.
+
+    E a diferenca entre "ninguem registrou nada" e "registrou e nao bastou" —
+    dois diagnosticos distintos que a mensagem antiga nao distinguia.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _bucket, database, task = _active_task(tmp_path / "harness", cwd)
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=1, tests_collected=10, tests_passed=9, tests_skipped=0, output_hash="h",
+    )
+
+    motivo = json.loads(
+        hook.handle_payload(_payload("Stop", cwd), harness_root=tmp_path / "harness")
+    )["reason"]
+
+    assert "VAZIA" not in motivo
+    assert "1 linha(s) de evidence" in motivo
