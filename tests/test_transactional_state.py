@@ -487,3 +487,108 @@ def test_state_cli_artifact_projeta_no_state_json(tmp_path: Path):
     assert projecao["artifacts_so_far"] == ["dossie.md"], (
         "exit 0 com a lista vazia e sucesso silencioso — parece perda de dado"
     )
+
+
+# --- Achado 4: `skip` nao e falha -------------------------------------------
+# A regra de aceite era `tests_passed == tests_collected`. Uma suite com
+# qualquer teste pulado nunca satisfaz isso, e as duas configuracoes verdes de
+# um projeto inteiro ficam estruturalmente incapazes de serem declaradas
+# verificadas. Medido em 2026-09-16: `1821 passed, 28 skipped` e
+# `1848 passed, 1 skipped`, ambas exit 0, ambas recusadas pelo caminho manual.
+#
+# `skip` e ausencia de juizo, nao juizo de exclusao. O que gateia e falha.
+
+
+def test_suite_com_pulados_verifica(tmp_path: Path):
+    """N coletados, P passando, S pulados, P + S == N, exit 0 -> verificado."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=1849, tests_passed=1821, tests_skipped=28,
+        output_hash="verde-com-skip",
+    )
+
+    assert task["verified"] is True
+    assert task["status"] == "verified"
+
+
+def test_suite_inteira_pulada_nao_verifica(tmp_path: Path):
+    """Zero veredito nenhum nao e suite verde: exit 0 sozinho nao basta."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=1849, tests_passed=0, tests_skipped=1849,
+        output_hash="tudo-pulado",
+    )
+
+    assert task["verified"] is False
+    with pytest.raises(state.StateTransitionError, match="fresh verification"):
+        db.complete(task["task_id"], expected_revision=task["revision"])
+
+
+def test_falha_com_pulados_nao_verifica(tmp_path: Path):
+    """Pulado nao cobre falha: 1800 + 28 != 1849 porque 21 falharam."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=1, tests_collected=1849, tests_passed=1800, tests_skipped=28,
+        output_hash="com-falha",
+    )
+
+    assert task["verified"] is False
+
+
+# --- Achado 5: a regua escrita duas vezes -----------------------------------
+# A condicao existe em `record_evidence` (Python) e em
+# `_has_fresh_test_evidence` (SQL), independentes. E a assinatura que este
+# portao existe para detectar, dentro dele mesmo: duas leituras do mesmo fato,
+# e nada obriga as duas a concordarem. O teste exercita o PAR — grava e le de
+# volta — porque testar so o lado da escrita e o que deixou as duas divergirem.
+
+
+@pytest.mark.parametrize(
+    "exit_code, coletados, passando, pulados, aceita",
+    [
+        (0, 1849, 1821, 28, True),     # verde com skip
+        (0, 1849, 1849, 0, True),      # verde puro
+        (0, 1, 1, 0, True),            # suite minima
+        (0, 1849, 0, 1849, False),     # tudo pulado: nenhum veredito
+        (1, 1849, 1800, 28, False),    # falha
+        (0, 0, 0, 0, False),           # nada coletado
+        (0, 1849, 1820, 28, False),    # 1820 + 28 != 1849: sumiu um veredito
+    ],
+)
+def test_escrita_e_leitura_concordam(tmp_path: Path, exit_code, coletados, passando, pulados, aceita):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+    task = db.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=exit_code, tests_collected=coletados, tests_passed=passando,
+        tests_skipped=pulados, output_hash=f"h-{coletados}-{passando}-{pulados}",
+    )
+
+    # Lado da escrita.
+    assert task["verified"] is aceita
+
+    # Lado da leitura: `complete` consulta `_has_fresh_test_evidence`, em SQL.
+    # As duas pontas tem de dar o mesmo veredito sobre a mesma linha.
+    if aceita:
+        assert db.complete(task["task_id"], expected_revision=task["revision"])["status"] == "done"
+    else:
+        with pytest.raises(state.StateTransitionError, match="fresh verification"):
+            db.complete(task["task_id"], expected_revision=task["revision"])
