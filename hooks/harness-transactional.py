@@ -426,20 +426,50 @@ def _write_heartbeat(
         pass
 
 
-def _test_counts(payload: dict[str, Any]) -> tuple[int | None, int | None, str | None]:
+# Categorias que o pytest imprime na linha de sumario, separadas pelo que elas
+# significam para o portao.
+#
+# Ate 2026-09-16 este parser so via `passed`, `failed` e `errors`, e derivava
+# `tests_collected` como a soma dos tres. O numero gravado no banco nunca foi o
+# `collected N items` do pytest — e a mesma palavra queria dizer duas coisas
+# conforme quem escrevia, o hook ou uma pessoa rodando o `state_cli` a mao. A
+# pessoa que reportava o collected verdadeiro era a unica recusada.
+#
+# `skipped`, `xfailed`, `xpassed` e `deselected` nao produzem veredito que
+# gateie: nenhum deles e falha, e nenhum deles e prova de que algo passou.
+VEREDITO_PASSA = (r"\b(\d+)\s+passed\b",)
+VEREDITO_FALHA = (r"\b(\d+)\s+failed\b", r"\b(\d+)\s+errors?\b")
+SEM_VEREDITO = (
+    r"\b(\d+)\s+skipped\b",
+    r"\b(\d+)\s+xfailed\b",
+    r"\b(\d+)\s+xpassed\b",
+    r"\b(\d+)\s+deselected\b",
+)
+
+
+def _soma_categorias(text: str, padroes: tuple[str, ...]) -> int:
+    # `max` por padrao, e nao soma: o pytest repete a linha de sumario (uma vez
+    # em "short test summary info", outra no rodape) e somar contaria duas vezes.
+    return sum(
+        max((int(v) for v in re.findall(padrao, text, re.IGNORECASE)), default=0)
+        for padrao in padroes
+    )
+
+
+def _test_counts(payload: dict[str, Any]) -> tuple[int | None, int | None, int | None, str | None]:
+    """(coletados, passando, pulados, digest) — coletados = tudo que o pytest contou."""
     text = _response_text(payload)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest() if text else None
     if re.search(r"\b(no tests ran|collected 0 items|0 tests? (?:run|passed|total))\b", text, re.IGNORECASE):
-        return 0, 0, digest
-    passed = [int(value) for value in re.findall(r"\b(\d+)\s+passed\b", text, re.IGNORECASE)]
-    failed = [int(value) for value in re.findall(r"\b(\d+)\s+failed\b", text, re.IGNORECASE)]
-    errors = [int(value) for value in re.findall(r"\b(\d+)\s+errors?\b", text, re.IGNORECASE)]
-    if passed or failed or errors:
-        passed_count = max(passed, default=0)
-        return passed_count + max(failed, default=0) + max(errors, default=0), passed_count, digest
+        return 0, 0, 0, digest
+    passou = _soma_categorias(text, VEREDITO_PASSA)
+    falhou = _soma_categorias(text, VEREDITO_FALHA)
+    sem_veredito = _soma_categorias(text, SEM_VEREDITO)
+    if passou or falhou or sem_veredito:
+        return passou + falhou + sem_veredito, passou, sem_veredito, digest
     if re.search(r"\btest result:\s*ok\b", text, re.IGNORECASE) or re.search(r"(?m)^ok\s+\S+", text):
-        return 1, 1, digest
-    return None, None, digest
+        return 1, 1, 0, digest
+    return None, None, None, digest
 
 
 def _projection(bucket: Path) -> dict[str, Any]:
@@ -510,7 +540,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
             task = database.touch_files(task["task_id"], alvos or ["shell-command"])
     aviso = ""
     if is_trusted_verification(command):
-        collected, passed, output_hash = _test_counts(payload)
+        collected, passed, skipped, output_hash = _test_counts(payload)
         task = database.record_evidence(
             task["task_id"],
             evidence_type="test",
@@ -518,6 +548,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
             exit_code=_exit_code(payload),
             tests_collected=collected,
             tests_passed=passed,
+            tests_skipped=skipped,
             output_hash=output_hash,
         )
         if collected is None:

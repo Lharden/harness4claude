@@ -85,6 +85,7 @@ def main(argv=None) -> int:
     evidence.add_argument("--exit-code", type=int)
     evidence.add_argument("--tests-collected", type=int)
     evidence.add_argument("--tests-passed", type=int)
+    evidence.add_argument("--tests-skipped", type=int)
     evidence.add_argument("--output-hash")
     touch = sub.add_parser("touch")
     touch.add_argument("--task", required=True)
@@ -133,6 +134,7 @@ def main(argv=None) -> int:
                 exit_code=args.exit_code,
                 tests_collected=args.tests_collected,
                 tests_passed=args.tests_passed,
+                tests_skipped=args.tests_skipped,
                 output_hash=args.output_hash,
             )
         elif args.command == "touch":

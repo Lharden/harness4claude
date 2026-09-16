@@ -592,3 +592,39 @@ def test_escrita_e_leitura_concordam(tmp_path: Path, exit_code, coletados, passa
     else:
         with pytest.raises(state.StateTransitionError, match="fresh verification"):
             db.complete(task["task_id"], expected_revision=task["revision"])
+
+
+def test_banco_antigo_sem_coluna_migra_e_preserva_veredito(tmp_path: Path):
+    """Linha gravada antes da coluna existir tem `tests_skipped` NULL.
+
+    `COALESCE(tests_skipped, 0)` faz a regua nova coincidir exatamente com a
+    antiga nessas linhas — `passed + 0 == collected` e o que elas ja diziam.
+    Evidencia verde de antes do conserto continua verde depois dele.
+    """
+    import sqlite3
+
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(
+        scope_id="s", legacy_level="L1-bug", tier="L1", kind="bug",
+        pipeline=["verify"], prompt="fix",
+    )
+
+    # Simula o esquema anterior: derruba a coluna e grava como se gravava antes.
+    with sqlite3.connect(db.path) as raw:
+        raw.execute("ALTER TABLE evidence DROP COLUMN tests_skipped")
+        raw.execute(
+            "INSERT INTO evidence(task_id, code_revision, evidence_type, command, "
+            "exit_code, tests_collected, tests_passed, output_hash, created_at) "
+            "VALUES (?, 0, 'test', 'pytest', 0, 7, 7, 'antigo', '2026-09-01T00:00:00+00:00')",
+            (task["task_id"],),
+        )
+        raw.execute("UPDATE tasks SET verified = 1, status = 'verified' WHERE task_id = ?",
+                    (task["task_id"],))
+
+    # Reabrir roda `_ensure_schema`, que re-adiciona a coluna como NULL.
+    db = state.HarnessDatabase(tmp_path)
+    task = db.task(task["task_id"])
+    assert task["verified"] is True
+
+    # E o lado da leitura aceita a linha antiga.
+    assert db.complete(task["task_id"], expected_revision=task["revision"])["status"] == "done"

@@ -28,6 +28,31 @@ ARTIFACT_OBLIGATIONS = {
     "design-doc": "design",
 }
 
+# A regua do portao, em UM lugar so.
+#
+# Ate 2026-09-16 ela existia em duas implementacoes independentes: uma em
+# Python dentro de `record_evidence`, outra em SQL dentro de
+# `_has_fresh_test_evidence`. Nada obrigava as duas a concordarem — e e
+# exatamente a assinatura que este portao existe para detectar, duas leituras
+# do mesmo fato, dentro dele mesmo. Agora e um texto so, avaliado pelo mesmo
+# motor contra a mesma linha nos dois caminhos: divergir virou impossivel, nao
+# improvavel.
+#
+# O predicado le colunas de `evidence`. Quem grava avalia-o contra a linha que
+# acabou de inserir, e nao contra os valores que pretendia inserir — assim
+# qualquer coercao que o SQLite faca na escrita entra na conta das duas vezes.
+#
+# `tests_passed > 0` nao e redundante com a soma. Sem ele uma suite que pula
+# tudo (`0 + 1849 = 1849`) passaria: exit zero, nenhum veredito, e o portao
+# declarando verificado o que ninguem executou.
+REGRA_TESTE_VALIDO = (
+    "evidence_type = 'test' "
+    "AND exit_code = 0 "
+    "AND tests_collected > 0 "
+    "AND tests_passed > 0 "
+    "AND tests_passed + COALESCE(tests_skipped, 0) = tests_collected"
+)
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -122,6 +147,7 @@ class HarnessDatabase:
                     exit_code INTEGER,
                     tests_collected INTEGER,
                     tests_passed INTEGER,
+                    tests_skipped INTEGER,
                     output_hash TEXT,
                     created_at TEXT NOT NULL
                 );
@@ -185,6 +211,14 @@ class HarnessDatabase:
                 connection.execute(
                     "ALTER TABLE tasks ADD COLUMN stop_continuations INTEGER NOT NULL DEFAULT 0"
                 )
+            evidence_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(evidence)").fetchall()
+            }
+            if "tests_skipped" not in evidence_columns:
+                # Fica NULL nas linhas antigas de proposito. `COALESCE(...,0)`
+                # na regua trata ausencia como zero pulado, que e o que essas
+                # linhas de fato queriam dizer quando foram gravadas.
+                connection.execute("ALTER TABLE evidence ADD COLUMN tests_skipped INTEGER")
             gate_columns = {
                 str(row[1]) for row in connection.execute("PRAGMA table_info(gates)").fetchall()
             }
@@ -911,22 +945,16 @@ class HarnessDatabase:
         tests_collected: int | None,
         tests_passed: int | None,
         output_hash: str | None,
+        tests_skipped: int | None = None,
     ) -> dict[str, Any]:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
-            valid_test = (
-                evidence_type == "test"
-                and exit_code == 0
-                and isinstance(tests_collected, int)
-                and tests_collected > 0
-                and tests_passed == tests_collected
-            )
-            connection.execute(
+            cursor = connection.execute(
                 """
                 INSERT INTO evidence(
                     task_id, code_revision, evidence_type, command, exit_code,
-                    tests_collected, tests_passed, output_hash, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tests_collected, tests_passed, tests_skipped, output_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -936,10 +964,17 @@ class HarnessDatabase:
                     exit_code,
                     tests_collected,
                     tests_passed,
+                    tests_skipped,
                     output_hash,
                     utc_now(),
                 ),
             )
+            # Julga a linha gravada, com o mesmo texto que a leitura vai usar.
+            # Ver REGRA_TESTE_VALIDO: a duplicata era o defeito.
+            valid_test = connection.execute(
+                f"SELECT 1 FROM evidence WHERE id = ? AND {REGRA_TESTE_VALIDO}",
+                (cursor.lastrowid,),
+            ).fetchone() is not None
             # A evidencia entra sempre — o registro acima e o historico e nao
             # depende do estado da task. O que segue e o ciclo de vida, e ele
             # para em status terminal: a validacao final roda DEPOIS do
@@ -1063,10 +1098,10 @@ class HarnessDatabase:
     @staticmethod
     def _has_fresh_test_evidence(connection: sqlite3.Connection, row: sqlite3.Row) -> bool:
         return connection.execute(
-            """
+            f"""
             SELECT 1 FROM evidence
-            WHERE task_id = ? AND code_revision = ? AND evidence_type = 'test'
-              AND exit_code = 0 AND tests_collected > 0 AND tests_passed = tests_collected
+            WHERE task_id = ? AND code_revision = ?
+              AND {REGRA_TESTE_VALIDO}
               AND id = (
                   SELECT MAX(id) FROM evidence
                   WHERE task_id = ? AND code_revision = ? AND evidence_type = 'test'
