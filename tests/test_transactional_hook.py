@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
@@ -700,3 +701,42 @@ def test_mensagem_do_gate_conta_a_evidencia_que_existe(tmp_path: Path):
 
     assert "VAZIA" not in motivo
     assert "1 linha(s) de evidence" in motivo
+
+
+def test_comando_que_a_mensagem_imprime_de_fato_roda(tmp_path: Path):
+    """O comando sugerido passa pelo parser real do `state_cli`.
+
+    A primeira versao desta mensagem imprimia `evidence --home <balde>`, e
+    `--home` e do parser RAIZ: a ordem certa e `--home <balde> evidence`. O
+    comando saia com `error: the following arguments are required: --home`.
+    Uma mensagem de portao que entrega instrucao impossivel de seguir repete o
+    defeito que ela veio consertar, entao quem a verifica tem de executa-la.
+    """
+    import shlex
+
+    cli = _load("transactional_hook_cli", "scripts/state_cli.py")
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _bucket, _database, task = _active_task(tmp_path / "harness", cwd)
+
+    motivo = json.loads(
+        hook.handle_payload(_payload("Stop", cwd), harness_root=tmp_path / "harness")
+    )["reason"]
+
+    linha = next(l for l in motivo.splitlines() if "state_cli.py" in l)
+    argv = shlex.split(linha, posix=False)
+    corte = argv.index([a for a in argv if a.endswith('state_cli.py"')][0]) + 1
+    argv = [a.strip('"') for a in argv[corte:]]
+    argv = [("1" if a in ("<N>", "<P>", "<S>") else a) for a in argv]
+
+    args = cli._parser().parse_args(argv) if hasattr(cli, "_parser") else None
+    if args is None:  # o CLI monta o parser dentro de `main`
+        import subprocess
+        p = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "state_cli.py"), *argv],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert p.returncode == 0, f"o comando sugerido nao roda:\n{p.stderr}"
+    else:
+        assert args.command == "evidence"
+        assert args.task == task["task_id"]

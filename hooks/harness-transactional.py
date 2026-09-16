@@ -611,9 +611,13 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
         f"task_id={task['task_id']} | balde={bucket} | fase={fase} ({posicao}) | "
         f"code_revision={task['code_revision']} | verified={task['verified']} | {contagem}"
     )
+    # `--home` e do parser RAIZ: vai antes do subcomando, nao depois. Escrever
+    # na ordem errada aqui entregaria um comando que nao roda, que e a mesma
+    # falha que esta mensagem existe para corrigir — instrucao que nao se
+    # consegue seguir vale tanto quanto instrucao nenhuma.
     comando = (
         'PR="$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")"; '
-        f'python "$PR/scripts/state_cli.py" evidence --home "{bucket}" '
+        f'python "$PR/scripts/state_cli.py" --home "{bucket}" evidence '
         f'--task {task["task_id"]} --type test --command-text "python -m pytest -q" '
         "--exit-code 0 --tests-collected <N> --tests-passed <P> --tests-skipped <S>"
     )
