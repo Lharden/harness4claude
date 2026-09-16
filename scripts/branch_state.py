@@ -476,8 +476,15 @@ def add(
     detector: str = "claude",
     origin_turn: int = 0,
     parent_session: str | None = None,
+    explicito: bool = False,
 ) -> dict:
-    """Registra um ramo novo como `pending` e devolve o registro criado."""
+    """Registra um ramo novo como `pending` e devolve o registro criado.
+
+    `explicito` significa que o usuario pediu o ramo (`/branch add`), e vai
+    inteiro ate `create_branch`. Sem ele as duas portas decidiam separado:
+    `branch_sensor.may_offer` ja pulava orcamento e cooldown nesse caso, e o
+    registro transacional nao sabia disso e recusava depois do `ok`.
+    """
     target = branches_path(cwd)
     with _Lock(target, required=True):
         data = load(cwd)
@@ -517,6 +524,7 @@ def add(
                     offered_turn=origin_turn or _sensor_turn(cwd),
                     max_offers=_integer_setting("HARNESS_BRANCH_MAX_OFFERS", 2),
                     cooldown_turns=_integer_setting("HARNESS_BRANCH_COOLDOWN_TURNS", 8),
+                    explicito=explicito,
                 )
             except StateTransitionError as exc:
                 raise ValueError(str(exc)) from exc
@@ -952,6 +960,9 @@ def main() -> int:
     p.add_argument("--peek", action="store_true",
                    help="`parked` sem consumir a entrega unica da conclusao; "
                         "use em diagnostico, nunca no hook que entrega")
+    p.add_argument("--explicito", action="store_true",
+                   help="o usuario pediu este ramo: ignora orcamento e cooldown, "
+                        "igual ao que `branch_sensor.may_offer` ja fazia")
     p.add_argument("--slug", default=None)
     p.add_argument("--name", default=None)
     p.add_argument("--topic", default="")
@@ -980,7 +991,7 @@ def main() -> int:
             json.dumps(
                 add(cwd=cwd, name=args.name, topic=args.topic,
                     detector=args.detector, parent_session=args.parent_session,
-                    origin_turn=args.origin_turn),
+                    origin_turn=args.origin_turn, explicito=args.explicito),
                 ensure_ascii=False,
             )
         )

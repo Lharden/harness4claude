@@ -112,7 +112,14 @@ Registre sempre, mesmo antes de perguntar:
 python "$H4C/scripts/branch_state.py" add \
   --name "<Nome do Ramo>" --topic "<tema em uma frase>" --detector claude \
   --parent-session "<uuid desta sessão>"
+# acrescente --explicito aqui TAMBÉM, pelo mesmo motivo do `may-offer` acima
 ```
+
+**O `--explicito` vai nas duas chamadas ou em nenhuma.** Passá-lo só ao
+`may-offer` foi o defeito medido em 2026-09-16: o portão que responde a você
+concedia `ok`, e o `add` recusava em seguida com `branch offer cooldown is
+active`. São duas leituras do mesmo fato — "posso oferecer este ramo agora?" —
+e mandar a resposta do usuário para só uma delas faz as duas discordarem.
 
 O `session_id` nasce aí, antes da janela: um ramo `pending` já é endereçável
 por `claude --resume <uuid>` semanas depois.

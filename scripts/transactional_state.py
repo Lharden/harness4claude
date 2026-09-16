@@ -579,7 +579,18 @@ class HarnessDatabase:
         offered_turn: int,
         max_offers: int = 3,
         cooldown_turns: int = 8,
+        explicito: bool = False,
     ) -> dict[str, Any]:
+        """Registra a oferta de um ramo.
+
+        `explicito` e o mesmo predicado que `branch_sensor.may_offer` ja
+        aplicava: o usuario pediu, entao orcamento e cooldown nao valem. Ate
+        2026-09-16 este parametro nao existia aqui, e as duas portas decidiam
+        separado — a que o usuario consulta concedia, a que escreve recusava,
+        sobre o mesmo fato. Duplicata continua barrada nos dois casos, pelo
+        indice `UNIQUE(task_id, topic_hash)`: reoferecer tema que ja existe e
+        ruido mesmo quando pedido, e o caminho ali e `recall`.
+        """
         if max_offers < 1:
             raise StateTransitionError("branch offer limit must be positive")
         if cooldown_turns < 0:
@@ -591,12 +602,20 @@ class HarnessDatabase:
                 "SELECT COUNT(*) AS count, MAX(offered_turn) AS last_turn FROM branches WHERE task_id = ?",
                 (task_id,),
             ).fetchone()
-            if int(offer_stats["count"]) >= max_offers:
+            if not explicito and int(offer_stats["count"]) >= max_offers:
                 raise StateTransitionError("branch offer limit reached")
-            if (
-                offer_stats["last_turn"] is not None
-                and offered_turn - int(offer_stats["last_turn"]) < cooldown_turns
-            ):
+            # O cooldown mede distancia entre duas ofertas no MESMO contador. Um
+            # delta negativo nao diz "cedo demais" — diz que os dois numeros nao
+            # sao comparaveis, porque o contador do sensor e por projeto e duas
+            # sessoes o sobrescrevem uma a outra. Medido 2026-09-16: a task
+            # guardava 47, o sensor voltou para 33, e `-14 < 0` mantinha o
+            # portao fechado mesmo com `HARNESS_BRANCH_COOLDOWN_TURNS=0`. Zero
+            # nao desligava nada, porque zero nunca foi o lado comparado.
+            delta = (
+                None if offer_stats["last_turn"] is None
+                else offered_turn - int(offer_stats["last_turn"])
+            )
+            if not explicito and cooldown_turns > 0 and delta is not None and 0 <= delta < cooldown_turns:
                 raise StateTransitionError("branch offer cooldown is active")
             connection.execute(
                 """

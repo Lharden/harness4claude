@@ -1017,3 +1017,78 @@ class TestParkingComDuasMaes:
 
         assert "tema legado" in bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_A)
         assert bs.parked_block(cwd=str(tmp_path), session_id=self.MAE_B) == ""
+
+
+# ---------------------------------------------------------------------------
+# Achado 2 — duas portas, cooldowns independentes
+# ---------------------------------------------------------------------------
+# `may_offer(explicito=True)` pula orcamento e cooldown por desenho: o usuario
+# pediu. `create_branch` aplicava um SEGUNDO cooldown, sobre
+# `branches.offered_turn`, e nao tinha parametro `explicito`. O caminho que o
+# usuario consulta concedia; o que escreve recusava. Medido 2026-09-16: tres
+# recusas seguidas de `branch_state.add`, com `may_offer` dizendo OK.
+
+
+class TestCooldownUnico:
+    def test_explicito_atravessa_as_duas_portas(self, bs, tmp_path, monkeypatch):
+        spec = importlib.util.spec_from_file_location(
+            "branch_sensor", ROOT / "scripts" / "branch_sensor.py"
+        )
+        sensor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sensor)
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "3")
+        _active_transaction(bs, tmp_path)
+
+        bs.add(cwd=str(tmp_path), name="Primeiro", topic="assunto um", origin_turn=10)
+
+        # A porta que responde ao usuario concede, porque foi explicito.
+        assert sensor.may_offer(
+            cwd=str(tmp_path), topic="assunto dois", turn=11, explicito=True
+        ) == sensor.OK
+
+        # A porta que escreve tem de concordar com a que respondeu.
+        segundo = bs.add(
+            cwd=str(tmp_path), name="Segundo", topic="assunto dois",
+            origin_turn=11, explicito=True,
+        )
+        assert segundo["slug"]
+
+    def test_sem_explicito_o_cooldown_continua_valendo(self, bs, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_COOLDOWN_TURNS", "8")
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "3")
+        _active_transaction(bs, tmp_path)
+
+        bs.add(cwd=str(tmp_path), name="Primeiro", topic="assunto um", origin_turn=10)
+        with pytest.raises(ValueError, match="cooldown"):
+            bs.add(cwd=str(tmp_path), name="Segundo", topic="assunto dois", origin_turn=11)
+
+
+# ---------------------------------------------------------------------------
+# Achado 3 — o contador de turno anda para tras
+# ---------------------------------------------------------------------------
+# `HARNESS_BRANCH_COOLDOWN_TURNS` E lida — isso o seed errou. O que derrota
+# `=0` e o delta negativo: `offered_turn` da task ficou em 47 e o contador do
+# sensor voltou para 33. `33 - 47 = -14`, e `-14 < 0` e verdadeiro. Zero nao
+# desliga uma comparacao cujo lado esquerdo e negativo. E um delta negativo nao
+# diz "cedo demais": diz que os dois contadores nao sao comparaveis.
+
+
+class TestContadorParaTras:
+    def test_cooldown_zero_desliga_o_portao(self, bs, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_COOLDOWN_TURNS", "0")
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "3")
+        _active_transaction(bs, tmp_path)
+
+        bs.add(cwd=str(tmp_path), name="Primeiro", topic="assunto um", origin_turn=47)
+        segundo = bs.add(cwd=str(tmp_path), name="Segundo", topic="assunto dois", origin_turn=33)
+        assert segundo["slug"]
+
+    def test_delta_negativo_nao_e_cedo_demais(self, bs, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_BRANCH_COOLDOWN_TURNS", "8")
+        monkeypatch.setenv("HARNESS_BRANCH_MAX_OFFERS", "3")
+        _active_transaction(bs, tmp_path)
+
+        bs.add(cwd=str(tmp_path), name="Primeiro", topic="assunto um", origin_turn=47)
+        # 33 - 47 = -14: contadores incomparaveis, nao oferta apressada.
+        segundo = bs.add(cwd=str(tmp_path), name="Segundo", topic="assunto dois", origin_turn=33)
+        assert segundo["slug"]
