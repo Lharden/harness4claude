@@ -89,7 +89,12 @@ class TestDegradacao:
 
         assert p.returncode == 0, p.stderr
         d = json.loads(p.stdout.strip().splitlines()[-1])
-        assert d["arvore"].endswith(str(Path("harness4claude") / "contract"))
+        # "Vizinho" e o `contract/` adjacente ao `scripts/` que foi carregado —
+        # este repositorio, seja qual for o nome do diretorio que o contem. A
+        # assercao antiga exigia que o checkout se chamasse `harness4claude`, e
+        # por isso falhava dentro de qualquer worktree (`.claude/worktrees/<x>`),
+        # que e onde o trabalho deste repositorio de fato acontece.
+        assert Path(d["arvore"]) == ROOT / "contract"
         assert d["origem"].startswith("vizinho:")
         assert d["conformant"] is True
         assert d["lock"] is True
