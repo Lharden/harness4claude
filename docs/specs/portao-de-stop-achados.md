@@ -138,3 +138,70 @@ Os três casos — o que sobrou do #1, o #2 e o #3 — são a mesma assinatura q
 ## Consequência para este ramo
 
 Este ramo **não está registrado em `branches.json`** — o `add` foi recusado três vezes com `branch offer cooldown is active`, e a sessão foi aberta direto. A recusa é reproduzível e a causa está medida acima (#3). Registrar o ramo continua sendo o teste de fumaça correto do conserto.
+
+---
+
+# Achados 4 e 5 — medição de 2026-09-16, sessão `59e4f2f6-009b-4bd8-b44d-c6a251339456`
+
+## Achado 4 — CONFIRMADO no efeito, ERRADO no caminho.
+
+O seed afirma que as duas suítes verdes do Science-Harness são recusadas pelo portão, e que a causa é `tests_passed == tests_collected`. A condição é essa, e a recusa é real — mas **só num dos dois caminhos de escrita.**
+
+`_test_counts` (`hooks/harness-transactional.py`) **nunca parseou `skipped`**. Ele derivava `tests_collected` como `passed + failed + errors`. Rodando a função de produção sobre as linhas de sumário reais, antes do conserto:
+
+| entrada do pytest | `tests_collected` gravado | `tests_passed` | verificava? |
+|---|---:|---:|---|
+| `1821 passed, 28 skipped` | **1821** | 1821 | **sim** |
+| `1848 passed, 1 skipped` | **1848** | 1848 | **sim** |
+| `1849 passed` | 1849 | 1849 | sim |
+| `1849 skipped` | `None` | `None` | não |
+| `1800 passed, 21 failed, 28 skipped` | 1821 | 1800 | não |
+
+**O caminho automático já aceitava suíte com skip, por acidente.** Quem era recusado era o caminho manual — `state_cli.py evidence --tests-collected 1849` —, usado por quem lia `collected 1849 items` no pytest e reportava honestamente.
+
+> [superado: "as duas suítes verdes são estruturalmente incapazes de serem declaradas verificadas"] — elas eram, pelo caminho manual. Pelo hook, passavam. A sessão que "contornou" gravando `1848 executados / 1848 passando` não contornou nada: escreveu exatamente o que o hook teria escrito.
+
+### O defeito real
+
+`tests_collected` significava **duas coisas diferentes conforme quem escrevia**. É o achado 5 outra vez — duas leituras do mesmo fato — só que na *definição do campo*, não na condição. E a leitura estrita punia o relator honesto.
+
+Decidido com o autor em 2026-09-16: **`tests_collected` passa a ser o do pytest.** Coluna `tests_skipped` nova. Régua:
+
+```
+exit_code = 0 AND tests_passed > 0 AND tests_passed + COALESCE(tests_skipped,0) = tests_collected
+```
+
+`tests_passed > 0` não é redundante com a soma: sem ele, `0 + 1849 = 1849` faria uma suíte que pula tudo passar — o buraco que o próprio seed nomeou na terceira opção.
+
+O parser soma também `xfailed`, `xpassed` e `deselected`: nenhum é falha, nenhum é prova de que algo passou. E usa `max` por categoria, não soma, porque o pytest imprime o sumário duas vezes e somar contaria em dobro.
+
+### Depois do conserto, mesmas entradas, função de produção
+
+| entrada | coletados | passando | pulados | verificado? |
+|---|---:|---:|---:|---|
+| `1821 passed, 28 skipped` | 1849 | 1821 | 28 | **sim** |
+| `1848 passed, 1 skipped` | 1849 | 1848 | 1 | **sim** |
+| `1849 skipped` | 1849 | 0 | 1849 | não |
+| `1800 passed, 21 failed, 28 skipped` | 1849 | 1800 | 28 | não |
+| `1820 passed, 2 xfailed, 1 xpassed, 26 skipped` | 1849 | 1820 | 29 | **sim** |
+| sumário impresso duas vezes | 1849 | 1821 | 28 | sim (não dobrou) |
+
+Linha antiga, gravada antes da coluna existir, tem `tests_skipped` NULL. `COALESCE(...,0)` faz a régua nova coincidir exatamente com a antiga nessas linhas: `passed + 0 == collected` é o que elas já diziam. Evidência verde de antes continua verde.
+
+## Achado 5 — CONFIRMADO como escrito.
+
+`record_evidence` (`transactional_state.py`, Python) e `_has_fresh_test_evidence` (SQL) eram duas implementações independentes da mesma condição.
+
+Consertado por eliminação, não por sincronização: `REGRA_TESTE_VALIDO` é **um texto só**, avaliado pelo mesmo motor nos dois caminhos. Quem grava julga **a linha que acabou de inserir**, não os valores que pretendia inserir — assim qualquer coerção que o SQLite faça na escrita entra na conta das duas vezes. Divergir passou de improvável a impossível.
+
+## Correção ao achado 3 — o terceiro relógio não é uma discordância.
+
+O seed diz que `_sensor_turn` chamar `state_dir` sem `session_id` é o defeito. Medido: **o escritor faz o mesmo.** `branch_sensor._budget_path` também resolve sem `session_id`. Leitor e escritor concordam; o arquivo é por projeto dos dois lados.
+
+> [superado: "é o mesmo resto da correção `aee62c6`: um chamador que ficou sem o pin"] — não é um chamador dessincronizado. É o orçamento inteiro sendo por projeto enquanto `reset_session` o trata como por sessão. Duas sessões no mesmo projeto compartilham e sobrescrevem o contador — o que explica o delta negativo, mas não é uma assimetria entre duas funções.
+
+O conserto aplicado não move o arquivo. Ele corrige a **comparação**: um delta negativo não diz "cedo demais", diz que os dois contadores não são comparáveis. `cooldown_turns > 0 and 0 <= delta < cooldown_turns`.
+
+## Teste de fumaça — passou.
+
+`branch_state.py add --explicito` registrou `portao-de-evidencia` nos dois lados: `branches.json` e a tabela `branches` do banco da sessão, sob `t-20260916-164838152664`. O mesmo comando foi recusado três vezes antes do conserto, com `branch offer cooldown is active`.
