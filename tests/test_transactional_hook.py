@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 
 
@@ -488,6 +490,348 @@ def test_shell_write_targets_pega_varios():
     assert hook.shell_write_targets("cat > a.py; cat > b.py") == ["a.py", "b.py"]
 
 
+# --- R3 etapa 1: o corpo do heredoc sai antes da tokenizacao -----------------
+#
+# `_tokenize` e um tokenizador POSIX aplicado a strings que muitas vezes nao sao
+# comandos POSIX — corpo de heredoc, codigo de programa, PowerShell. Dentro
+# dessas regioes o rastreio de aspas nao significa nada e todo `>` vira
+# operador. Os alvos abaixo sao reproducoes do mapa §6.2; `'0.75:'` e literal-
+# mente uma linha real da tabela `files`, e `'MSGEOF'` foi gravado pelo commit
+# do proprio mapa (a linha de atribuicao termina em `>`).
+#
+# Medido contra e4212fb: 6 de 6 casos nao-controle produziam alvo espurio, 0
+# depois; 1 de 7 controles quebrava, 0 depois.
+
+HEREDOCS_QUE_PRODUZIAM_LIXO = [
+    ("comparacao em codigo", "python - <<'PY'\nif riqueza>0.75:\n    print('alto')\nPY", []),
+    ("markdown com citacao", "cat > nota.md <<'EOF'\n> Passar o titulo.\nEOF", ["nota.md"]),
+    ("dois-pontos e comparacao", "python - <<'PY'\nprint('score:', x)\nif a>b: pass\nPY", []),
+    ("commit com linha de atribuicao",
+     "git commit -F - <<'MSGEOF'\ndocs: x\n\nCo-Authored-By: C <noreply@anthropic.com>\nMSGEOF", []),
+    ("delimitador sem aspas", "python - <<PY\nif a>b: pass\nPY", []),
+    ("tabulacao ignorada", "cat <<-FIM\n\tif a>b: pass\n\tFIM", []),
+]
+
+
+@pytest.mark.parametrize(
+    "nome, comando, esperado",
+    HEREDOCS_QUE_PRODUZIAM_LIXO,
+    ids=[n for n, _, _ in HEREDOCS_QUE_PRODUZIAM_LIXO],
+)
+def test_corpo_de_heredoc_nao_vira_arquivo(nome: str, comando: str, esperado: list[str]):
+    assert hook.shell_write_targets(comando) == esperado
+
+
+def test_heredoc_que_tambem_redireciona_devolve_o_alvo_e_ignora_o_corpo():
+    """Nao cega: o alvo legitimo e o corpo excluido convivem no mesmo comando.
+
+    Antes: `['saida.txt', 'b']` — o `b` vinha de `a>b` DENTRO do corpo.
+    """
+    assert hook.shell_write_targets("cat <<'EOF' > saida.txt\ncorpo com a>b\nEOF") == ["saida.txt"]
+    assert hook.shell_write_targets('cat > "docs/nota final.md" <<\'EOF\'\n> citacao\nEOF') == [
+        "docs/nota final.md"
+    ]
+
+
+def test_heredoc_dentro_de_aspas_nao_abre_corpo():
+    """`echo "a <<EOF b"` nao abre heredoc nenhum — e a linha inteira continua viva."""
+    assert hook.shell_write_targets('echo "a <<EOF b" > saida.txt') == ["saida.txt"]
+    assert hook.shell_write_targets("cat <<<'x' > saida.txt") == ["saida.txt"]
+
+
+# --- R3 etapa 3: toda recusa fica escrita ------------------------------------
+#
+# O risco do conserto e na direcao perigosa: candidato rejeitado por engano e
+# escrita real que some do contador, e o contador nao denuncia a propria
+# cegueira. "O ruido caiu" e "o guarda parou de ver" dao o MESMO numero.
+
+
+def test_recusa_do_extrator_e_nomeada_com_motivo():
+    recusas: list[dict] = []
+    assert hook.shell_write_targets("pytest -q 2>&1", recusas) == []
+    assert [r["motivo"] for r in recusas] == ["vazio-ou-operador"]
+
+    recusas.clear()
+    assert hook.shell_write_targets("cmd 2>/dev/null", recusas) == []
+    assert [r["candidato"] for r in recusas] == ["/dev/null"]
+    assert [r["motivo"] for r in recusas] == ["destino-nulo"]
+
+    recusas.clear()
+    hook.shell_write_targets("python - <<'PY'\nif a>b: pass\nPY", recusas)
+    motivos = [r["motivo"] for r in recusas]
+    assert "corpo-de-heredoc" in motivos and "delimitador-de-heredoc" in motivos
+
+
+def test_recusa_chega_ao_disco_com_comando_candidato_e_motivo(tmp_path: Path):
+    """O consumidor da etapa 3: sem arquivo, a proxima medicao e impossivel.
+
+    O mapa so mediu alguma coisa porque as entradas ACEITAS ficavam em `files`.
+    As recusadas nunca ficaram em lugar nenhum.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    bucket, _database, task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "cat > nota.md <<'EOF'\n> citacao\nEOF"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    linhas = [
+        json.loads(linha)
+        for linha in (bucket / hook.ARQUIVO_DE_RECUSAS).read_text(encoding="utf-8").splitlines()
+        if linha.strip()
+    ]
+    assert linhas, "recusa silenciosa e o mesmo erro numa direcao nova"
+    assert {r["motivo"] for r in linhas} == {"corpo-de-heredoc", "delimitador-de-heredoc"}
+    for registro in linhas:
+        assert registro["task_id"] == task["task_id"]
+        assert registro["comando_hash"]
+        assert "nota.md" in registro["comando"]
+        assert registro["aceitos"] == ["nota.md"], "o que foi ACEITO fica junto do recusado"
+
+
+def test_comando_sem_recusa_nao_cria_arquivo(tmp_path: Path):
+    """Ruido tambem custa: um `jsonl` com uma linha por comando limpo seria lixo."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    bucket, _database, _task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "cat > scripts/x.py"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert not (bucket / hook.ARQUIVO_DE_RECUSAS).exists()
+
+
+# --- R3 etapa 2: alvo que nao pode ser um arquivo nao entra -------------------
+#
+# Defesa em profundidade, depois da etapa 3 estar registrando. A regua e "nao
+# PODE ser um caminho", nunca "nao PARECE um caminho": um candidato rejeitado
+# por engano e uma escrita real que some da atribuicao.
+
+
+def test_alvo_de_powershell_nao_expandido_nao_vira_arquivo():
+    """O caso que a etapa 1 nao pega: PowerShell nao tem heredoc."""
+    recusas: list[dict] = []
+    comando = "$LOG = 'x.log'; Get-Content a.txt > $LOG"
+    assert hook.shell_write_targets(comando, recusas) == []
+    assert [r["motivo"] for r in recusas] == [hook.MOTIVO_IMPOSSIVEL]
+    assert recusas[0]["detalhe"] == "variavel-nao-expandida"
+
+
+def test_regua_recusa_nao_apaga_a_escrita_do_contador(tmp_path: Path):
+    """A metade que impede o conserto de virar cegueira.
+
+    `echo x > '$ARQUIVO'` e uma escrita REAL cujo destino a regua recusa. A
+    lista de alvos sai vazia e `echo` esta em `_SOMENTE_LEITURA` — o risco e o
+    comando passar por read-only e NAO subir o contador.
+
+    Quem protege e `_segmentos`: ele quebra a linha nos operadores, entao o
+    proprio destino vira um segmento cujo "binario" e `$ARQUIVO`, que nao esta
+    na lista. Escrito aqui porque a protecao e estrutural e nao obvia, e porque
+    uma versao anterior deste conserto adicionou uma guarda explicita por cima —
+    codigo que nao mudava veredicto nenhum e que so existiria para ser mantido.
+    Medido: 11 comandos, 0 veredictos alterados com ou sem ela.
+
+    Se alguem mudar `_segmentos`, este teste e que reprova.
+    """
+    assert hook.is_read_only("echo x > '$ARQUIVO'") is False
+    assert hook.nao_muda_a_arvore("git add -A > '$ARQUIVO'") is False
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    _, database, task = _active_task(tmp_path / "harness", repo)
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": "echo x > '$ARQUIVO'"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+    assert database.task(task["task_id"])["code_revision"] == 1
+    assert database.files(task["task_id"]) == ["shell-command"]
+
+
+def test_comando_de_leitura_puro_continua_sem_subir_o_contador():
+    """A regressao oposta: a etapa 2 nao pode promover inspecao a escrita.
+
+    Sem redirecionamento nenhum, `is_read_only` e `nao_muda_a_arvore` tem de
+    continuar valendo — e o mapa §8 as nomeia como coisas que o portao ja faz
+    BEM e que nao podem ser removidas por engano.
+
+    [superado: "`grep ... 2>&1` e read-only"] — nao e, e nunca foi. `_segmentos`
+    quebra em `>` e `&`, o fragmento `2` vira segmento e `2` nao e binario
+    conhecido. Comportamento de e4212fb, medido, inalterado por esta sessao.
+    """
+    assert hook.is_read_only("grep -rn alvo hooks") is True
+    assert hook.is_read_only("git status --short") is True
+    assert hook.nao_muda_a_arvore("git add -A") is True
+    assert hook.nao_muda_a_arvore("git commit -m x") is True
+    assert hook.is_read_only("grep -rn alvo hooks 2>&1") is False
+
+
+# --- A barra invertida entre aspas duplas -------------------------------------
+#
+# Achado desta sessao, encontrado ao ligar R2: `_tokenize` escapava
+# INCONDICIONALMENTE dentro de aspas duplas, entao comia os separadores de todo
+# caminho absoluto do Windows. `"C:\\Users\\me\\x.py"` chegava a `files` como
+# `C:UsersmeX.py` — escrita REAL que aparece no banco parecendo lixo, e que a
+# regua "sem separador e sem extensao" do mapa classificava como nao-caminho.
+#
+# No POSIX (e no bash), dentro de aspas duplas a barra so escapa " \ $ ` e nova
+# linha. Antes de qualquer outro caractere ela e literal.
+
+
+def test_caminho_windows_entre_aspas_duplas_mantem_os_separadores():
+    alvo = "C:" + chr(92) + "Users" + chr(92) + "me" + chr(92) + "repo" + chr(92) + "x.py"
+    assert hook.shell_write_targets('cat > "' + alvo + '"') == [alvo]
+    assert hook._tokenize('"' + alvo + '"') == [alvo]
+
+
+def test_barra_invertida_continua_escapando_o_que_o_posix_manda():
+    """A outra metade: afrouxar a regra nao pode quebrar o escape que existe."""
+    barra = chr(92)
+    aspa = chr(34)
+    # \" dentro de aspas duplas: a aspa e literal e a string CONTINUA.
+    assert hook._tokenize(aspa + "a" + barra + aspa + "b" + aspa) == ['a' + aspa + 'b']
+    # \\ vira uma barra so.
+    assert hook._tokenize(aspa + "a" + barra + barra + "b" + aspa) == ["a" + barra + "b"]
+    # Operador entre aspas continua sem valer, que e a razao de `_tokenize` existir.
+    assert hook.shell_write_targets("echo 'a > b'") == []
+    assert hook.shell_write_targets('echo "a > b"') == []
+
+
+# --- R2: a mesma pergunta nos dois caminhos ----------------------------------
+#
+# `b771b6b` ensinou `counts_as_modified_file` a distinguir *escreveu algo* de
+# *mudou o codigo sob teste*, e ligou isso no caminho Edit/Write
+# (`harness-reclassify.sh:135`). O caminho do shell chamava `touch_files` sem
+# passar por ele. Mesmo arquivo, mesmo lugar, dois veredictos — medido ao vivo
+# no mapa §5: `files_dump.txt` no scratchpad, fora do repositorio. Criado com
+# `Write` nao contava; criado com `>` contou, e virou a linha rev=7 daquela task.
+
+
+def _repo_de_verdade(tmp_path: Path) -> Path:
+    """Um diretorio que `find_repo_root` reconhece: basta existir `.git`."""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    return repo
+
+
+def test_alvo_fora_da_raiz_nao_vira_linha_em_files(tmp_path: Path):
+    """A linha rev=7 do mapa, agora recusada.
+
+    O placeholder CONTINUA: comando nao read-only com lista vazia ainda sobe o
+    contador. O que muda e a ATRIBUICAO — quem le `files` deixa de ver um
+    arquivo de scratchpad como codigo alterado.
+    """
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad"
+    fora.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", repo)
+
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": f'echo x > "{fora / "nota.txt"}"'},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    vistos = database.files(task["task_id"])
+    assert "nota.txt" not in " ".join(vistos)
+    assert vistos == ["shell-command"], "a segunda metade de :576-579 continua viva"
+    assert database.task(task["task_id"])["code_revision"] == 1
+
+
+def test_alvo_dentro_da_raiz_continua_contando(tmp_path: Path):
+    """A outra metade: R2 nao pode virar desculpa para parar de contar."""
+    repo = _repo_de_verdade(tmp_path)
+    _, database, task = _active_task(tmp_path / "harness", repo)
+
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": "cat > scripts/novo.py"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert [v.replace("\\", "/") for v in database.files(task["task_id"])] == ["scripts/novo.py"]
+
+
+def test_sem_cwd_no_payload_conta_tudo(tmp_path: Path):
+    """Fail-closed, repetindo a decisao de `harness-reclassify.sh:123-126`.
+
+    Sem `cwd` nao ha projeto declarado, e sem projeto nao ha dentro nem fora.
+    Cair em `os.getcwd()` inventaria a fronteira a partir de onde o hook por
+    acaso roda — foi o que derrubou 7 testes de `TestReclassify`.
+    """
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad"
+    fora.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", repo)
+    alvo = fora / "nota.txt"
+
+    payload = _payload("PostToolUse", repo, tool_name="Bash",
+                       tool_input={"command": f'echo x > "{alvo}"'},
+                       tool_response={"exit_code": 0, "output": ""})
+    # O balde ja existe; o `cwd` some so para a decisao de fronteira.
+    assert hook._apenas_dentro_da_raiz({}, [str(alvo)], []) == [str(alvo)]
+    assert hook._apenas_dentro_da_raiz({"cwd": str(repo)}, [str(alvo)], []) == []
+    hook.handle_payload(payload, harness_root=tmp_path / "harness")
+    assert database.files(task["task_id"]) == ["shell-command"]
+
+
+def test_write_e_redirecionamento_dao_o_mesmo_veredicto(tmp_path: Path):
+    """A simetria — o teste que nao existia, e a assimetria que ele mede.
+
+    Mesmo caminho, mesmo lugar, nos dois lados da fronteira. As duas metades
+    tem de concordar; ate 2026-09-17 discordavam fora da raiz.
+    """
+    politica = _load("transactional_hook_policy", "scripts/post_tool_policy.py")
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad"
+    fora.mkdir()
+    (repo / "scripts").mkdir()
+
+    for alvo, esperado in ((repo / "scripts" / "x.py", True), (fora / "x.py", False)):
+        veredicto_write = politica.counts_as_modified_file("Write", str(alvo), str(repo))
+        pelo_shell = hook._apenas_dentro_da_raiz(
+            {"cwd": str(repo)}, hook.shell_write_targets(f'cat > "{alvo}"'), []
+        )
+        veredicto_shell = bool(pelo_shell)
+        assert veredicto_write == esperado, alvo
+        assert veredicto_shell == esperado, alvo
+        assert veredicto_write == veredicto_shell, f"os dois caminhos discordam em {alvo}"
+
+
+def test_recusa_por_raiz_fica_registrada(tmp_path: Path):
+    """Filtrar sem registrar seria trocar ruido por cegueira de novo."""
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad"
+    fora.mkdir()
+    bucket, _database, _task = _active_task(tmp_path / "harness", repo)
+
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": f'echo x > "{fora / "nota.txt"}"'},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    linhas = [
+        json.loads(linha)
+        for linha in (bucket / hook.ARQUIVO_DE_RECUSAS).read_text(encoding="utf-8").splitlines()
+        if linha.strip()
+    ]
+    assert [r["motivo"] for r in linhas] == ["fora-da-raiz"]
+    assert "nota.txt" in linhas[0]["candidato"]
+
+
 def test_post_tool_registra_o_arquivo_escrito_e_nao_o_placeholder(tmp_path: Path):
     cwd = tmp_path / "repo"
     cwd.mkdir()
@@ -746,6 +1090,59 @@ def test_mensagem_do_gate_conta_a_evidencia_que_existe(tmp_path: Path):
 
     assert "VAZIA" not in motivo
     assert "1 linha(s) de evidence" in motivo
+
+
+def test_mensagem_do_gate_nomeia_o_que_invalidou(tmp_path: Path):
+    """R5, consumidor nomeado: `code_revision=24` diz QUE expirou, nao POR QUE.
+
+    A tabela `touches` existe para responder isso, e esta e a tela onde a
+    resposta e util. Sem este teste a tabela seria capacidade sem consumidor.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _bucket, database, task = _active_task(tmp_path / "harness", cwd)
+    database.touch_files(task["task_id"], ["scripts/alvo.py"], origem="shell")
+    database.touch_files(task["task_id"], ["shell-command"], origem="shell-placeholder")
+
+    motivo = json.loads(
+        hook.handle_payload(_payload("Stop", cwd), harness_root=tmp_path / "harness")
+    )["reason"]
+
+    assert "Ultima(s) invalidacao(oes)" in motivo
+    assert "alvo.py" in motivo and "(shell)" in motivo
+    assert "shell-command" in motivo and "(shell-placeholder)" in motivo
+
+
+def test_toque_por_shell_registra_a_origem(tmp_path: Path):
+    """A origem separa escrita atribuida de placeholder — sao causas diferentes.
+
+    Medido nesta sessao: 8 de 9 invalidacoes vieram do placeholder (toda
+    invocacao de interpretador), 1 de redirecionamento, 0 de mudanca de codigo.
+    Sem a coluna, as tres somem na mesma linha do contador.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    raiz = tmp_path / "harness"
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "cat > scripts/novo.py"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "python -c import os"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    toques = database.touches(task["task_id"])
+    assert [(t["path"].replace("\\", "/"), t["origem"]) for t in toques] == [
+        ("scripts/novo.py", "shell"),
+        ("shell-command", "shell-placeholder"),
+    ]
 
 
 def test_comando_que_a_mensagem_imprime_de_fato_roda(tmp_path: Path):

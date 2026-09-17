@@ -436,6 +436,114 @@ def test_task_viva_continua_contando_arquivo(tmp_path):
     assert db.files(task["task_id"]) == [str(Path("src/novo.py"))]
 
 
+# --- R5: o rastro da invalidacao sobrevive a escrita -------------------------
+#
+# `files` usa INSERT OR IGNORE: tocar de novo um caminho ja visto nao cria
+# linha, mas sobe `code_revision` do mesmo jeito. Somando o `code_revision`
+# final de seis tasks reais: 2 594 subidas, das quais so 366 (14,1%) deixaram
+# rastro. As outras 2 228 eram invisiveis — nenhuma tabela dizia o que as
+# causou, porque a informacao era descartada na escrita.
+#
+# `touches` e uma linha por toque. Nada que le `files` muda.
+
+
+def test_mesmo_caminho_tres_vezes_da_uma_linha_em_files_e_tres_em_touches(tmp_path: Path):
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    for _ in range(3):
+        db.touch_files(task["task_id"], ["src/x.py"], origem="shell")
+
+    assert db.files(task["task_id"]) == [str(Path("src/x.py"))]
+    toques = db.touches(task["task_id"])
+    assert len(toques) == 3
+    assert [t["code_revision"] for t in toques] == [1, 2, 3]
+    assert {t["origem"] for t in toques} == {"shell"}
+
+
+def test_toques_reconstroem_code_revision_sem_buraco(tmp_path: Path):
+    """A identidade aritmetica: nenhuma subida sem rastro.
+
+    `code_revision` so e incrementado em `touch_files` (unico site em
+    `transactional_state.py`), e cada chamada grava >= 1 linha em `touches` com
+    a revisao nova. Logo, numa base criada ja com a tabela:
+
+        COUNT(DISTINCT code_revision) em `touches` == `tasks.code_revision`
+
+    A soma CRUA de linhas NAO serve, e isso e o instrumento e nao a regra: uma
+    chamada com tres caminhos e UMA invalidacao e tres linhas. Contar linhas
+    daria 3 para uma subida e o desvio pareceria defeito do sistema quando seria
+    defeito da conta.
+    """
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    db.touch_files(task["task_id"], ["a.py"], origem="shell")
+    db.touch_files(task["task_id"], ["a.py", "b.py", "c.py"], origem="shell")
+    db.touch_files(task["task_id"], ["shell-command"], origem="shell-placeholder")
+    final = db.touch_files(task["task_id"], ["a.py"], origem="edit")
+
+    toques = db.touches(task["task_id"])
+    assert len(toques) == 6                                    # linhas != subidas
+    assert len({t["code_revision"] for t in toques}) == 4       # subidas
+    assert final["code_revision"] == 4
+    assert len({t["code_revision"] for t in toques}) == final["code_revision"]
+
+
+def test_touches_nomeia_a_origem_de_cada_toque(tmp_path: Path):
+    """Sem `origem`, "o numero caiu" e indistinguivel de "caiu pelo motivo errado"."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    db.touch_files(task["task_id"], ["src/x.py"], origem="shell")
+    db.touch_file(task["task_id"], "docs/y.md", origem="edit")
+    db.touch_files(task["task_id"], ["shell-command"], origem="shell-placeholder")
+
+    assert [t["origem"] for t in db.touches(task["task_id"])] == [
+        "shell", "edit", "shell-placeholder",
+    ]
+    assert db.touches(task["task_id"], limite=2)[0]["path"] == str(Path("docs/y.md"))
+
+
+def test_task_fechada_nao_grava_toque(tmp_path: Path):
+    """A protecao de task terminal vale para as DUAS tabelas.
+
+    `touches` sem esta guarda cresceria numa task 'done' mesmo com `files` e
+    `code_revision` parados — e o rastro de uma entrega fechada passaria a
+    contradizer o contador que ele existe para explicar.
+    """
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    db.touch_files(task["task_id"], ["src/x.py"], origem="shell")
+    task = db.record_evidence(task["task_id"], evidence_type="test", command="pytest",
+                              exit_code=0, tests_collected=5, tests_passed=5, output_hash="h")
+    concluida = db.complete(task["task_id"], expected_revision=task["revision"])
+    antes = db.touches(concluida["task_id"])
+
+    db.touch_files(concluida["task_id"], ["src/depois.py"], origem="shell")
+
+    assert db.touches(concluida["task_id"]) == antes
+
+
+def test_banco_antigo_ganha_touches_sem_perder_files(tmp_path: Path):
+    """Migracao: base criada antes da tabela continua legivel e passa a rastrear."""
+    db = state.HarnessDatabase(tmp_path)
+    task = db.start_task(scope_id="s|r|w", legacy_level="L1-bug", tier="L1",
+                         kind="bug", pipeline=["tdd"], prompt="um")
+    db.touch_files(task["task_id"], ["src/antigo.py"], origem="shell")
+    import sqlite3
+
+    with sqlite3.connect(db.path) as cru:
+        cru.execute("DROP TABLE touches")
+
+    reaberto = state.HarnessDatabase(tmp_path)
+    assert reaberto.files(task["task_id"]) == [str(Path("src/antigo.py"))]
+    assert reaberto.touches(task["task_id"]) == []
+    reaberto.touch_files(task["task_id"], ["src/novo.py"], origem="shell")
+    assert len(reaberto.touches(task["task_id"])) == 1
+
+
 def test_artifacts_voltam_do_banco_e_chegam_ao_state_json(tmp_path: Path):
     """`record_artifact` sempre gravou; nada lia de volta.
 

@@ -41,3 +41,7 @@ desktop.ini
 graphify-out/
 .claude/
 /CLAUDE.md
+# Semente de despacho: artefato do worktree, nao do repositorio (e4212fb a
+# removeu do indice, mas nao a ignorou, entao o proximo `git add -A` a trouxe
+# de volta — sintoma consertado, causa nao).
+/SEMENTE.md

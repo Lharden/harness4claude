@@ -160,7 +160,7 @@ if state_task_id:
     try:
         from transactional_state import HarnessDatabase
         transaction_db = HarnessDatabase(harness_dir)
-        transactional = transaction_db.touch_file(state_task_id, target)
+        transactional = transaction_db.touch_file(state_task_id, target, origem='edit')
         state.update({
             'status': transactional['status'],
             'current_step': transactional['phase'],

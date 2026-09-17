@@ -15,7 +15,8 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from harness_paths import ensure_state_dir  # type: ignore[import-not-found]
+from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
+from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
 
 VERIFICATION_PATTERNS = (
@@ -178,6 +179,91 @@ def is_state_management(command: str) -> bool:
 _DESTINOS_NULOS = frozenset({'/dev/null', 'nul', 'NUL', 'con', 'CON'})
 
 
+#: Caracteres que NENHUM nome de arquivo pode conter neste sistema de arquivos.
+#: Controle inclui nova linha, retorno de carro e tabulacao.
+_CARACTERES_ILEGAIS = frozenset('<>"|?*') | frozenset(chr(c) for c in range(32))
+
+_LETRA_DE_DRIVE = re.compile(r'^[A-Za-z]:$')
+
+#: O motivo da recusa da etapa 2 de R3. Tem nome proprio porque `is_read_only`
+#: e `nao_muda_a_arvore` precisam distingui-lo dos outros: recusar um destino
+#: significa "houve escrita e eu nao sei para onde", nunca "nao houve escrita".
+MOTIVO_IMPOSSIVEL = "nao-pode-ser-caminho"
+
+
+def nao_pode_ser_caminho(candidato: str) -> str | None:
+    """O motivo, se este candidato NAO PODE ser um arquivo. `None` se pode.
+
+    A regua e deliberadamente essa, e nao "nao PARECE um caminho". A diferenca
+    e a direcao do erro: um candidato rejeitado por engano e uma escrita real
+    que some da atribuicao, o oposto do fail-closed de `inside_root`. Entao so
+    entra aqui o que e impossivel, nao o que e improvavel.
+
+    Vem da §2 do mapa `revisao-que-invalida`, onde 113 entradas da tabela real
+    passavam pela regua mais frouxa do autor e nao podiam ser arquivo nenhum:
+    `$TEMP\\claude\\orfaos.py`, `$LOCK\\dono`, `$P\\$f`, corpo de documento
+    inteiro, e `0.75:` — que e literalmente uma linha da tabela `files`.
+
+    O mapa registrou um erro de instrumento aqui em vez de apaga-lo: a primeira
+    versao classificava `0.75`, `0.99999` e `F4.0` como caminhos VALIDOS fora da
+    raiz, porque a regex de extensao era `\\.[A-Za-z0-9]{1,6}$` e `.75` casa. O
+    numero saiu plausivel — inflava uma classe em 3 — e quase passou. Esta regua
+    nao usa extensao nenhuma, justamente por isso.
+
+    A clausula "sem separador, forma que nao e nome de arquivo" da §2 NAO foi
+    trazida: `MSGEOF` e `Passar` sao nomes de arquivo perfeitamente validos, e
+    quem os elimina e a etapa 1 (corpo de heredoc), pela causa e nao pela forma.
+    Adivinhar aqui erraria na direcao perigosa.
+    """
+    texto = candidato.strip()
+    if not texto:
+        return "vazio"
+    if any(caractere in _CARACTERES_ILEGAIS for caractere in texto):
+        return "caractere-ilegal"
+    for indice, caractere in enumerate(texto):
+        if caractere != '$':
+            continue
+        seguinte = texto[indice + 1] if indice + 1 < len(texto) else ''
+        if seguinte in {'(', '{'} or seguinte.isalpha() or seguinte == '_':
+            return "variavel-nao-expandida"
+    if not any(caractere.isalnum() for caractere in texto):
+        return "sem-alfanumerico"
+    if _LETRA_DE_DRIVE.match(texto):
+        # `b:` e uma referencia de drive, nao um arquivo. Passava pela regua ate
+        # a regressao dos 468 caminhos apontar: o teste da letra de drive existe
+        # para aceitar `C:\...`, e sozinho ele aceitava tambem o `C:` pelado.
+        return "so-letra-de-drive"
+    if texto[-1] in {'/', chr(92)}:
+        return "termina-em-separador"      # nomeia diretorio, nao arquivo
+    componentes = re.split(r'[/\\]', texto)
+    for posicao, componente in enumerate(componentes):
+        if not componente:
+            continue                       # raiz, UNC ou barra dupla: legitimo
+        if componente in {'.', '..'}:
+            continue                       # `../saida.txt` e caminho de verdade
+        if componente[-1] in {'.', ' '}:
+            return "componente-termina-em-ponto-ou-espaco"
+        if ':' in componente and not (posicao == 0 and _LETRA_DE_DRIVE.match(componente)):
+            return "dois-pontos-fora-de-letra-de-drive"
+    return None
+
+
+#: Dentro de aspas DUPLAS, a barra invertida so escapa estes. Antes de qualquer
+#: outro caractere ela e literal — regra do POSIX, e a que o bash aplica.
+#:
+#: `_tokenize` escapava INCONDICIONALMENTE, e o efeito era comer os separadores
+#: de todo caminho absoluto do Windows entre aspas: `"C:\Users\me\x.py"` chegava
+#: em `files` como `C:UsersmeX.py`. Medido em 2026-09-17 ao ligar R2 — o filtro
+#: de raiz nao tinha como funcionar porque `os.path.isabs` respondia False sobre
+#: o proprio caminho que ele deveria comparar.
+#:
+#: E o mesmo defeito, numa direcao a mais, que o mapa `revisao-que-invalida`
+#: mediu na classe A: escrita REAL que chega ao banco parecendo lixo. A regua do
+#: autor ("sem separador e sem extensao") classificava essas entradas como
+#: "nao parece caminho" — e elas eram caminho, mutilado na tokenizacao.
+_ESCAPAVEIS_EM_ASPAS_DUPLAS = frozenset({chr(34), chr(92), '$', '`', chr(10)})
+
+
 def _tokenize(command: str) -> list[str]:
     """Tokens do comando, com os operadores fora de aspas separados.
 
@@ -194,15 +280,17 @@ def _tokenize(command: str) -> list[str]:
             tokens.append(''.join(atual))
             atual.clear()
 
-    for character in command:
+    for indice, character in enumerate(command):
         if escaped:
             atual.append(character)
             escaped = False
             continue
         if quote:
             if character == chr(92) and quote == chr(34):
-                escaped = True
-                continue
+                seguinte = command[indice + 1] if indice + 1 < len(command) else ''
+                if seguinte in _ESCAPAVEIS_EM_ASPAS_DUPLAS:
+                    escaped = True
+                    continue
             if character == quote:
                 quote = None
                 continue
@@ -338,7 +426,113 @@ def is_read_only(command: str) -> bool:
     return True
 
 
-def shell_write_targets(command: str) -> list[str]:
+def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
+    """`(delimitador, ignora_tabulacao)` de cada `<<DELIM` FORA de aspas.
+
+    Aspas importam: `echo "a <<EOF b"` nao abre heredoc nenhum. `<<<` e
+    here-string — o corpo esta na propria linha, entao nao ha nada a excluir.
+    """
+    achados: list[tuple[str, bool]] = []
+    quote = None
+    escaped = False
+    indice = 0
+    tamanho = len(linha)
+    while indice < tamanho:
+        caractere = linha[indice]
+        if escaped:
+            escaped = False
+            indice += 1
+            continue
+        if quote:
+            if caractere == chr(92) and quote == chr(34):
+                escaped = True
+            elif caractere == quote:
+                quote = None
+            indice += 1
+            continue
+        if caractere in {chr(39), chr(34)}:
+            quote = caractere
+            indice += 1
+            continue
+        if caractere == chr(92):
+            escaped = True
+            indice += 1
+            continue
+        if caractere == '<' and linha.startswith('<<', indice):
+            if linha.startswith('<<<', indice):
+                indice += 3
+                continue
+            cursor = indice + 2
+            ignora_tab = False
+            if cursor < tamanho and linha[cursor] == '-':
+                ignora_tab = True
+                cursor += 1
+            while cursor < tamanho and linha[cursor] in ' \t':
+                cursor += 1
+            if cursor < tamanho and linha[cursor] in {chr(39), chr(34)}:
+                fecha = linha[cursor]
+                fim = linha.find(fecha, cursor + 1)
+                if fim == -1:
+                    break
+                achados.append((linha[cursor + 1:fim], ignora_tab))
+                indice = fim + 1
+                continue
+            fim = cursor
+            while fim < tamanho and (linha[fim].isalnum() or linha[fim] in '_-.'):
+                fim += 1
+            if fim > cursor:
+                achados.append((linha[cursor:fim], ignora_tab))
+            indice = max(fim, cursor + 1)
+            continue
+        indice += 1
+    return achados
+
+
+def sem_corpo_de_heredoc(command: str, recusas: list[dict[str, Any]] | None = None) -> str:
+    """O comando sem os corpos de heredoc — a correcao de causa raiz do lixo.
+
+    `_tokenize` e um tokenizador de shell POSIX, e ele estava sendo aplicado a
+    uma string que muitas vezes NAO e um comando POSIX: ela carrega corpo de
+    heredoc, codigo de programa e sintaxe de PowerShell. Dentro dessas regioes o
+    rastreio de aspas nao significa nada e todo `>` vira operador.
+
+    Medido no mapa `revisao-que-invalida` §6.2, com as funcoes de producao:
+
+        python - <<'PY' / if riqueza>0.75:        ->  ['0.75:']
+        cat > nota.md <<'EOF' / > Passar ...      ->  ['nota.md', 'Passar']
+        python - <<'PY' / if a>b: pass            ->  ['b:']
+
+    E `'0.75:'` e literalmente uma linha real da tabela `files`. O caso que
+    fecha o achado sobre si: `git commit -F - <<'MSGEOF'` gravou `'MSGEOF'` como
+    arquivo, porque a ultima linha da mensagem e a de atribuicao obrigatoria,
+    `Co-Authored-By: ... <noreply@anthropic.com>`, e o `>` que fecha o e-mail e
+    operador para `_tokenize`. TODA mensagem de commit por heredoc dispara isso.
+
+    O corpo excluido e REGISTRADO em `recusas`, nao descartado em silencio:
+    trocar ruido por cegueira seria o mesmo erro numa direcao nova.
+    """
+    linhas = command.splitlines()
+    mantidas: list[str] = []
+    pendentes: list[tuple[str, bool]] = []
+    consumidas = 0
+    for linha in linhas:
+        if pendentes:
+            consumidas += 1
+            delimitador, ignora_tab = pendentes[0]
+            alvo = linha.lstrip('\t') if ignora_tab else linha
+            if alvo.rstrip('\r') == delimitador:
+                pendentes.pop(0)
+                if recusas is not None:
+                    recusas.append({"candidato": delimitador, "motivo": "delimitador-de-heredoc"})
+            continue
+        mantidas.append(linha)
+        pendentes.extend(_aberturas_de_heredoc(linha))
+    if consumidas and recusas is not None:
+        recusas.append({"candidato": f"<{consumidas} linha(s)>", "motivo": "corpo-de-heredoc"})
+    return "\n".join(mantidas)
+
+
+def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = None) -> list[str]:
     """Arquivos que este comando de shell escreve, ate onde da para atribuir.
 
     Existe porque `_handle_post_tool` registrava todo comando como o caminho
@@ -352,17 +546,34 @@ def shell_write_targets(command: str) -> list[str]:
     por dentro (`python - <<PY` com `write_text`), e nao ha como cobrir: e um
     programa. Por isso o chamador mantem o placeholder quando esta lista sai
     vazia — 'nao da para saber' e diferente de 'nao escreveu'.
+
+    `recusas`, quando passada, recebe um dicionario por candidato REJEITADO.
+    Um candidato rejeitado por engano e uma escrita real que some do contador —
+    o erro na direcao perigosa. Sem o registro, "o ruido caiu" e "o guarda
+    cegou" produzem exatamente o mesmo numero.
     """
     if not command:
         return []
-    tokens = _tokenize(command)
+    tokens = _tokenize(sem_corpo_de_heredoc(command, recusas))
     alvos: list[str] = []
+
+    def recusar(candidato: str, motivo: str, detalhe: str | None = None) -> None:
+        if recusas is not None:
+            registro = {"candidato": candidato, "motivo": motivo}
+            if detalhe:
+                registro["detalhe"] = detalhe
+            recusas.append(registro)
 
     def considerar(candidato: str) -> None:
         if not candidato or candidato in _OPERADORES_TOKEN:
-            return
-        if candidato.startswith('-') or candidato in _DESTINOS_NULOS:
-            return
+            return recusar(candidato, "vazio-ou-operador")
+        if candidato.startswith('-'):
+            return recusar(candidato, "flag")
+        if candidato in _DESTINOS_NULOS:
+            return recusar(candidato, "destino-nulo")
+        impossivel = nao_pode_ser_caminho(candidato)
+        if impossivel:
+            return recusar(candidato, MOTIVO_IMPOSSIVEL, detalhe=impossivel)
         if candidato not in alvos:
             alvos.append(candidato)
 
@@ -568,6 +779,98 @@ def _database_for_payload(
     return bucket, database, projection, task
 
 
+#: Onde cada recusa do extrator de caminhos fica registrada, dentro do balde da
+#: sessao. Append-only, uma linha JSON por recusa. Sem rotacao de proposito: o
+#: balde e por sessao e a linha tem ~150 bytes, entao o arquivo morre com a
+#: sessao. Se um dia crescer demais, a correcao e rotacionar — nunca parar de
+#: escrever, que e o defeito que este arquivo existe para nao repetir.
+ARQUIVO_DE_RECUSAS = "recusas.jsonl"
+
+
+def _registrar_recusas(
+    bucket: Path,
+    task_id: str,
+    command: str,
+    alvos: list[str],
+    recusas: list[dict[str, Any]],
+) -> None:
+    """Toda recusa do extrator fica escrita, com comando, candidato e motivo.
+
+    O risco do conserto de R3 e na direcao perigosa: um candidato rejeitado por
+    engano e uma escrita real que some do contador, e o contador nao denuncia a
+    propria cegueira — "o ruido caiu" e "o guarda parou de ver" dao o mesmo
+    numero. Este arquivo e o que separa os dois.
+
+    O mapa `revisao-que-invalida` so conseguiu medir alguma coisa porque as
+    entradas ACEITAS ficavam em `files`. As recusadas nunca ficaram em lugar
+    nenhum, e a proxima pergunta seria irrespondivel pelo mesmo motivo.
+
+    Degrada em silencio: falha de escrita aqui nunca pode derrubar o hook.
+    """
+    if not recusas:
+        return
+    digest = hashlib.sha256(command.encode("utf-8")).hexdigest()[:12]
+    agora = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    try:
+        with (bucket / ARQUIVO_DE_RECUSAS).open("a", encoding="utf-8") as arquivo:
+            for recusa in recusas:
+                arquivo.write(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "comando_hash": digest,
+                            "comando": command[:200],
+                            "aceitos": alvos,
+                            **recusa,
+                            "created_at": agora,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+    except OSError:
+        pass
+
+
+def _apenas_dentro_da_raiz(
+    payload: dict[str, Any], alvos: list[str], recusas: list[dict[str, Any]]
+) -> list[str]:
+    """A MESMA pergunta que o caminho do `Edit`/`Write` ja fazia.
+
+    `b771b6b` ensinou `counts_as_modified_file` a distinguir *escreveu algo* de
+    *mudou o codigo sob teste*, e ligou isso em `harness-reclassify.sh:135`. O
+    caminho do shell chamava `touch_files` sem passar por ele. Mesmo arquivo,
+    mesmo lugar, dois veredictos — medido ao vivo no mapa §5:
+
+        Write -> counts_as_modified_file(tool, path, raiz)  ->  False
+        echo ... > <mesmo caminho>                          ->  True
+
+    O conserto de `b771b6b` chegou a um caminho e nao ao outro.
+
+    **Fail-closed, e a decisao NAO esta sendo reaberta:** sem `cwd` no payload
+    nao ha projeto declarado, e sem projeto nao ha dentro nem fora. Cair em
+    `os.getcwd()` inventaria a fronteira a partir de onde o hook por acaso roda,
+    e foi o que derrubou 7 testes de `TestReclassify`. Sem `cwd`, conta tudo.
+
+    O alvo relativo e resolvido contra o `cwd` do payload, nao contra o do
+    processo do hook: `cat > scripts/x.py` e relativo a sessao, e `abspath`
+    sozinho o ancoraria no lugar errado. O caminho GRAVADO continua sendo o
+    original — quem le `files` continua vendo `scripts/x.py`.
+    """
+    cwd = str(payload.get("cwd") or "")
+    raiz = find_repo_root(cwd) if cwd else None
+    if not raiz:
+        return alvos
+    dentro: list[str] = []
+    for alvo in alvos:
+        absoluto = alvo if os.path.isabs(alvo) else os.path.join(cwd, alvo)
+        if inside_root(absoluto, raiz):
+            dentro.append(alvo)
+        else:
+            recusas.append({"candidato": alvo, "motivo": "fora-da-raiz"})
+    return dentro
+
+
 def _handle_post_tool(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").casefold()
@@ -577,9 +880,15 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # As duas metades importam: sem a primeira o contador de arquivos e cego
         # a escrita por shell; sem a segunda, um programa que escreve por dentro
         # passaria por "nao alterou nada".
-        alvos = shell_write_targets(command)
+        recusas: list[dict[str, Any]] = []
+        alvos = _apenas_dentro_da_raiz(payload, shell_write_targets(command, recusas), recusas)
+        _registrar_recusas(bucket, task["task_id"], command, alvos, recusas)
         if alvos or not (is_read_only(command) or nao_muda_a_arvore(command)):
-            task = database.touch_files(task["task_id"], alvos or ["shell-command"])
+            task = database.touch_files(
+                task["task_id"],
+                alvos or ["shell-command"],
+                origem="shell" if alvos else "shell-placeholder",
+            )
     aviso = ""
     if is_trusted_verification(command):
         collected, passed, skipped, output_hash = _test_counts(payload)
@@ -631,6 +940,27 @@ def _conta_evidencia(database, task_id: str, code_revision: int) -> str:
     return f"{total} linha(s) de evidence nesta task, {desta} na code_revision atual"
 
 
+def _ultimos_toques(database, task_id: str, quantos: int = 3) -> str:
+    """As ultimas invalidacoes, com caminho e origem.
+
+    Sem isto a mensagem dizia `code_revision=24` e parava ali. Quem a lia sabia
+    que a evidencia tinha expirado e nao sabia POR QUE — e a saida mais barata
+    era inventar um diagnostico. A tabela `touches` existe justamente para
+    responder isso (ver `transactional_state.touch_files`); esta funcao e o
+    consumidor dela na unica tela onde a resposta e util.
+    """
+    try:
+        linhas = database.touches(task_id, limite=quantos)
+    except Exception:
+        return ""
+    if not linhas:
+        return ""
+    itens = " ; ".join(
+        f"rev={linha['code_revision']} {linha['path']} ({linha['origem']})" for linha in linhas
+    )
+    return f"Ultima(s) invalidacao(oes): {itens}"
+
+
 def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     """A mensagem do bloqueio, dizendo o que o portao LEU.
 
@@ -652,6 +982,9 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
         f"task_id={task['task_id']} | balde={bucket} | fase={fase} ({posicao}) | "
         f"code_revision={task['code_revision']} | verified={task['verified']} | {contagem}"
     )
+    toques = _ultimos_toques(database, task["task_id"])
+    if toques:
+        leitura = f"{leitura}\n{toques}"
     # `--home` e do parser RAIZ: vai antes do subcomando, nao depois. Escrever
     # na ordem errada aqui entregaria um comando que nao roda, que e a mesma
     # falha que esta mensagem existe para corrigir — instrucao que nao se
