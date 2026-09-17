@@ -15,7 +15,8 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from harness_paths import ensure_state_dir  # type: ignore[import-not-found]
+from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
+from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
 
 VERIFICATION_PATTERNS = (
@@ -178,6 +179,22 @@ def is_state_management(command: str) -> bool:
 _DESTINOS_NULOS = frozenset({'/dev/null', 'nul', 'NUL', 'con', 'CON'})
 
 
+#: Dentro de aspas DUPLAS, a barra invertida so escapa estes. Antes de qualquer
+#: outro caractere ela e literal — regra do POSIX, e a que o bash aplica.
+#:
+#: `_tokenize` escapava INCONDICIONALMENTE, e o efeito era comer os separadores
+#: de todo caminho absoluto do Windows entre aspas: `"C:\Users\me\x.py"` chegava
+#: em `files` como `C:UsersmeX.py`. Medido em 2026-09-17 ao ligar R2 — o filtro
+#: de raiz nao tinha como funcionar porque `os.path.isabs` respondia False sobre
+#: o proprio caminho que ele deveria comparar.
+#:
+#: E o mesmo defeito, numa direcao a mais, que o mapa `revisao-que-invalida`
+#: mediu na classe A: escrita REAL que chega ao banco parecendo lixo. A regua do
+#: autor ("sem separador e sem extensao") classificava essas entradas como
+#: "nao parece caminho" — e elas eram caminho, mutilado na tokenizacao.
+_ESCAPAVEIS_EM_ASPAS_DUPLAS = frozenset({chr(34), chr(92), '$', '`', chr(10)})
+
+
 def _tokenize(command: str) -> list[str]:
     """Tokens do comando, com os operadores fora de aspas separados.
 
@@ -194,15 +211,17 @@ def _tokenize(command: str) -> list[str]:
             tokens.append(''.join(atual))
             atual.clear()
 
-    for character in command:
+    for indice, character in enumerate(command):
         if escaped:
             atual.append(character)
             escaped = False
             continue
         if quote:
             if character == chr(92) and quote == chr(34):
-                escaped = True
-                continue
+                seguinte = command[indice + 1] if indice + 1 < len(command) else ''
+                if seguinte in _ESCAPAVEIS_EM_ASPAS_DUPLAS:
+                    escaped = True
+                    continue
             if character == quote:
                 quote = None
                 continue
@@ -738,6 +757,45 @@ def _registrar_recusas(
         pass
 
 
+def _apenas_dentro_da_raiz(
+    payload: dict[str, Any], alvos: list[str], recusas: list[dict[str, Any]]
+) -> list[str]:
+    """A MESMA pergunta que o caminho do `Edit`/`Write` ja fazia.
+
+    `b771b6b` ensinou `counts_as_modified_file` a distinguir *escreveu algo* de
+    *mudou o codigo sob teste*, e ligou isso em `harness-reclassify.sh:135`. O
+    caminho do shell chamava `touch_files` sem passar por ele. Mesmo arquivo,
+    mesmo lugar, dois veredictos — medido ao vivo no mapa §5:
+
+        Write -> counts_as_modified_file(tool, path, raiz)  ->  False
+        echo ... > <mesmo caminho>                          ->  True
+
+    O conserto de `b771b6b` chegou a um caminho e nao ao outro.
+
+    **Fail-closed, e a decisao NAO esta sendo reaberta:** sem `cwd` no payload
+    nao ha projeto declarado, e sem projeto nao ha dentro nem fora. Cair em
+    `os.getcwd()` inventaria a fronteira a partir de onde o hook por acaso roda,
+    e foi o que derrubou 7 testes de `TestReclassify`. Sem `cwd`, conta tudo.
+
+    O alvo relativo e resolvido contra o `cwd` do payload, nao contra o do
+    processo do hook: `cat > scripts/x.py` e relativo a sessao, e `abspath`
+    sozinho o ancoraria no lugar errado. O caminho GRAVADO continua sendo o
+    original — quem le `files` continua vendo `scripts/x.py`.
+    """
+    cwd = str(payload.get("cwd") or "")
+    raiz = find_repo_root(cwd) if cwd else None
+    if not raiz:
+        return alvos
+    dentro: list[str] = []
+    for alvo in alvos:
+        absoluto = alvo if os.path.isabs(alvo) else os.path.join(cwd, alvo)
+        if inside_root(absoluto, raiz):
+            dentro.append(alvo)
+        else:
+            recusas.append({"candidato": alvo, "motivo": "fora-da-raiz"})
+    return dentro
+
+
 def _handle_post_tool(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").casefold()
@@ -748,7 +806,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # a escrita por shell; sem a segunda, um programa que escreve por dentro
         # passaria por "nao alterou nada".
         recusas: list[dict[str, Any]] = []
-        alvos = shell_write_targets(command, recusas)
+        alvos = _apenas_dentro_da_raiz(payload, shell_write_targets(command, recusas), recusas)
         _registrar_recusas(bucket, task["task_id"], command, alvos, recusas)
         if alvos or not (is_read_only(command) or nao_muda_a_arvore(command)):
             task = database.touch_files(
