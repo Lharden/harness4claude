@@ -251,6 +251,60 @@ _GIT_SOMENTE_LEITURA = frozenset({
 })
 
 
+#: Git que escreve em `.git/` e deixa a ARVORE DE TRABALHO byte-identica.
+#:
+#: Nao sao read-only — `add` mexe no indice e `commit` cria objeto e move HEAD —
+#: mas a evidencia de teste e sobre o codigo que a suite mediu, e esse codigo e
+#: a arvore. Sem esta lista, a sequencia obrigatoria do proprio workflow era
+#: impossivel de completar: rodar a suite -> gravar evidencia -> commitar ->
+#: responder. O commit invalidava a evidencia que o justificou. Medido em
+#: 2026-09-16: `code_revision` foi de 218 para 220 por um `git add` e um
+#: `git commit`, com a arvore limpa.
+#:
+#: EXCECAO CONHECIDA, declarada em vez de escondida: commit feito DIRETAMENTE em
+#: `main` move a ref publicada, e `test_deploy_drift` compara o cache contra ela
+#: — entao um commit ali pode virar o veredito daquele teste sem expirar a
+#: evidencia. O workflow deste repositorio manda ramificar antes, e a proxima
+#: suite pega. Nao esta coberto, e esta escrito.
+_GIT_NAO_MUDA_ARVORE = frozenset({'add', 'commit'})
+
+
+def nao_muda_a_arvore(command: str) -> bool:
+    """O comando escreve, mas nao no codigo que a suite mede."""
+    if not command or shell_write_targets(command):
+        return False
+    segmentos = _segmentos(command)
+    if not segmentos:
+        return False
+    for partes in segmentos:
+        if _binario(partes[0]) != 'git':
+            return False
+        resto = [p for p in partes[1:] if not p.startswith('-')]
+        if not resto or resto[0] not in (_GIT_NAO_MUDA_ARVORE | _GIT_SOMENTE_LEITURA):
+            return False
+    return True
+
+
+def _binario(token: str) -> str:
+    nome = token.replace(chr(92), '/').rsplit('/', 1)[-1]
+    return nome[:-4] if nome.endswith('.exe') else nome
+
+
+def _segmentos(command: str) -> list[list[str]]:
+    segmento: list[str] = []
+    segmentos: list[list[str]] = []
+    for token in _tokenize(command):
+        if token in _OPERADORES_TOKEN:
+            if segmento:
+                segmentos.append(segmento)
+            segmento = []
+            continue
+        segmento.append(token)
+    if segmento:
+        segmentos.append(segmento)
+    return segmentos
+
+
 def is_read_only(command: str) -> bool:
     """Sei que este comando nao escreve — nao apenas "nao consegui ver escrita".
 
@@ -267,24 +321,11 @@ def is_read_only(command: str) -> bool:
         return False
     if shell_write_targets(command):
         return False
-    tokens = _tokenize(command)
-    segmento: list[str] = []
-    segmentos: list[list[str]] = []
-    for token in tokens:
-        if token in _OPERADORES_TOKEN:
-            if segmento:
-                segmentos.append(segmento)
-            segmento = []
-            continue
-        segmento.append(token)
-    if segmento:
-        segmentos.append(segmento)
+    segmentos = _segmentos(command)
     if not segmentos:
         return False
     for partes in segmentos:
-        binario = partes[0].replace(chr(92), '/').rsplit('/', 1)[-1]
-        if binario.endswith('.exe'):
-            binario = binario[:-4]
+        binario = _binario(partes[0])
         if binario == 'git':
             resto = [p for p in partes[1:] if not p.startswith('-')]
             if not resto or resto[0] not in _GIT_SOMENTE_LEITURA:
@@ -537,7 +578,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # a escrita por shell; sem a segunda, um programa que escreve por dentro
         # passaria por "nao alterou nada".
         alvos = shell_write_targets(command)
-        if alvos or not is_read_only(command):
+        if alvos or not (is_read_only(command) or nao_muda_a_arvore(command)):
             task = database.touch_files(task["task_id"], alvos or ["shell-command"])
     aviso = ""
     if is_trusted_verification(command):

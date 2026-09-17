@@ -43,12 +43,31 @@ def touch_target(tool_name: str, file_path: str) -> str | None:
 
 
 def inside_root(file_path: str, root: str) -> bool:
-    """O caminho esta dentro da raiz? Na duvida, SIM.
+    """O caminho esta dentro da raiz?
 
-    Fail-closed de proposito: um caminho que nao se consegue resolver e tratado
-    como dentro, e o pior caso vira expirar evidencia a mais. O erro oposto —
-    deixar de expirar apos uma edicao real — deixaria passar um numero velho
-    como se fosse fresco, que e a falha que o portao existe para impedir.
+    **Na duvida, SIM** — fail-closed. Caminho que nao se resolve conta como
+    dentro, e o pior caso vira expirar evidencia a mais. O erro oposto, deixar
+    de expirar apos uma edicao real, faria um numero velho passar por fresco,
+    que e a falha que o portao existe para impedir.
+
+    **Drive ou share diferente e a excecao, e nao e duvida: e resposta.** O
+    `commonpath` levanta `ValueError` quando os caminhos nao compartilham raiz
+    (`C:` contra `Z:`, ou UNC contra local), e isso significa que sao lugares
+    diferentes — nao lugares que nao se conseguiu comparar. Por isso o ramo
+    devolve `False` mesmo sob a regra do "na duvida, sim".
+
+    [superado: "drive diferente e justamente o caso do scratchpad em %TEMP%"] —
+    medido pela sessao `apresentacao-alta-gestao-refinamento-ac9-f9` em
+    2026-09-17: nesta maquina o repo e o `%TEMP%` estao os dois em `C:`, e o
+    scratchpad e excluido pelo `commonpath` normal, nunca por esta excecao. A
+    justificativa citava um caso que nao era o caso dela.
+
+    O que a mesma sessao mediu e NAO derrubou: `subst D:` apontando para o
+    repositorio devolve `True` pelos dois caminhos, porque o `realpath` acima
+    resolve o drive virtual antes da comparacao. Junction e symlink caem na
+    mesma protecao. Continua descoberto: uma raiz alcancavel por caminho que o
+    `realpath` NAO resolva para o mesmo drive teria edicao real classificada
+    como fora — cenario nao construido, porque `subst` nao o produz.
     """
     try:
         alvo = os.path.realpath(os.path.abspath(file_path.strip()))
@@ -58,11 +77,9 @@ def inside_root(file_path: str, root: str) -> bool:
     if not raiz:
         return True
     try:
-        # `commonpath` levanta ValueError entre drives diferentes no Windows,
-        # e drive diferente e justamente o caso do scratchpad em `%TEMP%`.
         comum = os.path.commonpath([os.path.normcase(alvo), os.path.normcase(raiz)])
     except ValueError:
-        return False
+        return False   # raizes incomparaveis = lugares diferentes, ver docstring
     return comum == os.path.normcase(raiz)
 
 

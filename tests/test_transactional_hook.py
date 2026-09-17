@@ -586,6 +586,51 @@ def test_is_read_only_recusa_o_que_escreve_ou_pode_escrever():
     assert not hook.is_read_only("")
 
 
+def test_git_que_nao_toca_a_arvore_nao_expira_evidencia():
+    """`git add` e `git commit` escrevem em `.git/`, nao no codigo sob teste.
+
+    Sem isto, a sequencia obrigatoria do workflow era impossivel de completar:
+    rodar a suite -> gravar evidencia -> commitar -> responder. O commit
+    invalidava a evidencia que o justificou. Medido em 2026-09-16:
+    `code_revision` foi de 218 para 220 por um `git add` e um `git commit`,
+    com a arvore de trabalho limpa e `git status` vazio.
+    """
+    assert hook.nao_muda_a_arvore("git add -A")
+    assert hook.nao_muda_a_arvore("git commit -m mensagem")
+    assert hook.nao_muda_a_arvore("git add -A && git commit -m x")
+    assert hook.nao_muda_a_arvore("git status")   # read-only tambem passa aqui
+
+
+def test_CONTROLE_o_que_muda_a_arvore_continua_expirando():
+    """Metade 1. Sem estes, o conserto acima seria silenciamento.
+
+    Cada um destes MUDA o codigo que a suite mede, e evidencia colhida antes
+    deles nao fala sobre o codigo depois deles.
+    """
+    for comando in (
+        "git checkout main",
+        "git reset --hard HEAD~1",
+        "git clean -fdx",
+        "git stash",
+        "git merge outra",
+        "git pull",
+        "sed -i 's/a/b/' x.py",
+        "rm -rf scripts",
+        "echo oi > scripts/x.py",
+        "npm install",
+        "python scripts/patch.py",
+    ):
+        assert not hook.nao_muda_a_arvore(comando), comando
+
+
+def test_composicao_nao_dilui_a_nova_categoria():
+    """Um elo que muda a arvore tira a linha inteira, como em `is_read_only`."""
+    assert not hook.nao_muda_a_arvore("git add -A && sed -i 's/a/b/' x.py")
+    assert not hook.nao_muda_a_arvore("git commit -m x && git checkout main")
+    assert not hook.nao_muda_a_arvore("git add -A > log.txt")
+    assert not hook.nao_muda_a_arvore("")
+
+
 def test_is_read_only_recusa_quando_um_segmento_escreve():
     """Um so elo fora da lista tira a linha inteira — composicao nao dilui."""
     assert not hook.is_read_only("grep -n foo x.py && python build.py")
