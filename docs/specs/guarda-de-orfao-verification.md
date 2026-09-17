@@ -340,3 +340,70 @@ que este ramo existe para acusar** — inclusive quando a capacidade é minha.
   camada de permissão (CRLF nos `.js`), e a rodada foi inline — no mesmo contexto
   que escreveu a spec. As cinco lentes ficaram mortas; os achados valem, a
   cobertura não tem a garantia de janelas descorrelacionadas.
+
+---
+
+## Encerramento — a fase 11 não foi executada, e por quê
+
+**Declarado, não silenciado**, conforme a regra de ouro: *"item que não fecha sai
+declarado com causa nomeada e ação conhecida"*.
+
+O pipeline `L2-architecture` tem onze fases. Dez foram executadas. A décima
+primeira, `verify-multimodel`, roda `scripts/workflows/wf-verify-multimodel.js` —
+**o arquivo que este mesmo trabalho descobriu que não podia ser invocado.**
+
+| | |
+|---|---|
+| **causa** | `.gitattributes` não declarava `*.js`/`*.cjs` com `eol=lf`; CRLF na árvore de trabalho faz a camada de permissão recusar o script como *"control characters"* |
+| **ação** | feita em `8da0a84`, com dois testes e um controle |
+| **o que falta** | provar que a ferramenta aceita o script agora |
+| **por que não foi provado aqui** | o diretório de trabalho desta sessão foi removido no merge, e o Workflow só aceita caminhos dentro dele. Precisa de uma sessão cujo cwd contenha os workflows |
+
+**A mesma causa atingiu as duas pontas do pipeline.** `grill-me` (fase 5) também
+mapeia para um Workflow, e às 22h ele foi recusado pela mesma mensagem. A fase
+rodou inline, com as cinco lentes mortas e a cobertura reduzida — registrado na
+abertura de `guarda-de-orfao-grill.md`. Três horas separaram as duas recusas e só
+na segunda a causa foi investigada.
+
+**O que substituiu a fase 11, e não é equivalente:** sete achados adversariais
+aplicados no `grill-me` inline, três rodadas de revisão independente pela sessão
+`apresentacao-alta-gestao-refinamento-ac9-f9` — que verificou as quatro metades da
+falsificação do drift construindo a divergência por conta própria — e sete suítes
+completas. É revisão por outro contexto, não fan-out multi-modelo. A diferença
+está aqui para quem precisar dela depois.
+
+### Os seis rostos do mesmo defeito
+
+O ramo nasceu para achar função sem chamador. O que ele achou foi um padrão:
+
+| onde | perguntava | devia perguntar |
+|---|---|---|
+| `contract/capabilities.json` | "a prova passa?" | "a capacidade é usada?" |
+| `test_deploy_drift` | "o worktree está implantado?" | "o que roda é publicado?" |
+| `counts_as_modified_file` | "algum arquivo foi escrito?" | "o código sob teste mudou?" |
+| `is_read_only` | "este comando escreve?" | "isto muda a árvore de trabalho?" |
+| `scripts/workflows/*.js` | *(nada perguntava)* | "esta capacidade pode ser invocada?" |
+| `is_state_management` | — | ver abaixo |
+
+**O sexto ficou aberto e é o que travou este encerramento.** `is_state_management`
+isenta `state_cli.py` de expirar evidência, mas só quando o comando não tem
+composição de shell. Gravar evidência exige resolver o balde antes
+(`harness_paths.py && state_cli.py evidence`), o comando composto perde a isenção,
+e `touch_files` sobe `code_revision` no mesmo `PostToolUse`. **O comando que existe
+para satisfazer o portão é classificado pelo portão como alteração de código.**
+Medido: evidência gravada em 259, revisão em 260 no instante seguinte.
+
+O docstring de `is_state_management` já descreve esse deadlock, medido em
+2026-09-02, com a frase *"nenhuma task podia ser concluída pelo caminho previsto"*.
+O conserto de então cobriu o comando simples e não o composto. **Ação conhecida:**
+isentar o segmento do `state_cli.py` mesmo em comando composto, desde que nenhum
+outro segmento escreva — a mesma forma que `is_read_only` já usa para recusar
+quando um elo escreve. Não feito aqui.
+
+### O número, uma última vez
+
+**38 esquecidos contra 55 decisões declaradas, de 93 não-vivas sobre 432.**
+
+Os 38 atravessaram **cinco** correções do instrumento que os mediu sem se mover.
+É o único número da sessão que sobreviveu a mudanças no próprio instrumento, e é
+essa a razão de confiar nele — não a quantidade de vezes que foi repetido.
