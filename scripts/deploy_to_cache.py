@@ -46,6 +46,18 @@ import harness_paths  # noqa: E402
 #: Nao viajam para o plugin: infra de CI, worktrees aninhados, bytecode.
 NAO_VIAJAM = ("__pycache__", ".github", "worktrees", ".ruff_cache", ".pytest_cache")
 
+#: Existem SO no cache e nunca no repo: estado de execucao que o host escreve.
+#:
+#: `.in_use/<pid>` e a trava que marca o plugin em uso por uma sessao viva —
+#: sete delas apareceram na primeira medicao do drift por sobra. Nao sao lixo de
+#: deploy velho: sao a maquina dizendo quem esta usando isto agora.
+#:
+#: A distincao importa e e a mesma que separa as duas ausencias: arquivo que o
+#: repo nao tem porque foi REMOVIDO e divergencia; arquivo que o repo nao tem
+#: porque NUNCA e dele nao e. Sem esta lista, o guarda acusaria toda sessao
+#: aberta — e portao que reprova sempre e portao que ninguem le.
+SO_DO_CACHE = (".in_use",)
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -193,10 +205,36 @@ def drift_publicado(root: Path, cache: Path, ref: str) -> list[Path]:
     arquivo que so existe no ramo, e reprovaria todo ramo aberto por
     construcao. Portao que reprova sempre e portao que ninguem le: o vermelho
     permanente treina a ignorar vermelho, e o proximo drift de verdade passa.
+
+    E O SOBRANDO CONTA TAMBEM. Sao duas ausencias diferentes e so uma era vista:
+
+    - arquivo no WORKTREE e nao em `ref`  -> trabalho de ramo, NAO reprova
+    - arquivo no CACHE e nao em `ref`     -> deploy velho com lixo, REPROVA
+
+    Derivar a lista so de `ref` torna o segundo invisivel: ninguem pergunta por
+    um arquivo que `ref` nao tem. Medido em 2026-09-17: `e4212fb` removeu um
+    arquivo e mais nada, e o cache de `e4212fb~1` passou como se estivesse em
+    dia — `test_deploy_velho_REPROVA` acusou com `assert []`, que e o portao
+    dizendo que nao ha divergencia entre uma arvore e a anterior a ela.
+
+    Codigo removido que fica rodando e a MESMA falha que o drift existe para
+    pegar, com o sinal trocado: nao e versao velha de um arquivo vivo, e um
+    arquivo morto ainda vivo. `[superado: `drift(origem, cache,
+    files_in_tree(origem))` — so a lista de `ref`]`
     """
     with tempfile.TemporaryDirectory(prefix="h4c-publicado-") as tmp:
         origem = extract_ref(root, ref, Path(tmp))
-        return drift(origem, cache, files_in_tree(origem))
+        do_ref = files_in_tree(origem)
+        divergentes = drift(origem, cache, do_ref)
+        esperados = set(do_ref)
+        ja_acusados = set(divergentes)
+        sobrando = [
+            rel for rel in files_in_tree(cache)
+            if rel not in esperados
+            and rel not in ja_acusados
+            and not any(parte in SO_DO_CACHE for parte in rel.parts)
+        ]
+        return divergentes + sobrando
 
 
 def apply(origem: Path, destino: Path, arquivos) -> list[Path]:
