@@ -5,3 +5,13 @@
 *.py   text eol=lf
 *.json text eol=lf
 *.md   text eol=lf
+# .js/.cjs entraram em 2026-09-17, e a falta nao era cosmetica. Os tres
+# workflows de `scripts/workflows/` ficavam com CRLF na arvore de trabalho no
+# Windows, e a camada de permissao do Claude Code recusa o script como
+# "control characters". Resultado: `wf-grill` e `wf-verify-multimodel` estao
+# declarados no mapa de fases da skill `harness-workflow`, tem teste em
+# `test_workflow_returns.py`, e NAO PODIAM SER INVOCADOS. Duas das onze fases
+# do pipeline L2 apontavam para uma porta que nao abria — o mesmo caso que o
+# `tools/orfaos.py` existe para acusar, so que numa capacidade, nao numa funcao.
+*.js   text eol=lf
+*.cjs  text eol=lf
