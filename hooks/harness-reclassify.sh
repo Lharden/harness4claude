@@ -113,6 +113,28 @@ target = touch_target(tool_name, file_path)
 if target is None:
     raise SystemExit(0)
 
+# A raiz do PROJETO, nao a do harness: e ela que delimita o codigo que a suite
+# mede. Sem isto, escrever a mensagem de commit num arquivo do scratchpad
+# expirava a evidencia de uma suite inteira com a arvore de trabalho limpa
+# (medido 2026-09-16: 1311 passed invalidado por tres escritas fora do repo).
+# SEM CRASE E SEM CIFRAO NESTE BLOCO: ele viaja dentro de aspas duplas do
+# bash, entao crase vira substituicao de comando e cifrao vira variavel.
+# Este comentario ja quebrou o hook uma vez, com uma crase.
+# Sem cwd no payload nao ha projeto declarado, e sem projeto nao ha dentro nem
+# fora: cair em os.getcwd() inventaria a fronteira a partir de onde o hook por
+# acaso roda, e foi o que derrubou 7 testes de TestReclassify. Sem cwd, conta
+# tudo — o comportamento de antes, que e o fail-closed correto.
+projeto_raiz = ''
+cwd_sessao = os.environ.get('HARNESS_SESSION_CWD') or ''
+if cwd_sessao:
+    try:
+        from harness_paths import find_repo_root
+        projeto_raiz = find_repo_root(cwd_sessao) or ''
+    except Exception:
+        projeto_raiz = ''
+if projeto_raiz and not counts_as_modified_file(tool_name, file_path, projeto_raiz):
+    raise SystemExit(0)
+
 # Read state
 # Contrato PostToolUse: este hook só consome tool_input.file_path (contagem).
 # Conteúdo de tool (tool_input.content / tool_response) NUNCA é classificado —

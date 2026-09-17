@@ -107,6 +107,34 @@ def _cache_falso(tmp_path: Path, ref: str) -> Path:
     return dtc.extract_ref(ROOT, ref, destino)
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=str(repo), capture_output=True, text=True, timeout=120, check=True,
+    )
+
+
+def _repo_fabricado(tmp_path: Path) -> Path:
+    """Um repo com `main` publicada e um ramo que tem arquivo a mais.
+
+    Fabricar em vez de observar e o que tira o `skip` do caminho: a pergunta
+    "arquivo so-do-ramo e exigido?" passa a poder ser feita sempre, em vez de so
+    quando o checkout por acaso tem um.
+    """
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "base.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "init", "-q", ".")
+    _git(repo, "checkout", "-q", "-B", "main")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", "ramo")
+    (repo / "scripts" / "so_do_ramo.py").write_text("y = 2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ramo")
+    return repo
+
+
 def _mensagem(divergentes, alvo, ref) -> str:
     return (
         f"o que roda diverge de `{ref}` em {len(divergentes)} arquivo(s).\n"
@@ -174,19 +202,36 @@ class TestOQueRodaEOQueFoiPublicado:
 
         Um arquivo que existe no worktree e nao em `ref` nao pode ser cobrado do
         cache — ele nao foi publicado, e exigi-lo e o que reprovava todo ramo.
+
+        O ramo e FABRICADO, nao observado. A primeira versao perguntava "este
+        worktree tem arquivo fora de main? entao prove que nao e exigido", e
+        pulava quando nao tinha — verde que nunca viu vermelho, e a protecao
+        contra vacuidade ficava dependendo do estado do checkout. Esta versao
+        pergunta "dado um ramo com arquivo fora de main, ele e exigido?" e
+        fabrica o ramo para poder perguntar sempre. Saida encontrada pela sessao
+        `apresentacao-alta-gestao-refinamento-ac9-f9`, a partir do docstring de
+        `drift_publicado`: se a lista vem da arvore de `ref`, a consequencia se
+        prova sem worktree nenhum.
         """
-        ref = _ref_publicada()
-        cache = _cache_falso(tmp_path, ref)
-        so_no_ramo = [
-            p for p in dtc.shipped_files(ROOT)
-            if not (cache / p).exists()
-        ]
-        if not so_no_ramo:
-            pytest.skip("este worktree nao tem arquivo fora de `" + ref + "`")
-        divergentes = dtc.drift_publicado(ROOT, cache, ref)
-        assert not [p for p in so_no_ramo if p in divergentes], (
-            f"arquivo que so existe no ramo foi cobrado do cache: {so_no_ramo[:5]}"
+        repo = _repo_fabricado(tmp_path)
+        cache = dtc.extract_ref(repo, "main", tmp_path / "cache")
+
+        so_do_ramo = Path("scripts/so_do_ramo.py")
+        assert (repo / so_do_ramo).is_file(), "o fixture nao criou o arquivo do ramo"
+        assert not (cache / so_do_ramo).exists(), "o arquivo do ramo vazou para o cache"
+
+        assert dtc.drift_publicado(repo, cache, "main") == [], (
+            "ramo com arquivo novo reprovou contra um cache que espelha main"
         )
+
+    def test_CONTROLE_o_mesmo_repo_fabricado_acusa_cache_contaminado(self, tmp_path):
+        """Sem este, o teste acima fica verde se `drift_publicado` parar de
+        comparar coisa nenhuma. E o controle que torna a prova estrutural."""
+        repo = _repo_fabricado(tmp_path)
+        cache = dtc.extract_ref(repo, "main", tmp_path / "cache")
+        alvo = cache / "scripts" / "base.py"
+        alvo.write_text("contaminado\n", encoding="utf-8")
+        assert Path("scripts/base.py") in dtc.drift_publicado(repo, cache, "main")
 
     def test_o_comando_que_a_mensagem_imprime_e_aceito_pelo_parser_real(self):
         """`--apply` escreve no plugin, entao a prova possivel e parsear.
