@@ -84,6 +84,8 @@ Sem a terceira linha, R1 é indistinguível de silenciar o portão.
 
 **Causa raiz:** `_tokenize` é um tokenizador de shell POSIX aplicado a strings que muitas vezes não são comandos POSIX — corpo de heredoc, código de programa, PowerShell (§6.2 do mapa). `shell_write_targets.considerar` (`:361-367`) rejeita exatamente quatro coisas: vazio, operador, `-…`, destino nulo. **Não há nenhum teste de que o candidato possa ser um caminho.**
 
+**Evidência nova, colhida enquanto este plano era escrito:** o commit do mapa entrou como `git commit -F - <<'MSGEOF'`, e `'MSGEOF'` virou linha em `files` (revisão 21 desta task). Causa: a última linha da mensagem é a de atribuição obrigatória, `Co-Authored-By: … <noreply@anthropic.com>`, e o `>` que fecha o e-mail é operador para `_tokenize` — o token seguinte é o delimitador de fechamento do heredoc. **Toda mensagem de commit escrita por heredoc dispara isto**, porque a linha de atribuição sempre termina em `>`.
+
 **Forma, e a ordem importa:**
 
 1. **Reconhecer heredoc antes de tokenizar.** É a correção de causa raiz: detectar `<<'DELIM'` / `<<DELIM` e **excluir o corpo** da tokenização. Sozinha, mata os quatro casos reproduzidos no §6.2 do mapa.
@@ -113,7 +115,9 @@ A última linha é a que vale mais: é um corpus real de 467 entradas com o rót
 
 **Forma — e este é o conserto de uma linha que a semente autorizou propor:** substituir a composição por chamadas atômicas separadas, cada uma numa invocação. Resolver `STATE_DIR` num comando; usar o valor literal no seguinte.
 
-**Já demonstrado nesta sessão, sem querer.** O passo 2 do protocolo foi executado como três comandos atômicos em vez do bloco composto. Rodando `is_state_management` sobre a linha literal que foi executada: **`True`** — isenta. Não é proposta não testada: é o caminho que funcionou aqui hoje enquanto o caminho do manual falhava em três outras sessões.
+**Já demonstrado nesta sessão, ponta a ponta.** Fechar esta própria task exigiu **sete** chamadas atômicas seguidas — `evidence`, 3× `transition`, 3× `artifact`, `complete`. `code_revision` ficou parado em **24 nas sete**, `verified` ficou em `1`, e o `complete` devolveu `status: "done"`. Ver mapa §5.1.
+
+Não é proposta não testada: é o caminho que fechou uma task hoje, enquanto o caminho do manual travava três outras sessões. **A isenção já funciona; ela só nunca é alcançada por quem copia o bloco.**
 
 **Efeito:** fecha o laço do Achado 5 sozinho, **sem tocar em código de produção e sem tocar na régua**. Três sessões chegaram ao laço por caminhos independentes porque as três seguiram o manual.
 

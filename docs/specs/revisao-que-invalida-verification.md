@@ -5,7 +5,9 @@
 **Spec:** `SEMENTE.md` (o briefing do autor é a spec desta sessão; não há spec formal)
 **Artefatos:** `docs/specs/revisao-que-invalida-mapa.md`, `docs/specs/revisao-que-invalida-plano.md`
 
-**Não observados: 2.** Ambos nomeados em "Não observado", com o motivo. Nenhum P1.
+**Não observados: 1.** Nomeado em "Não observado", com o motivo. Não é P1.
+
+**Suíte:** `python -m pytest -q -p no:cacheprovider` → **1329 passed, 6 subtests passed, exit 0, 836,11s (13:56)**. Bate com a base `6e7f4e5` declarada pelo autor. Gravado em `evidence` na `code_revision = 24`; `complete` aceitou e a task fechou com `status: "done"`.
 
 ---
 
@@ -84,10 +86,23 @@ O único `EXCEDE` está contido: R1 aparece como proposta, com o afrouxamento em
 
 | item | por quê |
 |---|---|
-| **Suíte de testes do repositório** | `python -m pytest -q -p no:cacheprovider` rodando em background desde o início da sessão; **ainda não terminou** ao fechar este report. Processo vivo. Nenhuma linha de produção foi alterada, então o resultado é o da base `6e7f4e5` por construção — mas **isso é inferência, não medição**, e fica registrado como tal. |
 | **Causa das 2 228 invalidações sem rastro** | `INSERT OR IGNORE` (`transactional_state.py:936`) descartou a informação na escrita. Não há fonte no banco. É o item R5 do plano. |
 
-Nenhum dos dois é P1. Nenhum vira `PASS` silencioso.
+`[superado: "suíte não observada"]` — terminou em 836,11s com **1329 passed, 0 failed, exit 0**. Medida, não inferida.
+
+Não é P1. Não vira `PASS` silencioso.
+
+---
+
+## Evidência produzida pela própria sessão, depois do primeiro report
+
+| o que apareceu | onde | o que prova |
+|---|---|---|
+| `'MSGEOF'` virou linha em `files` (rev=21) | banco desta task | o mecanismo da §6.2 disparou no commit **do mapa**: a linha de atribuição termina em `<…@anthropic.com>`, o `>` é operador, e o token seguinte é o delimitador do heredoc |
+| 7 chamadas atômicas de `state_cli`, `code_revision` parado em 24 | mapa §5.1 | R4 falsificado ponta a ponta: o laço do Achado 5 é da forma composta, não do desenho |
+| `record_signal` fechou com `level=L2, files=5` | `signals.json` | sétimo rótulo inflado para L2, agora com verdade-base total: as 5 linhas são 1 arquivo de scratchpad, 3 `.md` e 1 delimitador de heredoc. **Zero código.** |
+
+As três reforçam achados já escritos. Nenhuma os contradiz.
 
 ---
 

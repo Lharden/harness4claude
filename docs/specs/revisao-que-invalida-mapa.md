@@ -117,16 +117,26 @@ Por task, a proporção de revisões sem nenhum código sob teste:
 
 ## 5. A medição de ouro: esta sessão, com verdade-base
 
-Esta sessão de mapeamento não alterou uma linha de código de produção. Banco próprio, lido agora:
+Esta sessão de mapeamento não alterou uma linha de código de produção. Banco próprio, no fim da sessão:
 
 ```
-task t-20260917-181421930426 · status=active · code_revision=9 · verified=0
-files:  rev=1  'shell-command'
-        rev=7  '…\022e090a-…\scratchpad\files_dump.txt'
-evidence: (vazio)
+task t-20260917-181421930426 · status=done · code_revision=24 · verified=1
+files:  rev= 1  'shell-command'
+        rev= 7  '…\022e090a-…\scratchpad\files_dump.txt'
+        rev=16  '…\docs\specs\revisao-que-invalida-mapa.md'
+        rev=17  '…\docs\specs\revisao-que-invalida-plano.md'
+        rev=20  '…\docs\specs\revisao-que-invalida-verification.md'
+        rev=21  'MSGEOF'
+evidence: (24, exit 0, 1329 collected, 1329 passed, 0 skipped)
 ```
 
-Nove invalidações. **Zero mudanças de código.** Oito delas não deixaram linha em `files` porque `shell-command` já estava lá — exatamente o mecanismo da §4, observado ao vivo.
+**Vinte e quatro invalidações. Zero arquivos de código.** Nenhum `.py`, `.sh` ou `.ps1` na lista. Dezoito delas não deixaram linha em `files` porque o caminho já estava lá — o mecanismo da §4, ao vivo.
+
+Na leitura intermediária, com `code_revision = 9`, havia duas linhas. A atribuição naquele ponto: 8 invalidações pelo placeholder `shell-command` (toda invocação de interpretador), 1 pelo redirecionamento para o scratchpad, 0 por mudança de código.
+
+**A linha `rev=21` é o achado inteiro se fechando sobre si.** `'MSGEOF'` é o delimitador do heredoc de `git commit -F - <<'MSGEOF'` — o commit **deste mapa**. Ele virou "arquivo" porque a última linha da mensagem é a de atribuição, `Co-Authored-By: … <noreply@anthropic.com>`, e o `>` que fecha o endereço de e-mail é um operador de redirecionamento para `_tokenize`. O token seguinte é o delimitador de fechamento. O mecanismo descrito na §6.2 disparou no ato de documentá-lo.
+
+E a linha `rev=7` é a assimetria nua: `files_dump.txt` está no **scratchpad**, fora do repositório. Criado com `Write`, **não** contaria. Criado com `>`, contou.
 
 E a linha da revisão 7 é o achado inteiro numa linha só: `files_dump.txt` está no **scratchpad**, fora do repositório. Se eu tivesse criado o mesmo arquivo com a ferramenta `Write`, ele **não** contaria. Criei com `>` e contou.
 
@@ -138,6 +148,14 @@ Medido com as funções de produção, sem reimplementar nenhuma:
 | `echo … > <mesmo caminho>` → `shell_write_targets` + `touch_files` | **True** — conta e sobe `code_revision` |
 
 `post_tool_policy.py:45-96` tem o filtro de raiz e ele funciona. `hooks/harness-transactional.py:580-582` chama `touch_files` **sem passar por ele**. O conserto de `b771b6b` chegou a um caminho e não ao outro.
+
+### 5.1 O laço do Achado 5 não existe na forma atômica — medido no fim desta sessão
+
+Fechar esta task exigiu sete chamadas de `state_cli.py` seguidas: uma de `evidence`, três de `transition`, três de `artifact`, e o `complete`. Todas na forma atômica — caminho literal, sem `;` e sem `$( )`.
+
+`code_revision` ficou em **24 nas sete**. `verified` ficou em `1`. A evidência gravada na revisão 24 continuou fresca até o `complete`, que devolveu `status: "done"`.
+
+É a falsificação de R4 executada por inteiro, sem nenhuma mudança de código: **o laço é da forma composta, não do desenho.** A isenção de `is_state_management` já funciona; ela só nunca é alcançada por quem copia o manual.
 
 ---
 
@@ -237,6 +255,8 @@ A isenção tem uma condição: `not _has_unquoted_shell_composition(command)`. 
 `actual_level` é o lado "observado" de `proxy_regex_vs_observado`, o número que o `CLAUDE.md` cita como **0,297** para justificar o protocolo de confirmação semântica. **Esse número é medido contra um rótulo corrompido.** Não estou afirmando que ele está errado — estou afirmando que ninguém sabe, porque a verdade-base contra a qual ele é calculado contém 49,9% de lixo.
 
 Ressalva na direção contrária, para não superestimar: `t-20260916` trabalhou em `harness4claude` enquanto o `cwd` era `science-harness`, então "fora da raiz" é verdade para aquele balde e ainda assim havia trabalho real — em outro repositório.
+
+**Sétimo ponto, produzido por esta sessão:** `record_signal.py` fechou esta task com `level=L2, files=5`. As cinco linhas são um arquivo no scratchpad, três `.md` de documentação e o delimitador de heredoc `MSGEOF`. **Zero arquivos de código.** É a sétima task medida e o sétimo rótulo inflado para L2, agora com verdade-base completa — eu sei exatamente o que esta sessão escreveu, porque fui eu.
 
 ---
 
