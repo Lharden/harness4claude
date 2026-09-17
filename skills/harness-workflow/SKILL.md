@@ -43,14 +43,31 @@ Para L0, NÃO ative — execute direto sem pipeline.
 2. **Confirmar classificação (camada semântica)** — ANTES de anunciar, avalie a intenção REAL do prompt do usuário e compare com o `suggested`. Execute **sempre**, concordando ou não:
 
    ```bash
-   ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
+   # UMA CHAMADA POR LINHA, CAMINHO LITERAL. Sem `;`, sem `&&`, sem `$( )`, sem
+   # continuacao com barra invertida — nova linha tambem e composicao.
+   #
+   # A isencao do contador de escrita (hooks/harness-transactional.py:152-173)
+   # so vale para comando SEM composicao de shell. Ate 2026-09-17 a receita
+   # daqui era composta e derrotava a propria isencao que existe para ela: as
+   # tres sessoes que copiaram o bloco travaram no laco em que registrar
+   # evidencia invalidava a evidencia registrada. Medido no mapa
+   # `revisao-que-invalida` §6.4 (receita literal -> nao isenta; forma atomica
+   # -> isenta) e §5.1 (sete chamadas atomicas seguidas, `code_revision` parado
+   # em 24 nas sete, `complete` devolveu `done`).
+   #
+   # Passo 1 — leia `~/.claude/harness/plugin-root` com a ferramenta Read, nao
+   #           com shell. Le-lo por shell nao custa nada; abrir um shell so para
+   #           isso custa uma linha de comando a mais para errar.
+   # Passo 2 — resolva o balde UMA vez por sessao e anote o valor impresso.
+   #           Esta linha SOBE o contador: e `python`, e o hook nao pode saber
+   #           se um interpretador escreve. Custo conhecido, pago uma vez.
    # --session-id NAO e opcional: sem ele o CLI devolve o bucket do PROJETO,
-   # e o hook escreve no bucket da SESSAO. Substitua <session_id> pelo id desta
-   # sessao. Mesma forma do preambulo "Harness4Contract v1", acima.
-   STATE_DIR="$(python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>")"
-   python "$PR/scripts/confirm_classification.py" \
-     --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>" \
-     --harness-dir "$STATE_DIR"
+   # e o hook escreve no bucket da SESSAO. Mesma forma do preambulo
+   # "Harness4Contract v1", acima.
+   python "<PLUGIN_ROOT>/scripts/harness_paths.py" --cwd "<cwd>" --session-id "<session_id>"
+   # Passo 3 — substitua <PLUGIN_ROOT> e <STATE_DIR> pelos valores literais.
+   #           Esta linha e isenta porque nao tem composicao nenhuma.
+   python "<PLUGIN_ROOT>/scripts/confirm_classification.py" --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>" --harness-dir "<STATE_DIR>"
    ```
 
    - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
@@ -72,11 +89,9 @@ Para L0, NÃO ative — execute direto sem pipeline.
 6. **Obrigações** — uma fase existente pode reutilizar artefato válido, mas a transição e sua evidência continuam registradas.
 7. **DONE** — grave evidência fresca, execute `state_cli.py ... complete`, então registre a task:
    ```bash
-   ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"; PR="$(cat "$ROOT/plugin-root")"
-   STATE_DIR="$(python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>")"
-   python "$PR/scripts/record_signal.py" --completed --steps "step1,step2,..." \
-     --expect-task "<task_id>" \
-     --harness-dir "$STATE_DIR" --signals-dir "$ROOT"
+   # Mesma regra do passo 2: uma chamada por linha, caminho literal.
+   # <PLUGIN_ROOT> e <STATE_DIR> ja foram resolvidos no inicio do pipeline.
+   python "<PLUGIN_ROOT>/scripts/record_signal.py" --completed --steps "step1,step2,..." --expect-task "<task_id>" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
    ```
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
    **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma — nesse caso, restaure o state da sua task antes de registrar.
@@ -376,22 +391,22 @@ Use o Edit tool para atualizar state.json. Custo: ~20 tokens por transição.
 Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. Use o helper:
 
 ```bash
-# Resolva uma vez: raiz do harness, plugin, e o bucket DESTA SESSAO.
-# state.json e o contador vivem no bucket; signals.json e agregado na raiz.
-ROOT="${HARNESS_DIR:-$HOME/.claude/harness}"
-PR="$(cat "$ROOT/plugin-root")"
-STATE_DIR="$(python "$PR/scripts/harness_paths.py" --cwd "$PWD" --session-id "<session_id>")"
+# Resolva uma vez, no INICIO do pipeline, e anote os tres valores literais:
+#   <HARNESS_ROOT>  = $HARNESS_DIR, ou ~/.claude/harness (leia com Read)
+#   <PLUGIN_ROOT>   = conteudo de <HARNESS_ROOT>/plugin-root (leia com Read)
+#   <STATE_DIR>     = saida de harness_paths.py (passo 2 do Protocolo)
+# state.json e o contador vivem no balde; signals.json e agregado na raiz.
+#
+# UMA CHAMADA POR LINHA. Nada de `;`, `&&`, `$( )` ou barra de continuacao:
+# comando composto perde a isencao do contador de escrita. Ver Protocolo,
+# passo 2.
 
 # Pipeline concluído com sucesso (--expect-task = task_id do INÍCIO do pipeline;
 # aborta com exit 2 se o state foi trocado por outra sessão no meio)
-python "$PR/scripts/record_signal.py" --completed \
-  --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec" \
-  --expect-task "t-20260612-033900" \
-  --harness-dir "$STATE_DIR" --signals-dir "$ROOT"
+python "<PLUGIN_ROOT>/scripts/record_signal.py" --completed --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec" --expect-task "t-20260612-033900" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
 
 # Tarefa abandonada (troca de assunto / cancelamento)
-python "$PR/scripts/record_signal.py" --abandoned --reason "user_switch" \
-  --harness-dir "$STATE_DIR" --signals-dir "$ROOT"
+python "<PLUGIN_ROOT>/scripts/record_signal.py" --abandoned --reason "user_switch" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
 ```
 
 > **Escopo do estado (desde 2026-07-28).** `state.json`, `.session-files-count` e

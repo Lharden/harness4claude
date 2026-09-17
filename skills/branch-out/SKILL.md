@@ -109,10 +109,12 @@ arbitrar por conta.
 Registre sempre, mesmo antes de perguntar:
 
 ```bash
-python "$H4C/scripts/branch_state.py" add \
-  --name "<Nome do Ramo>" --topic "<tema em uma frase>" --detector claude \
-  --parent-session "<uuid desta sessão>"
-# acrescente --explicito aqui TAMBÉM, pelo mesmo motivo do `may-offer` acima
+# Uma linha so: continuacao com barra invertida e nova linha, e nova linha e
+# composicao de shell — ela tira este comando da isencao do contador de escrita
+# (hooks/harness-transactional.py:152-173) e faz o registro do ramo invalidar a
+# evidencia da suite. Acrescente --explicito aqui TAMBEM, pelo mesmo motivo do
+# `may-offer` acima.
+python "$H4C/scripts/branch_state.py" add --name "<Nome do Ramo>" --topic "<tema em uma frase>" --detector claude --parent-session "<uuid desta sessão>"
 ```
 
 **O `--explicito` vai nas duas chamadas ou em nenhuma.** Passá-lo só ao
