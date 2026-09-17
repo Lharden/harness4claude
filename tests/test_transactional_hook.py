@@ -609,6 +609,72 @@ def test_comando_sem_recusa_nao_cria_arquivo(tmp_path: Path):
     assert not (bucket / hook.ARQUIVO_DE_RECUSAS).exists()
 
 
+# --- R3 etapa 2: alvo que nao pode ser um arquivo nao entra -------------------
+#
+# Defesa em profundidade, depois da etapa 3 estar registrando. A regua e "nao
+# PODE ser um caminho", nunca "nao PARECE um caminho": um candidato rejeitado
+# por engano e uma escrita real que some da atribuicao.
+
+
+def test_alvo_de_powershell_nao_expandido_nao_vira_arquivo():
+    """O caso que a etapa 1 nao pega: PowerShell nao tem heredoc."""
+    recusas: list[dict] = []
+    comando = "$LOG = 'x.log'; Get-Content a.txt > $LOG"
+    assert hook.shell_write_targets(comando, recusas) == []
+    assert [r["motivo"] for r in recusas] == [hook.MOTIVO_IMPOSSIVEL]
+    assert recusas[0]["detalhe"] == "variavel-nao-expandida"
+
+
+def test_regua_recusa_nao_apaga_a_escrita_do_contador(tmp_path: Path):
+    """A metade que impede o conserto de virar cegueira.
+
+    `echo x > '$ARQUIVO'` e uma escrita REAL cujo destino a regua recusa. A
+    lista de alvos sai vazia e `echo` esta em `_SOMENTE_LEITURA` — o risco e o
+    comando passar por read-only e NAO subir o contador.
+
+    Quem protege e `_segmentos`: ele quebra a linha nos operadores, entao o
+    proprio destino vira um segmento cujo "binario" e `$ARQUIVO`, que nao esta
+    na lista. Escrito aqui porque a protecao e estrutural e nao obvia, e porque
+    uma versao anterior deste conserto adicionou uma guarda explicita por cima —
+    codigo que nao mudava veredicto nenhum e que so existiria para ser mantido.
+    Medido: 11 comandos, 0 veredictos alterados com ou sem ela.
+
+    Se alguem mudar `_segmentos`, este teste e que reprova.
+    """
+    assert hook.is_read_only("echo x > '$ARQUIVO'") is False
+    assert hook.nao_muda_a_arvore("git add -A > '$ARQUIVO'") is False
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    _, database, task = _active_task(tmp_path / "harness", repo)
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": "echo x > '$ARQUIVO'"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+    assert database.task(task["task_id"])["code_revision"] == 1
+    assert database.files(task["task_id"]) == ["shell-command"]
+
+
+def test_comando_de_leitura_puro_continua_sem_subir_o_contador():
+    """A regressao oposta: a etapa 2 nao pode promover inspecao a escrita.
+
+    Sem redirecionamento nenhum, `is_read_only` e `nao_muda_a_arvore` tem de
+    continuar valendo — e o mapa §8 as nomeia como coisas que o portao ja faz
+    BEM e que nao podem ser removidas por engano.
+
+    [superado: "`grep ... 2>&1` e read-only"] — nao e, e nunca foi. `_segmentos`
+    quebra em `>` e `&`, o fragmento `2` vira segmento e `2` nao e binario
+    conhecido. Comportamento de e4212fb, medido, inalterado por esta sessao.
+    """
+    assert hook.is_read_only("grep -rn alvo hooks") is True
+    assert hook.is_read_only("git status --short") is True
+    assert hook.nao_muda_a_arvore("git add -A") is True
+    assert hook.nao_muda_a_arvore("git commit -m x") is True
+    assert hook.is_read_only("grep -rn alvo hooks 2>&1") is False
+
+
 # --- A barra invertida entre aspas duplas -------------------------------------
 #
 # Achado desta sessao, encontrado ao ligar R2: `_tokenize` escapava

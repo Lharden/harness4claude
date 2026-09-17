@@ -179,6 +179,75 @@ def is_state_management(command: str) -> bool:
 _DESTINOS_NULOS = frozenset({'/dev/null', 'nul', 'NUL', 'con', 'CON'})
 
 
+#: Caracteres que NENHUM nome de arquivo pode conter neste sistema de arquivos.
+#: Controle inclui nova linha, retorno de carro e tabulacao.
+_CARACTERES_ILEGAIS = frozenset('<>"|?*') | frozenset(chr(c) for c in range(32))
+
+_LETRA_DE_DRIVE = re.compile(r'^[A-Za-z]:$')
+
+#: O motivo da recusa da etapa 2 de R3. Tem nome proprio porque `is_read_only`
+#: e `nao_muda_a_arvore` precisam distingui-lo dos outros: recusar um destino
+#: significa "houve escrita e eu nao sei para onde", nunca "nao houve escrita".
+MOTIVO_IMPOSSIVEL = "nao-pode-ser-caminho"
+
+
+def nao_pode_ser_caminho(candidato: str) -> str | None:
+    """O motivo, se este candidato NAO PODE ser um arquivo. `None` se pode.
+
+    A regua e deliberadamente essa, e nao "nao PARECE um caminho". A diferenca
+    e a direcao do erro: um candidato rejeitado por engano e uma escrita real
+    que some da atribuicao, o oposto do fail-closed de `inside_root`. Entao so
+    entra aqui o que e impossivel, nao o que e improvavel.
+
+    Vem da §2 do mapa `revisao-que-invalida`, onde 113 entradas da tabela real
+    passavam pela regua mais frouxa do autor e nao podiam ser arquivo nenhum:
+    `$TEMP\\claude\\orfaos.py`, `$LOCK\\dono`, `$P\\$f`, corpo de documento
+    inteiro, e `0.75:` — que e literalmente uma linha da tabela `files`.
+
+    O mapa registrou um erro de instrumento aqui em vez de apaga-lo: a primeira
+    versao classificava `0.75`, `0.99999` e `F4.0` como caminhos VALIDOS fora da
+    raiz, porque a regex de extensao era `\\.[A-Za-z0-9]{1,6}$` e `.75` casa. O
+    numero saiu plausivel — inflava uma classe em 3 — e quase passou. Esta regua
+    nao usa extensao nenhuma, justamente por isso.
+
+    A clausula "sem separador, forma que nao e nome de arquivo" da §2 NAO foi
+    trazida: `MSGEOF` e `Passar` sao nomes de arquivo perfeitamente validos, e
+    quem os elimina e a etapa 1 (corpo de heredoc), pela causa e nao pela forma.
+    Adivinhar aqui erraria na direcao perigosa.
+    """
+    texto = candidato.strip()
+    if not texto:
+        return "vazio"
+    if any(caractere in _CARACTERES_ILEGAIS for caractere in texto):
+        return "caractere-ilegal"
+    for indice, caractere in enumerate(texto):
+        if caractere != '$':
+            continue
+        seguinte = texto[indice + 1] if indice + 1 < len(texto) else ''
+        if seguinte in {'(', '{'} or seguinte.isalpha() or seguinte == '_':
+            return "variavel-nao-expandida"
+    if not any(caractere.isalnum() for caractere in texto):
+        return "sem-alfanumerico"
+    if _LETRA_DE_DRIVE.match(texto):
+        # `b:` e uma referencia de drive, nao um arquivo. Passava pela regua ate
+        # a regressao dos 468 caminhos apontar: o teste da letra de drive existe
+        # para aceitar `C:\...`, e sozinho ele aceitava tambem o `C:` pelado.
+        return "so-letra-de-drive"
+    if texto[-1] in {'/', chr(92)}:
+        return "termina-em-separador"      # nomeia diretorio, nao arquivo
+    componentes = re.split(r'[/\\]', texto)
+    for posicao, componente in enumerate(componentes):
+        if not componente:
+            continue                       # raiz, UNC ou barra dupla: legitimo
+        if componente in {'.', '..'}:
+            continue                       # `../saida.txt` e caminho de verdade
+        if componente[-1] in {'.', ' '}:
+            return "componente-termina-em-ponto-ou-espaco"
+        if ':' in componente and not (posicao == 0 and _LETRA_DE_DRIVE.match(componente)):
+            return "dois-pontos-fora-de-letra-de-drive"
+    return None
+
+
 #: Dentro de aspas DUPLAS, a barra invertida so escapa estes. Antes de qualquer
 #: outro caractere ela e literal — regra do POSIX, e a que o bash aplica.
 #:
@@ -488,9 +557,12 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
     tokens = _tokenize(sem_corpo_de_heredoc(command, recusas))
     alvos: list[str] = []
 
-    def recusar(candidato: str, motivo: str) -> None:
+    def recusar(candidato: str, motivo: str, detalhe: str | None = None) -> None:
         if recusas is not None:
-            recusas.append({"candidato": candidato, "motivo": motivo})
+            registro = {"candidato": candidato, "motivo": motivo}
+            if detalhe:
+                registro["detalhe"] = detalhe
+            recusas.append(registro)
 
     def considerar(candidato: str) -> None:
         if not candidato or candidato in _OPERADORES_TOKEN:
@@ -499,6 +571,9 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
             return recusar(candidato, "flag")
         if candidato in _DESTINOS_NULOS:
             return recusar(candidato, "destino-nulo")
+        impossivel = nao_pode_ser_caminho(candidato)
+        if impossivel:
+            return recusar(candidato, MOTIVO_IMPOSSIVEL, detalhe=impossivel)
         if candidato not in alvos:
             alvos.append(candidato)
 
