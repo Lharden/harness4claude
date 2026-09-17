@@ -297,6 +297,27 @@
   },
   {
    "modulo": "deploy_to_cache",
+   "nome": "drift_publicado",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Responde 'o que roda e publicado?' comparando o cache instalado com `main`. Dois consumidores: `python scripts/deploy_to_cache.py --publicado`, para um humano inspecionar, e o portao `test_deploy_drift.py::test_o_cache_reflete_o_publicado`. Nasceu em 2026-09-16 porque o portao anterior comparava o WORKTREE com o cache, e ramo tem trabalho nao implantado por definicao — reprovava sempre, e vermelho permanente treina a ignorar vermelho."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "extract_ref",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Responde 'o que roda e publicado?' comparando o cache instalado com `main`. Dois consumidores: `python scripts/deploy_to_cache.py --publicado`, para um humano inspecionar, e o portao `test_deploy_drift.py::test_o_cache_reflete_o_publicado`. Nasceu em 2026-09-16 porque o portao anterior comparava o WORKTREE com o cache, e ramo tem trabalho nao implantado por definicao — reprovava sempre, e vermelho permanente treina a ignorar vermelho."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "files_in_tree",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Responde 'o que roda e publicado?' comparando o cache instalado com `main`. Dois consumidores: `python scripts/deploy_to_cache.py --publicado`, para um humano inspecionar, e o portao `test_deploy_drift.py::test_o_cache_reflete_o_publicado`. Nasceu em 2026-09-16 porque o portao anterior comparava o WORKTREE com o cache, e ramo tem trabalho nao implantado por definicao — reprovava sempre, e vermelho permanente treina a ignorar vermelho."
+  },
+  {
+   "modulo": "deploy_to_cache",
    "nome": "installed_root",
    "arquivo": "scripts/deploy_to_cache.py",
    "categoria": "FERRAMENTA_DE_MAO",
@@ -308,6 +329,13 @@
    "arquivo": "scripts/deploy_to_cache.py",
    "categoria": "FERRAMENTA_DE_MAO",
    "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "published_ref",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Responde 'o que roda e publicado?' comparando o cache instalado com `main`. Dois consumidores: `python scripts/deploy_to_cache.py --publicado`, para um humano inspecionar, e o portao `test_deploy_drift.py::test_o_cache_reflete_o_publicado`. Nasceu em 2026-09-16 porque o portao anterior comparava o WORKTREE com o cache, e ramo tem trabalho nao implantado por definicao — reprovava sempre, e vermelho permanente treina a ignorar vermelho."
   },
   {
    "modulo": "deploy_to_cache",

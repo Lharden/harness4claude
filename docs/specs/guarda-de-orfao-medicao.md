@@ -7,15 +7,22 @@
 
 ## O número que o autor pediu
 
-**38 esquecidos contra 51 decisões declaradas**, de 89 funções públicas de topo
-que não são alcançáveis a partir de nenhuma raiz externa — sobre um total de 426
-(419 antes do scanner existir).
+**38 esquecidos contra 55 decisões declaradas**, de 93 funções públicas de topo
+que não são alcançáveis a partir de nenhuma raiz externa — sobre um total de 430
+(419 antes deste ramo existir).
 
 | | funções | % do total |
 |---|---:|---:|
-| **vivas** (há caminho de uma raiz que o host executa até elas) | 337 | 79,1% |
-| **decisão declarada** (ferramenta de mão, com o como e o quando escritos) | 51 | 12,0% |
-| **esquecimento** (nada as nomeia, nada as roda) | **38** | 8,9% |
+| **vivas** (há caminho de uma raiz que o host executa até elas) | 337 | 78,4% |
+| **decisão declarada** (ferramenta de mão, com o como e o quando escritos) | 55 | 12,8% |
+| **esquecimento** (nada as nomeia, nada as roda) | **38** | 8,8% |
+
+> [superado: "38 contra 51, de 89 sobre 426"] — o conserto de `test_deploy_drift`
+> acrescentou quatro funções públicas a `scripts/deploy_to_cache.py`, e o próprio
+> guarda as acusou como órfãs cinco minutos depois de escritas. Declaradas
+> `FERRAMENTA_DE_MAO` depois de ganharem a entrada de CLI `--publicado`, que era o
+> que faltava para a categoria ser verdade. **Os 38 esquecidos seguem intactos —
+> nenhuma das três correções de instrumento os moveu.**
 
 > [superado: "38 esquecidos contra 29 decisões declaradas, de 67 não-vivas sobre
 > 419"] — o primeiro corte tratava `README.md` e `tools/README.md` como raiz de

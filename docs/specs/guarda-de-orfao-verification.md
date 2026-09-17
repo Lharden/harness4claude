@@ -221,19 +221,105 @@ evidência**; publicar para obter verde e pedir aprovação depois inverte quem
 decide. Contornar o portão para ficar verde seria o oposto exato do que este ramo
 existe para consertar.
 
-### Sexto achado: `test_deploy_drift` reprova em todo ramo aberto, por construção
+### Sexto achado, e ele virou conserto: `test_deploy_drift` media a pergunta errada
 
-Ele compara o **worktree** com o plugin instalado. Enquanto houver trabalho não
-implantado — que é o estado normal de qualquer ramo antes do merge — ele reprova.
-Isso o torna um **teste de ambiente dentro da suíte de código**, e é uma das razões
-pelas quais dar evidência de conclusão num ramo é impossível sem publicar.
+> [superado: "fica como achado, não como conserto"] — o autor decidiu não mesclar
+> com vermelho conhecido, e a regra de ouro que entrou no `CLAUDE.md` em
+> 2026-09-16 diz por quê: *"vermelho conhecido não se mescla; teste que reprova
+> por construção morre por uso: quem vê vermelho sempre para de ver vermelho"*.
 
-Duas saídas possíveis, nenhuma feita aqui: comparar contra `main` em vez do
-worktree, ou separá-lo da suíte de código e movê-lo para o `health-check.sh`, onde
-os outros checks de ambiente vivem. Levantado pela sessão
-`apresentacao-alta-gestao-refinamento-ac9-f9` em 2026-09-16; **não medido por
-mim** além de confirmar o mecanismo de comparação. Fica como achado, não como
-conserto.
+**A causa raiz.** `tests/test_deploy_drift.py:43` fazia
+`ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])`, e `tests/conftest.py` aponta
+essa variável para o checkout onde ele vive. Num worktree de ramo, `ROOT` é o
+worktree — então `dtc.drift(ROOT, cache, shipped_files(ROOT))` perguntava **"o meu
+worktree está implantado?"**, e num ramo a resposta é não por definição.
+
+A pergunta do incidente de 2026-09-02 é outra: **"o que roda é código
+publicado?"**. Trabalho em ramo não é publicado, não deveria estar no cache, e
+exigir que esteja inverte a ordem deploy/merge — o erro que esta sessão quase
+cometeu hoje, com o raciocínio certo e a informação incompleta.
+
+**O conserto.** `drift_publicado(root, cache, ref)` compara o cache com a árvore
+de `main`, e — esta é a correção inteira — **deriva a lista de arquivos da árvore
+de `ref`, não do worktree**. Um arquivo que só existe no ramo deixa de ser cobrado
+do cache. Um `git archive` por chamada, não 250 `git show`.
+
+**A falsificação, nas duas metades, contra o caminho real.** Não bastava mostrar
+verde: verde podia significar silenciamento. Executado sobre o cache instalado de
+verdade (`~/.claude/plugins/cache/harness4claude/4.0.0`), `main` = `5ca9d4e`:
+
+```
+[1] cache real vs main            ->  0 divergentes   VERDE
+[2] cópia do cache real SABOTADA  ->  1 divergentes   VERMELHO   hooks/harness-classify.sh
+[3] cópia com arquivo AUSENTE     ->  1 divergentes   VERMELHO   scripts/record_signal.py
+[4] critério ANTIGO (worktree)    -> 16 divergentes   VERMELHO   — e os 16 são este ramo
+```
+
+A linha [4] é o diagnóstico: os 16 "divergentes" do critério antigo eram, um a um,
+os arquivos deste ramo. Ele não media drift; media a existência de trabalho.
+
+Travado por seis testes, cinco deles hermeticos sobre cache fabricado:
+`test_cache_igual_ao_publicado_passa`, `test_cache_com_arquivo_alterado_REPROVA`,
+`test_cache_com_arquivo_faltando_REPROVA`, `test_deploy_velho_REPROVA` (extrai
+`main~1` — o incidente de 2026-09-02 em forma de teste),
+`test_arquivo_que_so_existe_no_RAMO_nao_e_exigido` (o falso positivo estrutural), e
+`test_o_comando_que_a_mensagem_imprime_e_aceito_pelo_parser_real`.
+
+Esse último tem uma limitação honesta: `--apply` escreve no plugin instalado,
+então **não dá para provar que o comando roda executando-o**. A prova possível é
+parsear com o parser real (`_parser()`, extraído do `main` para isso), o que pega
+a ordem errada de flag — o defeito de `5ca9d4e`. É mais fraco que executar: pega
+comando malformado, não pega comando bem formado que faz a coisa errada.
+
+**Considerado e recusado: `--destino <tmpdir>`.** Com ele o teste executaria o
+comando real contra um diretório temporário, e a prova ficaria tão forte quanto a
+de `5ca9d4e`. `apply(origem, destino, arquivos)` já recebe o destino como
+parâmetro; só o `main` não expõe. Proposto pela sessão
+`apresentacao-alta-gestao-refinamento-ac9-f9`, **com o contra-argumento junto**:
+acrescentar flag para satisfazer teste é a porta de entrada de código-para-teste,
+e só vale se houver justificativa independente — instalação em caminho não padrão.
+
+Medido: **a justificativa independente não se sustenta.** `installed_root()` já
+resolve caminho não padrão por duas vias, o marcador `plugin-root` e o
+`installPath` do `installed_plugins.json`. A capacidade existe, por descoberta em
+vez de por flag. `--destino` serviria só ao teste.
+
+Então a prova fraca fica, declarada. **É melhor uma prova fraca escrita do que uma
+prova forte comprada com uma flag que existe para o teste** — a segunda parece mais
+rigorosa e esconde onde o rigor terminou.
+
+**Descartado, com o motivo:** mover o teste para `health-check.sh`. Separaria a
+responsabilidade corretamente, mas reduz a frequência de detecção — drift acontece
+na máquina de trabalho, onde a suíte roda toda hora, e o `health-check` não. O
+`skip` sem cache já resolve o CI. Análise da sessão
+`apresentacao-alta-gestao-refinamento-ac9-f9`, que também fez o diagnóstico da
+causa raiz.
+
+**Terceira saída para dar raiz a `deploy_to_cache`, registrada e não medida:** um
+hook de `SessionStart` roda com o cwd do **projeto**, não do plugin — e detectar
+drift no início de uma sessão é exatamente quando o dado importa, antes de
+qualquer trabalho ser feito sobre código errado. Não se sabe se o contrato de
+`SessionStart` permite, nem o custo em latência. Levantada pela sessão
+`apresentacao-alta-gestao-refinamento-ac9-f9`; **não medida por ninguém.** Fica ao
+lado das outras duas (comparar contra `main` — feito; mover para `health-check` —
+recusado por reduzir frequência de detecção).
+
+E o diagnóstico do módulo é mais forte do que esta verificação dizia antes:
+`deploy_to_cache` aparece em `main` inteiro apenas em dois documentos
+(`parent-session-por-ramo-riscos.md`, `portao-de-task-fantasma-diagnostico.md`) e
+num teste. Nenhum hook, nenhum CI, nenhuma `SKILL.md`, nenhuma linha de
+`health-check.sh`. **O módulo inteiro é ferramenta de mão, não só as quatro
+funções novas** — e as onze linhas dele na allowlist dizem isso desde a primeira
+medição.
+
+**E o guarda pegou o autor do guarda.** As quatro funções novas de
+`deploy_to_cache.py` apareceram como órfãs cinco minutos depois de escritas —
+`deploy_to_cache` é módulo sem raiz externa, e o único consumidor delas era o
+portão. A saída não foi criar categoria nova para acomodá-las: foi dar a elas a
+entrada de CLI que faltava (`--publicado`), o que torna `FERRAMENTA_DE_MAO`
+verdade em vez de rótulo, e declarar as quatro com o motivo nomeando os dois
+consumidores. **Uma capacidade cujo único consumidor é o teste dela é exatamente o
+que este ramo existe para acusar** — inclusive quando a capacidade é minha.
 
 ---
 

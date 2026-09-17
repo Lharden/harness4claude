@@ -30,11 +30,14 @@ so: repo -> cache.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -133,6 +136,69 @@ def drift(origem: Path, destino: Path, arquivos) -> list[Path]:
     return divergentes
 
 
+def published_ref(root: Path) -> str | None:
+    """A referencia que representa o PUBLICADO, ou None se nao houver.
+
+    O cache espelha o que foi MESCLADO, nunca o que esta num ramo aberto.
+    Comparar o cache com o worktree responde "o worktree esta implantado?", e
+    num ramo a resposta e nao por definicao — todo ramo tem trabalho nao
+    implantado, e deveria ter. A pergunta do incidente de 2026-09-02 e outra:
+    "o que roda e codigo publicado?".
+    """
+    for ref in ("main", "origin/main", "master", "origin/master"):
+        try:
+            subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                cwd=str(root), capture_output=True, timeout=30, check=True,
+            )
+            return ref
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
+def files_in_tree(raiz_extraida: Path) -> list[Path]:
+    """Arquivos que viajam dentro de uma arvore ja extraida."""
+    arquivos = []
+    for p in sorted(raiz_extraida.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(raiz_extraida)
+        if any(parte in NAO_VIAJAM for parte in rel.parts):
+            continue
+        arquivos.append(rel)
+    return arquivos
+
+
+def extract_ref(root: Path, ref: str, destino: Path) -> Path:
+    """Extrai a arvore de `ref` em `destino`. Um subprocesso, nao 250."""
+    proc = subprocess.run(
+        ["git", "archive", "--format=tar", ref],
+        cwd=str(root), capture_output=True, timeout=300, check=True,
+    )
+    with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tf:
+        try:
+            tf.extractall(destino, filter="data")   # py3.12+
+        except TypeError:
+            # o tar vem do `git archive` deste proprio repo, nao de fora
+            tf.extractall(destino)
+    return destino
+
+
+def drift_publicado(root: Path, cache: Path, ref: str) -> list[Path]:
+    """Arquivos em que o plugin instalado diverge do que foi publicado em `ref`.
+
+    A lista de arquivos vem da arvore de `ref`, nao do worktree — e essa e a
+    correcao inteira. Derivar do worktree exigiria que o cache contivesse
+    arquivo que so existe no ramo, e reprovaria todo ramo aberto por
+    construcao. Portao que reprova sempre e portao que ninguem le: o vermelho
+    permanente treina a ignorar vermelho, e o proximo drift de verdade passa.
+    """
+    with tempfile.TemporaryDirectory(prefix="h4c-publicado-") as tmp:
+        origem = extract_ref(root, ref, Path(tmp))
+        return drift(origem, cache, files_in_tree(origem))
+
+
 def apply(origem: Path, destino: Path, arquivos) -> list[Path]:
     copiados = []
     for rel in arquivos:
@@ -143,11 +209,23 @@ def apply(origem: Path, destino: Path, arquivos) -> list[Path]:
     return copiados
 
 
-def main(argv=None) -> int:
+def _parser() -> argparse.ArgumentParser:
+    """Fora do `main` para que um teste possa validar um comando SEM executa-lo.
+
+    `--apply` escreve no plugin instalado, entao nao da para provar que o
+    comando sugerido roda executando-o. Parsear com o parser REAL e a prova
+    possivel: pega a ordem errada de flag, que e o defeito de `5ca9d4e`.
+    """
     ap = argparse.ArgumentParser(description="Compara e sincroniza repo -> plugin instalado.")
     ap.add_argument("--apply", action="store_true", help="copia os divergentes (default: so reporta)")
     ap.add_argument("--check", action="store_true", help="explicito; e o default")
-    a = ap.parse_args(argv)
+    ap.add_argument("--publicado", action="store_true",
+                    help="compara o cache com `main` (o que roda e publicado?) em vez do worktree")
+    return ap
+
+
+def main(argv=None) -> int:
+    a = _parser().parse_args(argv)
     try:
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
@@ -159,6 +237,27 @@ def main(argv=None) -> int:
     if alvo is None:
         print("nenhum plugin harness4claude instalado nesta maquina")
         return 0
+
+    if a.publicado:
+        # A pergunta do portao, disponivel a mao. Sem ela as quatro funcoes que
+        # respondem "o que roda e publicado?" teriam como unico consumidor um
+        # teste — e uma capacidade cujo unico consumidor e o teste dela e
+        # exatamente o que `tools/orfaos.py` existe para acusar.
+        ref = published_ref(raiz)
+        if ref is None:
+            print("nenhuma ref publicada (main/master) — nada a comparar")
+            return 0
+        divergentes = drift_publicado(raiz, alvo, ref)
+        print(f"publicado: {ref}")
+        print(f"plugin:    {alvo}")
+        print(f"{len(divergentes)} divergentes")
+        for rel in divergentes[:40]:
+            print(f"  {rel}")
+        if divergentes:
+            print(f"\ncausa: deploy velho, ou cache com codigo de um ramo nao mesclado."
+                  f"\nde um checkout de `{ref}` (NAO de um worktree de ramo), rode:"
+                  f"\n    python scripts/deploy_to_cache.py --apply")
+        return 1 if divergentes else 0
 
     arquivos = shipped_files(raiz)
     divergentes = drift(raiz, alvo, arquivos)
