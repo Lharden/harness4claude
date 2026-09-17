@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 
 
@@ -486,6 +488,125 @@ def test_shell_write_targets_respeita_aspas():
 
 def test_shell_write_targets_pega_varios():
     assert hook.shell_write_targets("cat > a.py; cat > b.py") == ["a.py", "b.py"]
+
+
+# --- R3 etapa 1: o corpo do heredoc sai antes da tokenizacao -----------------
+#
+# `_tokenize` e um tokenizador POSIX aplicado a strings que muitas vezes nao sao
+# comandos POSIX — corpo de heredoc, codigo de programa, PowerShell. Dentro
+# dessas regioes o rastreio de aspas nao significa nada e todo `>` vira
+# operador. Os alvos abaixo sao reproducoes do mapa §6.2; `'0.75:'` e literal-
+# mente uma linha real da tabela `files`, e `'MSGEOF'` foi gravado pelo commit
+# do proprio mapa (a linha de atribuicao termina em `>`).
+#
+# Medido contra e4212fb: 6 de 6 casos nao-controle produziam alvo espurio, 0
+# depois; 1 de 7 controles quebrava, 0 depois.
+
+HEREDOCS_QUE_PRODUZIAM_LIXO = [
+    ("comparacao em codigo", "python - <<'PY'\nif riqueza>0.75:\n    print('alto')\nPY", []),
+    ("markdown com citacao", "cat > nota.md <<'EOF'\n> Passar o titulo.\nEOF", ["nota.md"]),
+    ("dois-pontos e comparacao", "python - <<'PY'\nprint('score:', x)\nif a>b: pass\nPY", []),
+    ("commit com linha de atribuicao",
+     "git commit -F - <<'MSGEOF'\ndocs: x\n\nCo-Authored-By: C <noreply@anthropic.com>\nMSGEOF", []),
+    ("delimitador sem aspas", "python - <<PY\nif a>b: pass\nPY", []),
+    ("tabulacao ignorada", "cat <<-FIM\n\tif a>b: pass\n\tFIM", []),
+]
+
+
+@pytest.mark.parametrize(
+    "nome, comando, esperado",
+    HEREDOCS_QUE_PRODUZIAM_LIXO,
+    ids=[n for n, _, _ in HEREDOCS_QUE_PRODUZIAM_LIXO],
+)
+def test_corpo_de_heredoc_nao_vira_arquivo(nome: str, comando: str, esperado: list[str]):
+    assert hook.shell_write_targets(comando) == esperado
+
+
+def test_heredoc_que_tambem_redireciona_devolve_o_alvo_e_ignora_o_corpo():
+    """Nao cega: o alvo legitimo e o corpo excluido convivem no mesmo comando.
+
+    Antes: `['saida.txt', 'b']` — o `b` vinha de `a>b` DENTRO do corpo.
+    """
+    assert hook.shell_write_targets("cat <<'EOF' > saida.txt\ncorpo com a>b\nEOF") == ["saida.txt"]
+    assert hook.shell_write_targets('cat > "docs/nota final.md" <<\'EOF\'\n> citacao\nEOF') == [
+        "docs/nota final.md"
+    ]
+
+
+def test_heredoc_dentro_de_aspas_nao_abre_corpo():
+    """`echo "a <<EOF b"` nao abre heredoc nenhum — e a linha inteira continua viva."""
+    assert hook.shell_write_targets('echo "a <<EOF b" > saida.txt') == ["saida.txt"]
+    assert hook.shell_write_targets("cat <<<'x' > saida.txt") == ["saida.txt"]
+
+
+# --- R3 etapa 3: toda recusa fica escrita ------------------------------------
+#
+# O risco do conserto e na direcao perigosa: candidato rejeitado por engano e
+# escrita real que some do contador, e o contador nao denuncia a propria
+# cegueira. "O ruido caiu" e "o guarda parou de ver" dao o MESMO numero.
+
+
+def test_recusa_do_extrator_e_nomeada_com_motivo():
+    recusas: list[dict] = []
+    assert hook.shell_write_targets("pytest -q 2>&1", recusas) == []
+    assert [r["motivo"] for r in recusas] == ["vazio-ou-operador"]
+
+    recusas.clear()
+    assert hook.shell_write_targets("cmd 2>/dev/null", recusas) == []
+    assert [r["candidato"] for r in recusas] == ["/dev/null"]
+    assert [r["motivo"] for r in recusas] == ["destino-nulo"]
+
+    recusas.clear()
+    hook.shell_write_targets("python - <<'PY'\nif a>b: pass\nPY", recusas)
+    motivos = [r["motivo"] for r in recusas]
+    assert "corpo-de-heredoc" in motivos and "delimitador-de-heredoc" in motivos
+
+
+def test_recusa_chega_ao_disco_com_comando_candidato_e_motivo(tmp_path: Path):
+    """O consumidor da etapa 3: sem arquivo, a proxima medicao e impossivel.
+
+    O mapa so mediu alguma coisa porque as entradas ACEITAS ficavam em `files`.
+    As recusadas nunca ficaram em lugar nenhum.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    bucket, _database, task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "cat > nota.md <<'EOF'\n> citacao\nEOF"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    linhas = [
+        json.loads(linha)
+        for linha in (bucket / hook.ARQUIVO_DE_RECUSAS).read_text(encoding="utf-8").splitlines()
+        if linha.strip()
+    ]
+    assert linhas, "recusa silenciosa e o mesmo erro numa direcao nova"
+    assert {r["motivo"] for r in linhas} == {"corpo-de-heredoc", "delimitador-de-heredoc"}
+    for registro in linhas:
+        assert registro["task_id"] == task["task_id"]
+        assert registro["comando_hash"]
+        assert "nota.md" in registro["comando"]
+        assert registro["aceitos"] == ["nota.md"], "o que foi ACEITO fica junto do recusado"
+
+
+def test_comando_sem_recusa_nao_cria_arquivo(tmp_path: Path):
+    """Ruido tambem custa: um `jsonl` com uma linha por comando limpo seria lixo."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    bucket, _database, _task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "cat > scripts/x.py"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert not (bucket / hook.ARQUIVO_DE_RECUSAS).exists()
 
 
 def test_post_tool_registra_o_arquivo_escrito_e_nao_o_placeholder(tmp_path: Path):

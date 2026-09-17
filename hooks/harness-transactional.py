@@ -338,7 +338,113 @@ def is_read_only(command: str) -> bool:
     return True
 
 
-def shell_write_targets(command: str) -> list[str]:
+def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
+    """`(delimitador, ignora_tabulacao)` de cada `<<DELIM` FORA de aspas.
+
+    Aspas importam: `echo "a <<EOF b"` nao abre heredoc nenhum. `<<<` e
+    here-string — o corpo esta na propria linha, entao nao ha nada a excluir.
+    """
+    achados: list[tuple[str, bool]] = []
+    quote = None
+    escaped = False
+    indice = 0
+    tamanho = len(linha)
+    while indice < tamanho:
+        caractere = linha[indice]
+        if escaped:
+            escaped = False
+            indice += 1
+            continue
+        if quote:
+            if caractere == chr(92) and quote == chr(34):
+                escaped = True
+            elif caractere == quote:
+                quote = None
+            indice += 1
+            continue
+        if caractere in {chr(39), chr(34)}:
+            quote = caractere
+            indice += 1
+            continue
+        if caractere == chr(92):
+            escaped = True
+            indice += 1
+            continue
+        if caractere == '<' and linha.startswith('<<', indice):
+            if linha.startswith('<<<', indice):
+                indice += 3
+                continue
+            cursor = indice + 2
+            ignora_tab = False
+            if cursor < tamanho and linha[cursor] == '-':
+                ignora_tab = True
+                cursor += 1
+            while cursor < tamanho and linha[cursor] in ' \t':
+                cursor += 1
+            if cursor < tamanho and linha[cursor] in {chr(39), chr(34)}:
+                fecha = linha[cursor]
+                fim = linha.find(fecha, cursor + 1)
+                if fim == -1:
+                    break
+                achados.append((linha[cursor + 1:fim], ignora_tab))
+                indice = fim + 1
+                continue
+            fim = cursor
+            while fim < tamanho and (linha[fim].isalnum() or linha[fim] in '_-.'):
+                fim += 1
+            if fim > cursor:
+                achados.append((linha[cursor:fim], ignora_tab))
+            indice = max(fim, cursor + 1)
+            continue
+        indice += 1
+    return achados
+
+
+def sem_corpo_de_heredoc(command: str, recusas: list[dict[str, Any]] | None = None) -> str:
+    """O comando sem os corpos de heredoc — a correcao de causa raiz do lixo.
+
+    `_tokenize` e um tokenizador de shell POSIX, e ele estava sendo aplicado a
+    uma string que muitas vezes NAO e um comando POSIX: ela carrega corpo de
+    heredoc, codigo de programa e sintaxe de PowerShell. Dentro dessas regioes o
+    rastreio de aspas nao significa nada e todo `>` vira operador.
+
+    Medido no mapa `revisao-que-invalida` §6.2, com as funcoes de producao:
+
+        python - <<'PY' / if riqueza>0.75:        ->  ['0.75:']
+        cat > nota.md <<'EOF' / > Passar ...      ->  ['nota.md', 'Passar']
+        python - <<'PY' / if a>b: pass            ->  ['b:']
+
+    E `'0.75:'` e literalmente uma linha real da tabela `files`. O caso que
+    fecha o achado sobre si: `git commit -F - <<'MSGEOF'` gravou `'MSGEOF'` como
+    arquivo, porque a ultima linha da mensagem e a de atribuicao obrigatoria,
+    `Co-Authored-By: ... <noreply@anthropic.com>`, e o `>` que fecha o e-mail e
+    operador para `_tokenize`. TODA mensagem de commit por heredoc dispara isso.
+
+    O corpo excluido e REGISTRADO em `recusas`, nao descartado em silencio:
+    trocar ruido por cegueira seria o mesmo erro numa direcao nova.
+    """
+    linhas = command.splitlines()
+    mantidas: list[str] = []
+    pendentes: list[tuple[str, bool]] = []
+    consumidas = 0
+    for linha in linhas:
+        if pendentes:
+            consumidas += 1
+            delimitador, ignora_tab = pendentes[0]
+            alvo = linha.lstrip('\t') if ignora_tab else linha
+            if alvo.rstrip('\r') == delimitador:
+                pendentes.pop(0)
+                if recusas is not None:
+                    recusas.append({"candidato": delimitador, "motivo": "delimitador-de-heredoc"})
+            continue
+        mantidas.append(linha)
+        pendentes.extend(_aberturas_de_heredoc(linha))
+    if consumidas and recusas is not None:
+        recusas.append({"candidato": f"<{consumidas} linha(s)>", "motivo": "corpo-de-heredoc"})
+    return "\n".join(mantidas)
+
+
+def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = None) -> list[str]:
     """Arquivos que este comando de shell escreve, ate onde da para atribuir.
 
     Existe porque `_handle_post_tool` registrava todo comando como o caminho
@@ -352,17 +458,28 @@ def shell_write_targets(command: str) -> list[str]:
     por dentro (`python - <<PY` com `write_text`), e nao ha como cobrir: e um
     programa. Por isso o chamador mantem o placeholder quando esta lista sai
     vazia — 'nao da para saber' e diferente de 'nao escreveu'.
+
+    `recusas`, quando passada, recebe um dicionario por candidato REJEITADO.
+    Um candidato rejeitado por engano e uma escrita real que some do contador —
+    o erro na direcao perigosa. Sem o registro, "o ruido caiu" e "o guarda
+    cegou" produzem exatamente o mesmo numero.
     """
     if not command:
         return []
-    tokens = _tokenize(command)
+    tokens = _tokenize(sem_corpo_de_heredoc(command, recusas))
     alvos: list[str] = []
+
+    def recusar(candidato: str, motivo: str) -> None:
+        if recusas is not None:
+            recusas.append({"candidato": candidato, "motivo": motivo})
 
     def considerar(candidato: str) -> None:
         if not candidato or candidato in _OPERADORES_TOKEN:
-            return
-        if candidato.startswith('-') or candidato in _DESTINOS_NULOS:
-            return
+            return recusar(candidato, "vazio-ou-operador")
+        if candidato.startswith('-'):
+            return recusar(candidato, "flag")
+        if candidato in _DESTINOS_NULOS:
+            return recusar(candidato, "destino-nulo")
         if candidato not in alvos:
             alvos.append(candidato)
 
@@ -568,6 +685,59 @@ def _database_for_payload(
     return bucket, database, projection, task
 
 
+#: Onde cada recusa do extrator de caminhos fica registrada, dentro do balde da
+#: sessao. Append-only, uma linha JSON por recusa. Sem rotacao de proposito: o
+#: balde e por sessao e a linha tem ~150 bytes, entao o arquivo morre com a
+#: sessao. Se um dia crescer demais, a correcao e rotacionar — nunca parar de
+#: escrever, que e o defeito que este arquivo existe para nao repetir.
+ARQUIVO_DE_RECUSAS = "recusas.jsonl"
+
+
+def _registrar_recusas(
+    bucket: Path,
+    task_id: str,
+    command: str,
+    alvos: list[str],
+    recusas: list[dict[str, Any]],
+) -> None:
+    """Toda recusa do extrator fica escrita, com comando, candidato e motivo.
+
+    O risco do conserto de R3 e na direcao perigosa: um candidato rejeitado por
+    engano e uma escrita real que some do contador, e o contador nao denuncia a
+    propria cegueira — "o ruido caiu" e "o guarda parou de ver" dao o mesmo
+    numero. Este arquivo e o que separa os dois.
+
+    O mapa `revisao-que-invalida` so conseguiu medir alguma coisa porque as
+    entradas ACEITAS ficavam em `files`. As recusadas nunca ficaram em lugar
+    nenhum, e a proxima pergunta seria irrespondivel pelo mesmo motivo.
+
+    Degrada em silencio: falha de escrita aqui nunca pode derrubar o hook.
+    """
+    if not recusas:
+        return
+    digest = hashlib.sha256(command.encode("utf-8")).hexdigest()[:12]
+    agora = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    try:
+        with (bucket / ARQUIVO_DE_RECUSAS).open("a", encoding="utf-8") as arquivo:
+            for recusa in recusas:
+                arquivo.write(
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "comando_hash": digest,
+                            "comando": command[:200],
+                            "aceitos": alvos,
+                            **recusa,
+                            "created_at": agora,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+    except OSError:
+        pass
+
+
 def _handle_post_tool(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").casefold()
@@ -577,7 +747,9 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # As duas metades importam: sem a primeira o contador de arquivos e cego
         # a escrita por shell; sem a segunda, um programa que escreve por dentro
         # passaria por "nao alterou nada".
-        alvos = shell_write_targets(command)
+        recusas: list[dict[str, Any]] = []
+        alvos = shell_write_targets(command, recusas)
+        _registrar_recusas(bucket, task["task_id"], command, alvos, recusas)
         if alvos or not (is_read_only(command) or nao_muda_a_arvore(command)):
             task = database.touch_files(
                 task["task_id"],
