@@ -138,7 +138,7 @@ def main(argv=None) -> int:
                 output_hash=args.output_hash,
             )
         elif args.command == "touch":
-            task = db.touch_file(args.task, args.path)
+            task = db.touch_file(args.task, args.path, origem="cli")
         elif args.command == "gate":
             task = db.resolve_gate(args.task, args.type, args.decision, expected_revision=args.expect_revision)
         else:

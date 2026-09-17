@@ -748,6 +748,59 @@ def test_mensagem_do_gate_conta_a_evidencia_que_existe(tmp_path: Path):
     assert "1 linha(s) de evidence" in motivo
 
 
+def test_mensagem_do_gate_nomeia_o_que_invalidou(tmp_path: Path):
+    """R5, consumidor nomeado: `code_revision=24` diz QUE expirou, nao POR QUE.
+
+    A tabela `touches` existe para responder isso, e esta e a tela onde a
+    resposta e util. Sem este teste a tabela seria capacidade sem consumidor.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _bucket, database, task = _active_task(tmp_path / "harness", cwd)
+    database.touch_files(task["task_id"], ["scripts/alvo.py"], origem="shell")
+    database.touch_files(task["task_id"], ["shell-command"], origem="shell-placeholder")
+
+    motivo = json.loads(
+        hook.handle_payload(_payload("Stop", cwd), harness_root=tmp_path / "harness")
+    )["reason"]
+
+    assert "Ultima(s) invalidacao(oes)" in motivo
+    assert "alvo.py" in motivo and "(shell)" in motivo
+    assert "shell-command" in motivo and "(shell-placeholder)" in motivo
+
+
+def test_toque_por_shell_registra_a_origem(tmp_path: Path):
+    """A origem separa escrita atribuida de placeholder — sao causas diferentes.
+
+    Medido nesta sessao: 8 de 9 invalidacoes vieram do placeholder (toda
+    invocacao de interpretador), 1 de redirecionamento, 0 de mudanca de codigo.
+    Sem a coluna, as tres somem na mesma linha do contador.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    raiz = tmp_path / "harness"
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "cat > scripts/novo.py"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "python -c import os"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    toques = database.touches(task["task_id"])
+    assert [(t["path"].replace("\\", "/"), t["origem"]) for t in toques] == [
+        ("scripts/novo.py", "shell"),
+        ("shell-command", "shell-placeholder"),
+    ]
+
+
 def test_comando_que_a_mensagem_imprime_de_fato_roda(tmp_path: Path):
     """O comando sugerido passa pelo parser real do `state_cli`.
 

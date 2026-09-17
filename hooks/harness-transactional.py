@@ -579,7 +579,11 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # passaria por "nao alterou nada".
         alvos = shell_write_targets(command)
         if alvos or not (is_read_only(command) or nao_muda_a_arvore(command)):
-            task = database.touch_files(task["task_id"], alvos or ["shell-command"])
+            task = database.touch_files(
+                task["task_id"],
+                alvos or ["shell-command"],
+                origem="shell" if alvos else "shell-placeholder",
+            )
     aviso = ""
     if is_trusted_verification(command):
         collected, passed, skipped, output_hash = _test_counts(payload)
@@ -631,6 +635,27 @@ def _conta_evidencia(database, task_id: str, code_revision: int) -> str:
     return f"{total} linha(s) de evidence nesta task, {desta} na code_revision atual"
 
 
+def _ultimos_toques(database, task_id: str, quantos: int = 3) -> str:
+    """As ultimas invalidacoes, com caminho e origem.
+
+    Sem isto a mensagem dizia `code_revision=24` e parava ali. Quem a lia sabia
+    que a evidencia tinha expirado e nao sabia POR QUE — e a saida mais barata
+    era inventar um diagnostico. A tabela `touches` existe justamente para
+    responder isso (ver `transactional_state.touch_files`); esta funcao e o
+    consumidor dela na unica tela onde a resposta e util.
+    """
+    try:
+        linhas = database.touches(task_id, limite=quantos)
+    except Exception:
+        return ""
+    if not linhas:
+        return ""
+    itens = " ; ".join(
+        f"rev={linha['code_revision']} {linha['path']} ({linha['origem']})" for linha in linhas
+    )
+    return f"Ultima(s) invalidacao(oes): {itens}"
+
+
 def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     """A mensagem do bloqueio, dizendo o que o portao LEU.
 
@@ -652,6 +677,9 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
         f"task_id={task['task_id']} | balde={bucket} | fase={fase} ({posicao}) | "
         f"code_revision={task['code_revision']} | verified={task['verified']} | {contagem}"
     )
+    toques = _ultimos_toques(database, task["task_id"])
+    if toques:
+        leitura = f"{leitura}\n{toques}"
     # `--home` e do parser RAIZ: vai antes do subcomando, nao depois. Escrever
     # na ordem errada aqui entregaria um comando que nao roda, que e a mesma
     # falha que esta mensagem existe para corrigir — instrucao que nao se

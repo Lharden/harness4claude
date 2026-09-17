@@ -129,6 +129,16 @@ class HarnessDatabase:
                     first_seen_code_revision INTEGER NOT NULL,
                     PRIMARY KEY(task_id, normalized_path)
                 );
+                CREATE TABLE IF NOT EXISTS touches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                    code_revision INTEGER NOT NULL,
+                    path TEXT NOT NULL,
+                    origem TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS touches_por_task
+                ON touches(task_id, code_revision);
                 CREATE TABLE IF NOT EXISTS artifacts (
                     task_id TEXT NOT NULL REFERENCES tasks(task_id),
                     artifact_type TEXT NOT NULL,
@@ -905,16 +915,33 @@ class HarnessDatabase:
             )
         return self.task(task_id)
 
-    def touch_file(self, task_id: str, path: str) -> dict[str, Any]:
-        return self.touch_files(task_id, [path])
+    def touch_file(self, task_id: str, path: str, *, origem: str = "desconhecida") -> dict[str, Any]:
+        return self.touch_files(task_id, [path], origem=origem)
 
-    def touch_files(self, task_id: str, paths) -> dict[str, Any]:
+    def touch_files(self, task_id: str, paths, *, origem: str = "desconhecida") -> dict[str, Any]:
         """Registra N caminhos como UMA alteracao.
 
         Uma chamada de ferramenta e uma alteracao, mesmo tocando tres arquivos.
         Chamar `touch_file` em laco incrementaria `code_revision` uma vez por
         arquivo, e `code_revision` e o que invalida evidencia: um `pytest`
         seguinte pareceria obsoleto sem que nada tivesse mudado depois dele.
+
+        Duas tabelas, duas perguntas diferentes:
+
+        - `files` responde *quais arquivos esta task tocou*, uma linha por
+          caminho. `INSERT OR IGNORE` esta certo ali: a segunda escrita no
+          mesmo arquivo nao acrescenta arquivo nenhum.
+        - `touches` responde *o que causou cada invalidacao*, uma linha por
+          toque. Sem ela a resposta era descartada na escrita: somando o
+          `code_revision` final de seis tasks reais deram **2 594 subidas**, e
+          so **366 (14,1%)** tinham deixado rastro em `files`. As outras 2 228
+          eram invisiveis — nao havia tabela que dissesse o que as causou, e o
+          mapa `revisao-que-invalida` §4 teve de declarar a propria medicao
+          como limite inferior sobre amostra enviesada.
+
+        `origem` diz por qual caminho o toque entrou (`shell`, `edit`, `cli`).
+        E o que permite perguntar depois se um conserto funcionou, em vez de
+        conferir se o numero caiu e torcer para ser pelo motivo certo.
         """
         normalizados = []
         for caminho in paths:
@@ -932,17 +959,45 @@ class HarnessDatabase:
                 # morta nao invalida nada, so cresce.
                 return self.task(task_id)
             next_code_revision = int(row["code_revision"]) + 1
+            agora = utc_now()
             connection.executemany(
                 "INSERT OR IGNORE INTO files(task_id, normalized_path, first_seen_code_revision) VALUES (?, ?, ?)",
                 [(task_id, texto, next_code_revision) for texto in normalizados],
+            )
+            connection.executemany(
+                "INSERT INTO touches(task_id, code_revision, path, origem, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(task_id, next_code_revision, texto, origem, agora) for texto in normalizados],
             )
             connection.execute(
                 "UPDATE tasks SET code_revision = ?, revision = revision + 1, verified = 0, "
                 "status = CASE WHEN status = 'verified' THEN 'active' ELSE status END, "
                 "updated_at = ? WHERE task_id = ?",
-                (next_code_revision, utc_now(), task_id),
+                (next_code_revision, agora, task_id),
             )
         return self.task(task_id)
+
+    def touches(self, task_id: str, *, limite: int | None = None) -> list[dict[str, Any]]:
+        """Todo toque desta task, do mais antigo ao mais novo.
+
+        `limite` devolve os N mais RECENTES, ainda em ordem cronologica — e o
+        que a mensagem do gate precisa: "o que invalidou por ultimo".
+        """
+        with self._connect() as connection:
+            if limite is None:
+                linhas = connection.execute(
+                    "SELECT code_revision, path, origem, created_at FROM touches "
+                    "WHERE task_id = ? ORDER BY id",
+                    (task_id,),
+                ).fetchall()
+            else:
+                linhas = connection.execute(
+                    "SELECT code_revision, path, origem, created_at FROM touches "
+                    "WHERE task_id = ? ORDER BY id DESC LIMIT ?",
+                    (task_id, int(limite)),
+                ).fetchall()
+                linhas = list(reversed(linhas))
+        return [dict(linha) for linha in linhas]
 
     def files(self, task_id: str) -> list[str]:
         """Caminhos ja atribuidos a esta task, na ordem em que apareceram."""
