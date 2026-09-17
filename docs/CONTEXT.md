@@ -111,3 +111,113 @@
 - `required=True` no `_Lock` derrubou **34 testes de uma vez** por um efeito não
   previsto (o diretório do bucket nasce dentro do lock). Sem a rede da Fase 0,
   isso teria ido para o cache.
+
+---
+
+# CONTEXT — guarda de órfão
+
+> Acrescentado, não substituído — e eu sobrescrevi antes de perceber. O aviso
+> estava escrito no bloco de setembro, três parágrafos acima, e mesmo assim um
+> `Write` apagou 113 linhas de duas tasks. Só apareceu porque o `git diff --stat`
+> acusou 186 linhas trocadas num arquivo que eu achava novo. **Antes de escrever
+> em `docs/CONTEXT.md`, leia o que já está lá.**
+
+**Task:** `t-20260916-215220419949` · **Ramo:** `claude/guarda-de-orfao` · **Base:** `5ca9d4e`
+**Fase:** `discuss` · **Decidido em:** 2026-09-16
+**Medição que sustenta:** [`guarda-de-orfao-medicao.md`](specs/guarda-de-orfao-medicao.md)
+
+---
+
+## Locked — decidido, não relitigar
+
+### L1 · O guarda reprova função pública de topo sem raiz externa
+
+Uma função é **viva** quando existe caminho até ela a partir de uma raiz que o
+host executa: hook (`hooks/*.sh`, `hooks/hooks.json`), `scripts/health-check.sh`,
+`.github/workflows/ci.yml`, um `skills/*/SKILL.md` que manda rodá-la, ou outra
+função viva. Não sendo, o guarda falha — **a menos que o nome esteja na
+allowlist, com motivo escrito**.
+
+Escopo: funções públicas de topo de módulo em `scripts/`, `hooks/`, `tools/`,
+`skills/`. Métodos ficam de fora nesta volta, por comparabilidade com a medição.
+
+### L2 · A allowlist é o artefato, e ela nasce com 67 linhas
+
+29 decisões declaradas + 38 esquecidas. Não é lista de exceções a esvaziar: é o
+inventário que nunca existiu. O critério de qualidade é **cada linha ter motivo
+verdadeiro**, não a lista encolher.
+
+### L3 · As 38 esquecidas entram como `ORFAO` e nada mais acontece com elas
+
+Nenhuma é apagada, nenhuma é ligada, nenhum comportamento muda. O motivo de cada
+linha registra o que se sabe hoje, inclusive "não sei por que isto existe".
+
+**Consequência aceita:** `skills/branch-out/SKILL.md:142` continua afirmando que
+"o renderizador recusa semente incompleta" enquanto `render_seed` não roda. A
+afirmação falsa fica registrada na allowlist e na medição, não corrigida aqui.
+
+### L4 · A parte A (liveness de capacidade em execução) vira ramo próprio
+
+B responde *"existe caminho?"* estaticamente e é decidível agora. A responde *"foi
+chamada de verdade?"* e precisa de sinal de execução por capacidade — a pergunta
+que o seed diz não ter resposta óbvia. Misturar trava o fechamento de B.
+
+Este ramo entrega **B (guarda) e C (consumidor nomeado em spec)**. A abre depois,
+com a medição como base.
+
+### L5 · O guarda tem de ser chamado, e a prova não pode depender dele
+
+A ironia do seed é critério de aceite, não observação. Antes de fechar: o guarda
+roda na suíte (`pytest`), e portanto no CI, que já roda `pytest -q`. A prova de
+que é chamado é o CI verde sobre um commit onde ele falha de propósito — evidência
+externa ao guarda.
+
+### L6 · O instrumento vai para produção com os três erros documentados
+
+`alcance.py` (scratchpad) vira código do repositório. Os três erros próprios
+medidos hoje — ` as ` no heredoc, `module_from_spec`, e `tests/test_X.py` casando
+como raiz de `X` por substring — viram **teste de regressão do guarda**, cada um.
+O terceiro especialmente: é o teste certificando produção dentro do detector de
+teste-certificando-produção.
+
+---
+
+## Deferred — fica para depois, com endereço
+
+| item | por quê | onde |
+|---|---|---|
+| Liveness de capacidade em execução (parte A) | pergunta diferente, sinal diferente | ramo próprio, L4 |
+| As 22 capacidades `required` provadas só por teste | C cobre specs novas; o contrato existente é retrofit | depende de A |
+| `ListAgents` listando sessão sem processo | superfície do host, fora deste repositório | reportado pela sessão irmã; anotado |
+| `branch_state.open_branches()` contar ramo morto como aberto | candidato real dentro deste repo, mas é outra medição | depois de A |
+| Métodos de classe no escopo do guarda | medição foi feita sobre funções de topo | próxima volta |
+| Correção de `SKILL.md:142` e ligação de `render_seed` | muda comportamento, não registro | L3 |
+
+---
+
+## Discretion — decido eu, sem perguntar
+
+- Formato da allowlist (arquivo, sintaxe, onde mora).
+- Nome do módulo e do teste.
+- Como o guarda descobre raízes, e quais extensões varre.
+- Granularidade das categorias de motivo na allowlist.
+- Se o guarda é um teste, um script com teste, ou os dois — desde que L5 valha.
+- Texto da regra que entra em `write-spec` / `write-spec-light` (parte C).
+
+---
+
+## Boundaries
+
+**ALWAYS**
+- Rodar a função de produção, nunca uma reimplementação dela, para produzir número.
+- `exit_code == 0` não é aceite: ler a saída.
+- Número aposentado permanece escrito, com `[superado: por quê]`.
+
+**NEVER**
+- Apagar função por estar órfã, nesta volta.
+- Deixar linha de allowlist sem motivo, ou com motivo que seja o nome repetido.
+- Aceitar teste como prova de que uma capacidade é usada.
+
+**ASK**
+- Se a allowlist inicial precisar passar de 67 linhas para a suíte passar — significa
+  que a medição errou e o número tem de ser refeito antes do guarda.

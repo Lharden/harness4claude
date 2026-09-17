@@ -23,6 +23,21 @@ Todos operam sobre a **raiz do vault** via `--root`. Aponte para o seu vault
 | `impact.py` | Raio de impacto de mudança **não commitada**, sobre o grafo do graphify | `python tools/impact.py --report` |
 | `design_scope.py` | Qual design doc governa um caminho, via `applies_to` declarado no front matter | `python tools/design_scope.py --changed --explain` |
 | `arsenal.py` | Registry das ferramentas **ativas**: contrato, reconciliação com o disco, orçamento de tokens do roster e colisão de gatilho | `python tools/arsenal.py budget --report` |
+| `orfaos.py` | Guarda de órfão: função pública sem caminho até uma raiz que o host execute. Reprova o que não estiver declarado em `orfaos.json` | `python tools/orfaos.py --report` |
+
+**Esta tabela tem sete linhas, e `tools/` tem dezoito arquivos.** `wiki_lint.py` e
+`wiki_moc.py` — 17 funções, 31 testes — não estão aqui, não estão no
+`health-check.sh`, não estão em nenhuma `SKILL.md`, e nada as chama. `wiki_lint` é
+citado em 12 docstrings deste diretório como *o contrato que os outros herdam*:
+`graph_lint`, `arsenal`, `compendium`, `impact` e `design_scope` dizem seguir o
+formato dele, e nenhum o invoca.
+
+Elas **não** foram acrescentadas à tabela ao serem descobertas, e isso é
+deliberado. Escrever a linha aqui as tornaria ferramentas de mão declaradas — e
+quem decide que uma peça esquecida vira ferramenta declarada é quem mantém o
+repositório, não quem passou medindo. Enquanto ninguém decide, elas estão em
+`orfaos.json` com `categoria: ORFAO` e o motivo escrito, que é onde dívida com
+nome pertence. Consertar no mesmo gesto em que se mede apaga o que foi medido.
 
 **Compêndio e arsenal são irmãos, e a diferença importa:** um verbete do compêndio
 é inerte e custa zero token por sessão; uma skill instalada é ativa, cobra ~93

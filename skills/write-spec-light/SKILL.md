@@ -52,6 +52,14 @@ A spec light deve ser enxuta por design. Se algo precisa de mais detalhe, é sin
 - **Review humano < 2 minutos**: cada seção deve caber em uma tela; sem subseções profundas, sem prosa longa.
 - **Clarifications obrigatórias**: qualquer ambiguidade vira `[NEEDS CLARIFICATION]` explícito. Nunca chute, nunca omita.
 - **ENTREGA cabe em uma linha**: mesmo no L1, a spec fixa o teto da afirmação — o nível mais baixo que ainda é verdade, e o que não está incluído. No L2 isso é seção própria (`write-spec`); aqui é uma linha dentro de Boundaries, porque o custo humano de dois minutos é o limite.
+- **`consumidor:` em uma linha, e bloqueante**: REQ que cria capacidade nova leva
+  `consumidor: <quem a invoca em produção>`. **Teste não é consumidor**; sem um,
+  vira `[NEEDS CLARIFICATION]` e a spec não fecha. Uma linha, porque o custo humano
+  de dois minutos é o limite — e porque medido aqui em 2026-09-16 há **38 funções
+  públicas sem chamador e sem um documento que diga por quê**, cada uma nascida de
+  uma spec que descrevia a peça e parava. Consumidor futuro se escreve
+  `consumidor: nenhum ainda — ver [spec X]`; isso é decisão, campo em branco é
+  esquecimento.
 - **AC ainda Given/When/Then**: mesmo na versão light, acceptance criteria mantêm o formato testável. É o que permite a fase TDD funcionar depois.
 
 ## Diferenças vs write-spec completa

@@ -326,6 +326,18 @@ fi
 echo ""
 
 echo "--- Orphaned artifacts ---"
+# Funcao publica sem caminho ate uma raiz que o host execute. Este e o SEGUNDO
+# chamador do guarda, e ele existe de proposito: o outro e a suite. Com um
+# caminho so, derrubar esse caminho derrubaria junto a prova de que o guarda
+# roda — e um guarda de orfao que ninguem chama e um orfao.
+if python "$PLUGIN_DIR/tools/orfaos.py" --raiz "$PLUGIN_DIR" >/dev/null 2>&1; then
+    echo "[OK]     nenhuma funcao publica orfa nao declarada"
+else
+    echo "[FAIL]   funcao publica sem chamador e sem declaracao — rode:"
+    echo "         python tools/orfaos.py --report"
+    EXIT_CODE=1
+fi
+
 # Check for ralph-loop orphan in current directory (project-scoped)
 if [ -f ".claude/ralph-loop.local.md" ]; then
     echo "[FAIL]   ralph-loop orphan state present (.claude/ralph-loop.local.md)"

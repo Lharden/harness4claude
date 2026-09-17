@@ -123,6 +123,28 @@ de formatação para user stories, acceptance criteria e boundaries.
   `wiki/decisions/estado-duravel-do-pipeline.md` — aprovação humana que o estado
   descarta assim que é dada. Absorvido de @0xWast3 (2026-08-26): a auditoria
   checa contra a **suposição**, não contra o objetivo.
+- **Capacidade declarada exige `consumidor:` nomeado, e isso é bloqueante**: todo
+  REQ que cria capacidade nova — função, endpoint, fila, arquivo, ferramenta —
+  carrega uma linha `consumidor: <quem a invoca em produção>`. **Um teste não é
+  consumidor.** Se o único candidato for um teste, ou não houver nenhum, isso vira
+  `[NEEDS CLARIFICATION]` e a spec não fecha sem resposta — mesma força que já
+  vale para toda ambiguidade, pela mesma razão: nunca assumir.
+
+  Medido neste repositório em 2026-09-16: **419 funções públicas de topo, 67 sem
+  caminho até qualquer raiz que o host execute, 38 delas sem um documento sequer
+  que diga por quê.** `hooks/harness_lite_adapter.py` prova a capacidade
+  `integration.harness-lite`, declarada `level: required` no contrato — e a prova é
+  um nó de pytest, como são as 44 provas de `contract/behavioral-probes.json`, sem
+  exceção. `evidence_queue.py` nasceu com 76 linhas e sem enfileirador. As specs
+  descreviam a peça e paravam; é por isso que a peça nascia sozinha.
+
+  **Peça com teste verde e zero uso parece saudável por todos os indicadores** —
+  suíte verde, revisão feita, cobertura alta. `consumidor:` é o único campo que
+  separa "funciona" de "é usado", e ele tem de ser escrito antes, porque depois
+  ninguém volta para perguntar. Consumidor legitimamente futuro se escreve assim:
+  `consumidor: nenhum ainda — ver [spec X], degrau Y`. Isso é decisão; o campo em
+  branco é esquecimento.
+
 - **Vocabulário da spec não é herdado do código**: quando a feature mexe em algo
   que já existe, o nome que a entidade tem hoje é uma resposta anterior ao
   problema, não um requisito dele. Nomeie o que a coisa **é** no domínio; se o

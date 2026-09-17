@@ -1,0 +1,631 @@
+{
+ "versao": 1,
+ "declaracoes": [
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "build_supervisor_request",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "bundle_is_acceptable",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "checkpoint_points",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "is_replay",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "project_fingerprint_for",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "reaches_the_plane",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "harness_lite_adapter",
+   "nome": "to_wire",
+   "arquivo": "hooks/harness_lite_adapter.py",
+   "categoria": "ORFAO",
+   "motivo": "Traduz classificacao, spec e plano numa requisicao do plano de execucao. contract/capabilities.json declara `integration.harness-lite` com `level: required`, e a prova em behavioral-probes.json e um no de pytest. 24 referencias em teste, ZERO chamador de producao: o modulo inteiro so existe para o teste que o certifica. E o caso que deu nome a este ramo."
+  },
+  {
+   "modulo": "_escopo",
+   "nome": "de_sessao",
+   "arquivo": "scripts/_escopo.py",
+   "categoria": "ORFAO",
+   "motivo": "Modulo de desenho da escada de identidade de escopo, com __all__ completo. O docstring descreve o degrau `dupla`, onde divergencia() rodaria os dois lados e reprovaria se discordassem — e esse degrau nao foi ligado. Marcado ORFAO e nao RESERVA_DECLARADA de proposito: reserva declarada exige a condicao ou a data de ligar, e aqui nenhum documento as da."
+  },
+  {
+   "modulo": "_escopo",
+   "nome": "divergencia",
+   "arquivo": "scripts/_escopo.py",
+   "categoria": "ORFAO",
+   "motivo": "Modulo de desenho da escada de identidade de escopo, com __all__ completo. O docstring descreve o degrau `dupla`, onde divergencia() rodaria os dois lados e reprovaria se discordassem — e esse degrau nao foi ligado. Marcado ORFAO e nao RESERVA_DECLARADA de proposito: reserva declarada exige a condicao ou a data de ligar, e aqui nenhum documento as da."
+  },
+  {
+   "modulo": "bench_stats",
+   "nome": "bootstrap_median_ci",
+   "arquivo": "scripts/bench_stats.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mann-Whitney U e bootstrap de IC da mediana, em stdlib. MIGRATION_LOG.md:249 o declara como o D5 do ADR-002, antecipado porque o REQ-NF3 exigia a comparacao. Ferramenta de analise, roda quando ha dois benchmarks a comparar."
+  },
+  {
+   "modulo": "bench_stats",
+   "nome": "main",
+   "arquivo": "scripts/bench_stats.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mann-Whitney U e bootstrap de IC da mediana, em stdlib. MIGRATION_LOG.md:249 o declara como o D5 do ADR-002, antecipado porque o REQ-NF3 exigia a comparacao. Ferramenta de analise, roda quando ha dois benchmarks a comparar."
+  },
+  {
+   "modulo": "bench_stats",
+   "nome": "mann_whitney_u",
+   "arquivo": "scripts/bench_stats.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mann-Whitney U e bootstrap de IC da mediana, em stdlib. MIGRATION_LOG.md:249 o declara como o D5 do ADR-002, antecipado porque o REQ-NF3 exigia a comparacao. Ferramenta de analise, roda quando ha dois benchmarks a comparar."
+  },
+  {
+   "modulo": "bench_wiki",
+   "nome": "percentil",
+   "arquivo": "scripts/bench_wiki.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Bench de latencia do wiki_query por subprocess real. docs/wiki-query.md:103 registra a medicao que ele produziu (n=12, indice de 512 chunks)."
+  },
+  {
+   "modulo": "branch_seed",
+   "nome": "render_seed",
+   "arquivo": "scripts/branch_seed.py",
+   "categoria": "ORFAO",
+   "motivo": "Renderiza a semente de um ramo: seis secoes, 110 linhas, e uma correcao de RecursionError com o caso que derrubava a skill inteira. A unica chamada no repositorio e a recursao dela mesma, na linha 150. O `main` le o arquivo pronto via --seed-file, e skills/branch-out/SKILL.md:139 diz explicitamente que a semente e escrita pelo agente. Pior: a linha 142 da mesma SKILL.md afirma que *o renderizador recusa semente incompleta*, e ele nunca roda. A capacidade existe, tem teste, e a frase que a anuncia e falsa."
+  },
+  {
+   "modulo": "branch_sensor",
+   "nome": "reset_session",
+   "arquivo": "scripts/branch_sensor.py",
+   "categoria": "ORFAO",
+   "motivo": "Zera o contador de orcamento de ofertas. A unica mencao fora do arquivo e portao-de-stop-achados.md:201, que o descreve como DEFEITUOSO: trata como por-sessao um orcamento que e por-projeto. Nada o chama."
+  },
+  {
+   "modulo": "branch_state",
+   "nome": "pending",
+   "arquivo": "scripts/branch_state.py",
+   "categoria": "ORFAO",
+   "motivo": "Devolve os ramos com status pending. Irmao direto de open_branches(), que e viva e usada pelo teto de janelas. Simetria de API que ninguem consumiu."
+  },
+  {
+   "modulo": "calibrate_branch_floor",
+   "nome": "embeddings_de",
+   "arquivo": "scripts/calibrate_branch_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Calibracao da camada B do Branch Keeper. CLAUDE.md manda refazer com este script apos mudanca grande no corpus; a tabela de 2026-09-02 saiu daqui e esta em ~/.claude/harness/calib/."
+  },
+  {
+   "modulo": "calibrate_branch_floor",
+   "nome": "main",
+   "arquivo": "scripts/calibrate_branch_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Calibracao da camada B do Branch Keeper. CLAUDE.md manda refazer com este script apos mudanca grande no corpus; a tabela de 2026-09-02 saiu daqui e esta em ~/.claude/harness/calib/."
+  },
+  {
+   "modulo": "calibrate_branch_floor",
+   "nome": "medir",
+   "arquivo": "scripts/calibrate_branch_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Calibracao da camada B do Branch Keeper. CLAUDE.md manda refazer com este script apos mudanca grande no corpus; a tabela de 2026-09-02 saiu daqui e esta em ~/.claude/harness/calib/."
+  },
+  {
+   "modulo": "calibrate_branch_floor",
+   "nome": "melhor_ponto",
+   "arquivo": "scripts/calibrate_branch_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Calibracao da camada B do Branch Keeper. CLAUDE.md manda refazer com este script apos mudanca grande no corpus; a tabela de 2026-09-02 saiu daqui e esta em ~/.claude/harness/calib/."
+  },
+  {
+   "modulo": "calibrate_branch_floor",
+   "nome": "render",
+   "arquivo": "scripts/calibrate_branch_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Calibracao da camada B do Branch Keeper. CLAUDE.md manda refazer com este script apos mudanca grande no corpus; a tabela de 2026-09-02 saiu daqui e esta em ~/.claude/harness/calib/."
+  },
+  {
+   "modulo": "calibrate_branch_layer_a",
+   "nome": "avaliar",
+   "arquivo": "scripts/calibrate_branch_layer_a.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mede cada padrao da camada A um por um. CLAUDE.md o nomeia junto com o calibrate_branch_floor como o par que refaz a calibracao; foi ele que mediu a precisao ~0.10 que desligou a camada."
+  },
+  {
+   "modulo": "calibrate_branch_layer_a",
+   "nome": "main",
+   "arquivo": "scripts/calibrate_branch_layer_a.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mede cada padrao da camada A um por um. CLAUDE.md o nomeia junto com o calibrate_branch_floor como o par que refaz a calibracao; foi ele que mediu a precisao ~0.10 que desligou a camada."
+  },
+  {
+   "modulo": "calibrate_branch_layer_a",
+   "nome": "render",
+   "arquivo": "scripts/calibrate_branch_layer_a.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mede cada padrao da camada A um por um. CLAUDE.md o nomeia junto com o calibrate_branch_floor como o par que refaz a calibracao; foi ele que mediu a precisao ~0.10 que desligou a camada."
+  },
+  {
+   "modulo": "calibrate_branch_layer_a",
+   "nome": "rodar",
+   "arquivo": "scripts/calibrate_branch_layer_a.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mede cada padrao da camada A um por um. CLAUDE.md o nomeia junto com o calibrate_branch_floor como o par que refaz a calibracao; foi ele que mediu a precisao ~0.10 que desligou a camada."
+  },
+  {
+   "modulo": "calibrate_branch_layer_a",
+   "nome": "veredicto",
+   "arquivo": "scripts/calibrate_branch_layer_a.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Mede cada padrao da camada A um por um. CLAUDE.md o nomeia junto com o calibrate_branch_floor como o par que refaz a calibracao; foi ele que mediu a precisao ~0.10 que desligou a camada."
+  },
+  {
+   "modulo": "calibrate_classify_guard",
+   "nome": "avaliar",
+   "arquivo": "scripts/calibrate_classify_guard.py",
+   "categoria": "ORFAO",
+   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+  },
+  {
+   "modulo": "calibrate_classify_guard",
+   "nome": "distribuicao",
+   "arquivo": "scripts/calibrate_classify_guard.py",
+   "categoria": "ORFAO",
+   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+  },
+  {
+   "modulo": "calibrate_classify_guard",
+   "nome": "main",
+   "arquivo": "scripts/calibrate_classify_guard.py",
+   "categoria": "ORFAO",
+   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+  },
+  {
+   "modulo": "calibrate_classify_guard",
+   "nome": "render",
+   "arquivo": "scripts/calibrate_classify_guard.py",
+   "categoria": "ORFAO",
+   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+  },
+  {
+   "modulo": "calibrate_classify_guard",
+   "nome": "rodar",
+   "arquivo": "scripts/calibrate_classify_guard.py",
+   "categoria": "ORFAO",
+   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+  },
+  {
+   "modulo": "calibrate_classify_guard",
+   "nome": "veredicto",
+   "arquivo": "scripts/calibrate_classify_guard.py",
+   "categoria": "ORFAO",
+   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+  },
+  {
+   "modulo": "calibrate_wiki_floor",
+   "nome": "main",
+   "arquivo": "scripts/calibrate_wiki_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Varre o piso de cosseno da wiki contra o golden set. docs/wiki-query.md:190 da o comando e o gatilho: rodar apos mudanca grande no corpus."
+  },
+  {
+   "modulo": "calibrate_wiki_floor",
+   "nome": "memoize_embed",
+   "arquivo": "scripts/calibrate_wiki_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Varre o piso de cosseno da wiki contra o golden set. docs/wiki-query.md:190 da o comando e o gatilho: rodar apos mudanca grande no corpus."
+  },
+  {
+   "modulo": "calibrate_wiki_floor",
+   "nome": "tops",
+   "arquivo": "scripts/calibrate_wiki_floor.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Varre o piso de cosseno da wiki contra o golden set. docs/wiki-query.md:190 da o comando e o gatilho: rodar apos mudanca grande no corpus."
+  },
+  {
+   "modulo": "check_hermeticity",
+   "nome": "collect",
+   "arquivo": "scripts/check_hermeticity.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gate externo do conjunto protegido (--snapshot / --verify). O design em p1b-testes-hermeticos-design.md:172 explica por que e script e nao teste: uma suite interrompida nunca executa o teardown de um teste session-scoped, e o gate precisa de verificacao de fora."
+  },
+  {
+   "modulo": "check_hermeticity",
+   "nome": "default_harness_dir",
+   "arquivo": "scripts/check_hermeticity.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gate externo do conjunto protegido (--snapshot / --verify). O design em p1b-testes-hermeticos-design.md:172 explica por que e script e nao teste: uma suite interrompida nunca executa o teardown de um teste session-scoped, e o gate precisa de verificacao de fora."
+  },
+  {
+   "modulo": "check_hermeticity",
+   "nome": "main",
+   "arquivo": "scripts/check_hermeticity.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gate externo do conjunto protegido (--snapshot / --verify). O design em p1b-testes-hermeticos-design.md:172 explica por que e script e nao teste: uma suite interrompida nunca executa o teardown de um teste session-scoped, e o gate precisa de verificacao de fora."
+  },
+  {
+   "modulo": "check_hermeticity",
+   "nome": "snapshot",
+   "arquivo": "scripts/check_hermeticity.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gate externo do conjunto protegido (--snapshot / --verify). O design em p1b-testes-hermeticos-design.md:172 explica por que e script e nao teste: uma suite interrompida nunca executa o teardown de um teste session-scoped, e o gate precisa de verificacao de fora."
+  },
+  {
+   "modulo": "check_hermeticity",
+   "nome": "verify",
+   "arquivo": "scripts/check_hermeticity.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gate externo do conjunto protegido (--snapshot / --verify). O design em p1b-testes-hermeticos-design.md:172 explica por que e script e nao teste: uma suite interrompida nunca executa o teardown de um teste session-scoped, e o gate precisa de verificacao de fora."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "apply",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "drift",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "installed_root",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "main",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "repo_root",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "same_content",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "shipped_files",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "diagnose_ollama",
+   "nome": "check_server",
+   "arquivo": "scripts/diagnose_ollama.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Smoke-test do Ollama. README.md:274-282 tem a secao propria e o comando, com a flag --model. Roda quando o skill-router ou a camada B de embedding param de responder e e preciso saber se o defeito e do Ollama."
+  },
+  {
+   "modulo": "diagnose_ollama",
+   "nome": "main",
+   "arquivo": "scripts/diagnose_ollama.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Smoke-test do Ollama. README.md:274-282 tem a secao propria e o comando, com a flag --model. Roda quando o skill-router ou a camada B de embedding param de responder e e preciso saber se o defeito e do Ollama."
+  },
+  {
+   "modulo": "diagnose_ollama",
+   "nome": "test_native",
+   "arquivo": "scripts/diagnose_ollama.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Smoke-test do Ollama. README.md:274-282 tem a secao propria e o comando, com a flag --model. Roda quando o skill-router ou a camada B de embedding param de responder e e preciso saber se o defeito e do Ollama."
+  },
+  {
+   "modulo": "diagnose_ollama",
+   "nome": "test_openai",
+   "arquivo": "scripts/diagnose_ollama.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Smoke-test do Ollama. README.md:274-282 tem a secao propria e o comando, com a flag --model. Roda quando o skill-router ou a camada B de embedding param de responder e e preciso saber se o defeito e do Ollama."
+  },
+  {
+   "modulo": "diagnose_ollama",
+   "nome": "test_quality_extraction",
+   "arquivo": "scripts/diagnose_ollama.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Smoke-test do Ollama. README.md:274-282 tem a secao propria e o comando, com a flag --model. Roda quando o skill-router ou a camada B de embedding param de responder e e preciso saber se o defeito e do Ollama."
+  },
+  {
+   "modulo": "diagnose_ollama",
+   "nome": "test_quality_summary",
+   "arquivo": "scripts/diagnose_ollama.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Smoke-test do Ollama. README.md:274-282 tem a secao propria e o comando, com a flag --model. Roda quando o skill-router ou a camada B de embedding param de responder e e preciso saber se o defeito e do Ollama."
+  },
+  {
+   "modulo": "harvest_branch_labels",
+   "nome": "harvest",
+   "arquivo": "scripts/harvest_branch_labels.py",
+   "categoria": "ORFAO",
+   "motivo": "Produz rotulos de ramificacao por supervisao distante, sem rotulacao manual. A unica mencao no repositorio e uma enumeracao de nomes de script num doc de risco — sem como, sem quando, sem comando. Provavelmente alimentou os 703 pares da calibracao de 2026-09-02, e se foi isso, esta sem a linha que diria."
+  },
+  {
+   "modulo": "harvest_branch_labels",
+   "nome": "main",
+   "arquivo": "scripts/harvest_branch_labels.py",
+   "categoria": "ORFAO",
+   "motivo": "Produz rotulos de ramificacao por supervisao distante, sem rotulacao manual. A unica mencao no repositorio e uma enumeracao de nomes de script num doc de risco — sem como, sem quando, sem comando. Provavelmente alimentou os 703 pares da calibracao de 2026-09-02, e se foi isso, esta sem a linha que diria."
+  },
+  {
+   "modulo": "export_plugins",
+   "nome": "build_lock",
+   "arquivo": "tools/export_plugins.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gera o vault-plugins.lock.json. Declarado na tabela do tools/README.md:20 e em README.md:493 com o comando. Roda ao instalar plugin novo no Obsidian, para que uma maquina nova reinstale o mesmo conjunto sem versionar 52 MB de binario."
+  },
+  {
+   "modulo": "export_plugins",
+   "nome": "build_parser",
+   "arquivo": "tools/export_plugins.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gera o vault-plugins.lock.json. Declarado na tabela do tools/README.md:20 e em README.md:493 com o comando. Roda ao instalar plugin novo no Obsidian, para que uma maquina nova reinstale o mesmo conjunto sem versionar 52 MB de binario."
+  },
+  {
+   "modulo": "export_plugins",
+   "nome": "collect_plugins",
+   "arquivo": "tools/export_plugins.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gera o vault-plugins.lock.json. Declarado na tabela do tools/README.md:20 e em README.md:493 com o comando. Roda ao instalar plugin novo no Obsidian, para que uma maquina nova reinstale o mesmo conjunto sem versionar 52 MB de binario."
+  },
+  {
+   "modulo": "export_plugins",
+   "nome": "main",
+   "arquivo": "tools/export_plugins.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Gera o vault-plugins.lock.json. Declarado na tabela do tools/README.md:20 e em README.md:493 com o comando. Roda ao instalar plugin novo no Obsidian, para que uma maquina nova reinstale o mesmo conjunto sem versionar 52 MB de binario."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "accentuate_prose",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "apply_text_normalization",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "audit_vault",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "build_parser",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "extract_wikilink_targets",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "find_broken_wikilinks",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "iter_markdown_files",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "main",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "normalize_markdown",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "organize_notes",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "repair_mojibake",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "vault_maintenance",
+   "nome": "update_wikilinks",
+   "arquivo": "tools/vault_maintenance.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Auditoria conservadora das notas do vault. Declarado na tabela do tools/README.md:21 com o comando `python -m tools.vault_maintenance`."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "analyze_wiki",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "build_parser",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "has_frontmatter",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "inbox_redundant_pairs",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "is_index_page",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "main",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "missing_fields",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "parse_wikilinks",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "render_report",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "stray_wiki_tree",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_lint",
+   "nome": "subtrees_without_moc",
+   "arquivo": "tools/wiki_lint.py",
+   "categoria": "ORFAO",
+   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+  },
+  {
+   "modulo": "wiki_moc",
+   "nome": "area_spine",
+   "arquivo": "tools/wiki_moc.py",
+   "categoria": "ORFAO",
+   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+  },
+  {
+   "modulo": "wiki_moc",
+   "nome": "build_moc",
+   "arquivo": "tools/wiki_moc.py",
+   "categoria": "ORFAO",
+   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+  },
+  {
+   "modulo": "wiki_moc",
+   "nome": "build_parser",
+   "arquivo": "tools/wiki_moc.py",
+   "categoria": "ORFAO",
+   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+  },
+  {
+   "modulo": "wiki_moc",
+   "nome": "dataview_block",
+   "arquivo": "tools/wiki_moc.py",
+   "categoria": "ORFAO",
+   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+  },
+  {
+   "modulo": "wiki_moc",
+   "nome": "health_panel",
+   "arquivo": "tools/wiki_moc.py",
+   "categoria": "ORFAO",
+   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+  },
+  {
+   "modulo": "wiki_moc",
+   "nome": "main",
+   "arquivo": "tools/wiki_moc.py",
+   "categoria": "ORFAO",
+   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+  },
+  {
+   "modulo": "wiki_query",
+   "nome": "chaves_de_citacao",
+   "arquivo": "tools/wiki_query.py",
+   "categoria": "ORFAO",
+   "motivo": "Monta as chaves de citacao de um hit da wiki. O unico chamador de producao e calibrate_wiki_floor.py:41 — que tambem nao roda sozinho. Funcao viva dentro de codigo morto continua morta."
+  }
+ ],
+ "medido_em": "2026-09-16",
+ "base": "5ca9d4e",
+ "doutrina": "Esta lista guarda JULGAMENTO; o fato vem do disco a cada execucao do tools/orfaos.py. Ela nao e lista de excecoes a esvaziar: e o inventario que nunca existiu. O criterio de qualidade e cada linha ter motivo verdadeiro, nao a lista encolher. FERRAMENTA_DE_MAO, RESERVA_DECLARADA e API_EXTERNA sao decisoes; ORFAO e divida com nome."
+}
