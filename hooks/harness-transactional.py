@@ -15,6 +15,11 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+#: O CLI de estado que acompanha ESTE hook, em forma copiavel para o shell.
+#: Ver `comando_de_evidencia` para por que o caminho e literal e por que a barra
+#: e a normal.
+CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
+
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
@@ -961,6 +966,41 @@ def _ultimos_toques(database, task_id: str, quantos: int = 3) -> str:
     return f"Ultima(s) invalidacao(oes): {itens}"
 
 
+def comando_de_evidencia(bucket: Path, task_id: str) -> str:
+    """A linha que o portao manda copiar para registrar evidencia a mao.
+
+    Ela precisa satisfazer `is_state_management`, senao o PostToolUse que vem
+    logo atras dela sobe `code_revision` e a evidencia que o CLI acabou de
+    gravar nasce obsoleta. Nao e corrida: `state_cli evidence` grava em
+    `row["code_revision"]` (`transactional_state.py:1035`) e o hook so roda
+    DEPOIS do comando, entao a ordem e sempre grava-em-N, sobe-para-N+1.
+
+    Ate 2026-09-18 esta mensagem imprimia
+
+        PR="$(cat "${HARNESS_DIR:-...}/plugin-root")"; python "$PR/..." ...
+
+    e o `;` fora de aspas a tirava da isencao. `223c53f` consertou exatamente
+    esta forma nos `SKILL.md` e nao chegou aqui — a receita do hook e uma
+    receita tambem, e ninguem a media. Medido na sessao-mae em 2026-09-17:
+    evidencia gravada na `code_revision` 375, portao lendo 376 no turno
+    seguinte, com a 376 listada como `shell-placeholder`.
+
+    O caminho do CLI sai de `SCRIPTS`, que e derivado do `__file__` deste
+    arquivo: e o CLI que acompanha o hook que esta rodando. O marcador
+    `plugin-root` responde outra pergunta e ja apontou para versao antiga
+    (`test_arsenal.py:853`).
+
+    `as_posix()` de proposito: barra invertida dentro de aspas duplas e escape
+    para `_scan_composition` (`:69`), e um caminho do Windows cru faria a
+    varredura comer separador. Barra normal funciona nos dois shells.
+    """
+    return (
+        f'python "{CLI_DE_ESTADO}" --home "{bucket}" evidence '
+        f'--task {task_id} --type test --command-text "python -m pytest -q" '
+        "--exit-code 0 --tests-collected <N> --tests-passed <P> --tests-skipped <S>"
+    )
+
+
 def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     """A mensagem do bloqueio, dizendo o que o portao LEU.
 
@@ -988,13 +1028,9 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     # `--home` e do parser RAIZ: vai antes do subcomando, nao depois. Escrever
     # na ordem errada aqui entregaria um comando que nao roda, que e a mesma
     # falha que esta mensagem existe para corrigir — instrucao que nao se
-    # consegue seguir vale tanto quanto instrucao nenhuma.
-    comando = (
-        'PR="$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")"; '
-        f'python "$PR/scripts/state_cli.py" --home "{bucket}" evidence '
-        f'--task {task["task_id"]} --type test --command-text "python -m pytest -q" '
-        "--exit-code 0 --tests-collected <N> --tests-passed <P> --tests-skipped <S>"
-    )
+    # consegue seguir vale tanto quanto instrucao nenhuma. Pela mesma razao ele
+    # tem de ser ATOMICO: ver `comando_de_evidencia`.
+    comando = comando_de_evidencia(bucket, task["task_id"])
     regua = (
         "A regua: exit 0, tests_passed > 0, e tests_passed + tests_skipped == "
         "tests_collected. Teste pulado NAO reprova; teste que falhou, sim."
