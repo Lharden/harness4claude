@@ -1182,3 +1182,107 @@ def test_comando_que_a_mensagem_imprime_de_fato_roda(tmp_path: Path):
     else:
         assert args.command == "evidence"
         assert args.task == task["task_id"]
+
+
+# ---------------------------------------------------------------------------
+# A gravacao nao pode invalidar a si mesma
+# ---------------------------------------------------------------------------
+# `state_cli evidence` grava na `code_revision` corrente (`transactional_state
+# .py:1035`) e o PostToolUse do MESMO comando roda depois dele. Se esse comando
+# nao for isento, a ordem e sempre grava-em-N / sobe-para-N+1, e a evidencia
+# nasce obsoleta. Nao e corrida: e deterministico.
+#
+# Medido na sessao-mae em 2026-09-17, dois turnos consecutivos: gravou em 371 e
+# o portao leu 371 (passou); gravou em 375 e o portao leu 376 (reprovou), com a
+# 376 listada como `shell-placeholder` e nenhum comando entre as duas.
+#
+# `223c53f` ja tinha consertado esta forma nos `SKILL.md`. A mensagem do proprio
+# portao continuou composta ate 2026-09-18 porque nada ligava ELA a condicao.
+
+#: A forma composta que o portao imprimia ate 2026-09-18. Fica escrita para a
+#: segunda metade da falsificacao: se ela parar de invalidar, o conserto virou
+#: afrouxamento de `is_state_management` e nao conserto da mensagem.
+RECEITA_COMPOSTA_ANTIGA = (
+    'PR="$(cat "${HARNESS_DIR:-$HOME/.claude/harness}/plugin-root")"; '
+    'python "$PR/scripts/state_cli.py" --home /h evidence '
+    '--task t-1 --type test --command-text "python -m pytest -q" '
+    "--exit-code 0 --tests-collected 1 --tests-passed 1 --tests-skipped 0"
+)
+
+
+def _verificada(database, task_id: str) -> None:
+    database.record_evidence(
+        task_id, evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=3, tests_passed=3, tests_skipped=0,
+        output_hash="h",
+    )
+
+
+@pytest.mark.parametrize("substituir", [False, True], ids=["template", "preenchido"])
+def test_receita_do_portao_nao_invalida_a_propria_evidencia(tmp_path: Path, substituir: bool):
+    """Primeira metade: o comando que o portao manda copiar nao sobe nada.
+
+    Roda o texto REAL que a mensagem imprime — nao uma reconstrucao dele. O
+    `preenchido` existe porque `<N>` e `1` tokenizam diferente, e quem copia
+    substitui antes de rodar.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+    assert antes["verified"] is True, "o cenario precisa comecar verificado"
+
+    comando = hook.comando_de_evidencia(bucket, task["task_id"])
+    if substituir:
+        for marcador in ("<N>", "<P>", "<S>"):
+            comando = comando.replace(marcador, "3" if marcador != "<S>" else "0")
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": comando},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"], (
+        "a receita do portao subiu code_revision; a evidencia gravada por ela "
+        f"nasce obsoleta.\n  {comando!r}\n"
+        f"  ultimos toques: {database.touches(task['task_id'], limite=3)}"
+    )
+    assert depois["verified"] is True, "a receita do portao zerou `verified`"
+
+
+def test_receita_composta_continua_invalidando(tmp_path: Path):
+    """Segunda metade: o guarda continua pegando o que ele existe para pegar.
+
+    Sem esta, "consertei a mensagem" e "afrouxei `is_state_management`" dao
+    exatamente o mesmo verde. A forma antiga tem `;` fora de aspas e a segunda
+    metade dela pode ser qualquer coisa — tem de continuar contando.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+
+    for comando in (
+        RECEITA_COMPOSTA_ANTIGA,
+        'python "/p/scripts/state_cli.py" --home /h complete --task t-1 && sed -i s/a/b/ x.py',
+    ):
+        hook.handle_payload(
+            _payload("PostToolUse", cwd, tool_name="Bash",
+                     tool_input={"command": comando},
+                     tool_response={"exit_code": 0, "output": ""}),
+            harness_root=raiz,
+        )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"] + 2, (
+        "comando composto parou de invalidar: o conserto da mensagem virou "
+        "afrouxamento da isencao"
+    )
+    assert depois["verified"] is False

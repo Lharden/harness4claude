@@ -177,6 +177,32 @@ def test_receita_de_estado_nao_tem_composicao(skill: Path, comando: str):
     )
 
 
+def test_a_receita_do_portao_tambem_e_receita():
+    """O scanner acima le `skills/**/SKILL.md` e nao ve a mensagem do gate.
+
+    `_motivo_do_gate` imprime uma linha de `state_cli.py` para o leitor copiar —
+    e uma receita pelo mesmo motivo que as dos SKILL.md sao. Ela ficou composta
+    (`PR="$(cat ...)"; python ...`) depois de `223c53f`, que consertou as outras,
+    porque o elo entre doc e condicao so cobria arquivo de doc.
+
+    O teste de comportamento esta em
+    `test_transactional_hook.py::test_receita_do_portao_nao_invalida_a_propria_evidencia`.
+    Este aqui e o elo, na altura em que a regra e enunciada.
+    """
+    comando = hook.comando_de_evidencia(Path("/balde/da/sessao"), "t-1")
+    assert any(cli in comando for cli in CLIS), (
+        "a mensagem do portao deixou de citar um CLI de estado; este teste "
+        "estaria passando sobre nada"
+    )
+    assert hook.is_state_management(comando), (
+        "a receita que o PORTAO imprime nao e isenta e vai subir code_revision "
+        f"ao ser copiada.\n  {comando!r}"
+    )
+    assert not hook.shell_write_targets(comando), (
+        "a receita do portao virou alvo de escrita para o extrator"
+    )
+
+
 def test_composicao_continua_nao_isenta():
     """A outra metade: a isencao nao pode virar carta branca.
 
