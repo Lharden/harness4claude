@@ -46,6 +46,14 @@ Para L0, NÃO ative — execute direto sem pipeline.
    # UMA CHAMADA POR LINHA, CAMINHO LITERAL. Sem `;`, sem `&&`, sem `$( )`, sem
    # continuacao com barra invertida — nova linha tambem e composicao.
    #
+   # `2>&1` PODE, desde 2026-09-21. Ele nao era composicao e o codigo achava que
+   # era: `_OPERADORES` olhava o `&` sem olhar o `>` colado antes. Foi a maior
+   # classe de dano do harness — 1 062 recusas em 649 comandos distintos, 46,3%
+   # de todas as recusas da maquina, e as quatro isencoes do hook caindo juntas
+   # porque as quatro passam pela mesma varredura. Ver `_duplicacao_de_fd`.
+   # Redirecionar para ARQUIVO (`> saida.txt`, `&> saida.txt`) continua sendo
+   # escrita e continua contando.
+   #
    # A isencao do contador de escrita (hooks/harness-transactional.py:152-173)
    # so vale para comando SEM composicao de shell. Ate 2026-09-17 a receita
    # daqui era composta e derrotava a propria isencao que existe para ela: as

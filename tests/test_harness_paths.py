@@ -413,3 +413,183 @@ class TestPinDeSessao:
             assert res.returncode == 0, res.stderr
             saidas.append(res.stdout.strip())
         assert saidas[0] == saidas[1]
+
+
+class TestPinVence:
+    """O pin e do TRECHO DE TRABALHO, nao do id da sessao para sempre.
+
+    Medido em 2026-09-21 no pin real de `86459dbf`:
+
+        pinned_at    2026-09-12T08:12:52   project_slug science-harness-f34c6792
+        deriva       2026-09-12T16:03:22   slb-mestrado-projeto
+        deriva       2026-09-15T18:59:18   mainframe
+        deriva       2026-09-17T17:35:56   harness4claude
+        atividade    2026-09-21T09:03-15:40, toda ela em slb-mestrado-projeto
+
+    Nove dias e quatro projetos depois, o estado ainda ia para o balde cunhado
+    no primeiro dia: 110 tasks em `science-harness` contra 27 em `slb`, e o
+    portao que bloqueou a sessao lia a task no banco de um repositorio que ela
+    nao tocou. O pin resolveu o problema de 2026-09-12 (o cd no meio do
+    trabalho) e criou o de 2026-09-21 (a sessao que sobrevive ao proprio pin).
+
+    A regua tem de separar os dois casos, e por isso os testes vem em par: o
+    pin so cede quando ficou parado mais que o TTL E o projeto corrente e
+    outro. Qualquer regra que ceda so por uma das metades reabre o incidente
+    de 2026-09-12.
+    """
+
+    def test_pin_parado_alem_do_ttl_em_outro_projeto_repina(self, hp, tmp_path, monkeypatch):
+        """Primeira metade: a sessao retomada dias depois nao leva o balde velho."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        velho = _repo(tmp_path, "science-harness")
+        novo = _repo(tmp_path, "slb-mestrado-projeto")
+
+        hp.ensure_state_dir(root, str(velho), session_id="s-86459dbf")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-86459dbf')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["pinned_at"] = "2026-09-12T08:12:52+00:00"
+        pin["last_seen_at"] = "2026-09-12T08:12:52+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        destino = hp.state_dir(root, str(novo), session_id="s-86459dbf")
+        assert destino.parent.parent.name == hp.project_slug(str(novo)), (
+            "pin parado ha nove dias continuou mandando o estado para o balde "
+            "do projeto anterior"
+        )
+
+    def test_pin_vigente_em_outro_projeto_nao_cede(self, hp, tmp_path, monkeypatch):
+        """Segunda metade: o incidente de 2026-09-12 continua consertado.
+
+        Sem esta, "pin com validade" e "pin removido" dao o mesmo verde.
+        """
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "science-harness")
+        b = _repo(tmp_path, "slb-mestrado-projeto")
+
+        primeiro = hp.ensure_state_dir(root, str(a), session_id="s-viva")
+        segundo = hp.ensure_state_dir(root, str(b), session_id="s-viva")
+        assert primeiro == segundo, "o pin cedeu dentro do proprio trecho de trabalho"
+
+    def test_pin_parado_no_mesmo_projeto_nao_muda_nada(self, hp, tmp_path, monkeypatch):
+        """Retomar a sessao no MESMO projeto nao e motivo para trocar de balde."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        repo = _repo(tmp_path, "alpha")
+
+        primeiro = hp.ensure_state_dir(root, str(repo), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["last_seen_at"] = "2020-01-01T00:00:00+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        assert hp.state_dir(root, str(repo), session_id="s-1") == primeiro
+
+    def test_o_pin_anterior_fica_escrito(self, hp, tmp_path, monkeypatch):
+        """Trocar de balde em silencio e como perder o historico do trabalho."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        velho = _repo(tmp_path, "science-harness")
+        novo = _repo(tmp_path, "slb-mestrado-projeto")
+
+        hp.ensure_state_dir(root, str(velho), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["last_seen_at"] = "2020-01-01T00:00:00+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        hp.state_dir(root, str(novo), session_id="s-1")
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        assert pin["project_slug"] == hp.project_slug(str(novo))
+        anteriores = [r.get("project_slug") for r in pin.get("repins", [])]
+        assert hp.project_slug(str(velho)) in anteriores, (
+            "o balde anterior sumiu do pin; quem procurar o estado antigo nao "
+            "tem por onde comecar"
+        )
+
+    def test_atividade_seguida_no_mesmo_projeto_renova_o_pin(self, hp, tmp_path, monkeypatch):
+        """last_seen_at avanca, senao um trecho longo venceria sozinho."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        repo = _repo(tmp_path, "alpha")
+        hp.ensure_state_dir(root, str(repo), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["last_seen_at"] = "2020-01-01T00:00:00+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        hp.state_dir(root, str(repo), session_id="s-1")
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        assert pin["last_seen_at"] > "2020-01-02", "o pin nao renovou com atividade"
+
+    def test_ttl_desligado_mantem_o_comportamento_anterior(self, hp, tmp_path, monkeypatch):
+        """HARNESS_PIN_TTL_H=0 volta ao pin permanente, por opt-in."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "0")
+        root = tmp_path / "root"
+        velho = _repo(tmp_path, "alpha")
+        novo = _repo(tmp_path, "beta")
+        primeiro = hp.ensure_state_dir(root, str(velho), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["last_seen_at"] = "2020-01-01T00:00:00+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        assert hp.state_dir(root, str(novo), session_id="s-1") == primeiro
+
+    def test_pin_sem_last_seen_usa_pinned_at(self, hp, tmp_path, monkeypatch):
+        """Pin gravado antes deste campo nao pode virar erro nem repin falso."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        b = _repo(tmp_path, "beta")
+        primeiro = hp.ensure_state_dir(root, str(a), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin.pop("last_seen_at", None)
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        # `pinned_at` e de agora: o pin esta vigente e nao cede.
+        assert hp.state_dir(root, str(b), session_id="s-1") == primeiro
+
+    def test_data_ilegivel_no_pin_nao_levanta(self, hp, tmp_path, monkeypatch):
+        """ensure_state_dir promete nao levantar. A validade nao quebra isso."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        b = _repo(tmp_path, "beta")
+        hp.ensure_state_dir(root, str(a), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["last_seen_at"] = "nao e data"
+        pin["pinned_at"] = "tambem nao"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        destino = hp.ensure_state_dir(root, str(b), session_id="s-1")
+        assert destino.exists()
+
+    def test_repin_preserva_as_derivas_do_pin_anterior(self, hp, tmp_path, monkeypatch):
+        """As derivas sao o unico registro de por onde a sessao passou."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        velho = _repo(tmp_path, "science-harness")
+        meio = _repo(tmp_path, "mainframe")
+        novo = _repo(tmp_path, "slb-mestrado-projeto")
+
+        hp.ensure_state_dir(root, str(velho), session_id="s-1")
+        hp.ensure_state_dir(root, str(meio), session_id="s-1")
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug('s-1')}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        assert [d["project_slug"] for d in pin["drifts"]] == [hp.project_slug(str(meio))]
+        pin["last_seen_at"] = "2020-01-01T00:00:00+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+        hp.state_dir(root, str(novo), session_id="s-1")
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        assert pin["drifts"] == [], "a deriva do pin anterior seguiu viva no novo"
+        guardadas = [
+            d["project_slug"] for r in pin["repins"] for d in r.get("drifts", [])
+        ]
+        assert hp.project_slug(str(meio)) in guardadas, (
+            "o repin apagou o registro dos projetos por onde a sessao passou"
+        )
