@@ -664,15 +664,32 @@ def test_comando_de_leitura_puro_continua_sem_subir_o_contador():
     continuar valendo — e o mapa §8 as nomeia como coisas que o portao ja faz
     BEM e que nao podem ser removidas por engano.
 
-    [superado: "`grep ... 2>&1` e read-only"] — nao e, e nunca foi. `_segmentos`
-    quebra em `>` e `&`, o fragmento `2` vira segmento e `2` nao e binario
-    conhecido. Comportamento de e4212fb, medido, inalterado por esta sessao.
+    [superado 2026-09-21: `grep ... 2>&1` PASSA a ser read-only.] A linha
+    original dizia "nao e, e nunca foi", e descrevia certo o que o codigo fazia:
+    `_segmentos` quebrava em `>` e `&`, o fragmento `2` virava segmento e `2`
+    nao e binario conhecido. Comportamento de e4212fb, medido.
+
+    O que mudou nao foi a medicao, foi o veredito sobre ela. Aquilo era um
+    limite descrito, nunca uma propriedade desejada: `2>&1` nao escreve em
+    arquivo nenhum e nao roda comando nenhum, entao chamar `grep ... 2>&1` de
+    escrita sempre foi um falso positivo — so que um falso positivo barato de
+    aceitar enquanto ninguem tinha medido o preco. Em 2026-09-21 ele foi medido:
+    1 062 recusas de candidato `&`, 46,3% de todas as recusas da maquina, e 101
+    de 246 linhas de evidence invalidadas em <=3s. Ver `_duplicacao_de_fd`.
+
+    A assercao invertida fica: um teste que so troca de lado sem dizer por que
+    e indistinguivel de um teste afrouxado para ficar verde.
     """
     assert hook.is_read_only("grep -rn alvo hooks") is True
     assert hook.is_read_only("git status --short") is True
     assert hook.nao_muda_a_arvore("git add -A") is True
     assert hook.nao_muda_a_arvore("git commit -m x") is True
-    assert hook.is_read_only("grep -rn alvo hooks 2>&1") is False
+    assert hook.is_read_only("grep -rn alvo hooks 2>&1") is True
+    # E a metade que impede a leitura preguicosa do paragrafo acima: o que
+    # escreve em ARQUIVO continua nao sendo leitura, com ou sem `2>&1`.
+    assert hook.is_read_only("grep -rn alvo hooks > achados.txt") is False
+    assert hook.is_read_only("grep -rn alvo hooks > achados.txt 2>&1") is False
+    assert hook.is_read_only("grep -rn alvo hooks 2>&1 && sed -i s/a/b/ x.py") is False
 
 
 # --- A barra invertida entre aspas duplas -------------------------------------
@@ -1284,5 +1301,182 @@ def test_receita_composta_continua_invalidando(tmp_path: Path):
     assert depois["code_revision"] == antes["code_revision"] + 2, (
         "comando composto parou de invalidar: o conserto da mensagem virou "
         "afrouxamento da isencao"
+    )
+    assert depois["verified"] is False
+
+
+# ---------------------------------------------------------------------------
+# `2>&1` NAO e composicao de shell (medido 2026-09-21)
+#
+# `_OPERADORES` inclui `&` sem olhar o contexto, e `2>&1` e duplicacao de
+# descritor: nao introduz comando nenhum. O efeito media 1 062 recusas de
+# candidato `&` em 649 comandos distintos nos baldes desta maquina — 46,3% de
+# todas as 2 292 recusas registradas, a classe mais frequente de longe.
+#
+# O dano nao era so o contador. `2>&1` derrubava as QUATRO isencoes do arquivo
+# de uma vez, porque todas passam pela mesma varredura:
+#   is_state_management  -> a receita do proprio portao invalidava a evidencia
+#   is_trusted_verification -> `python -m pytest -q 2>&1` nao gravava evidencia
+#   is_read_only         -> `git status 2>&1` subia `code_revision`
+#   nao_muda_a_arvore    -> `git commit 2>&1` idem
+#
+# Na task real `t-20260921-090314300233`: 33 toques, 33 com origem
+# `shell-placeholder`, nenhum caminho atribuido, e as 13 linhas de evidence
+# invalidadas por um toque <=2s depois. Em todos os baldes: 101 de 246 linhas
+# de evidence (41,1%) invalidadas em <=3s, e 23 de 66 tasks que gravaram
+# evidencia terminaram com `verified=0`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sufixo",
+    ["2>&1", "1>&2", ">&2", "2>&-", "2>&1 ", "0<&-"],
+)
+def test_duplicacao_de_descritor_nao_e_composicao(sufixo: str):
+    """Primeira metade: a forma que so redireciona descritor passa a passar."""
+    comando = f"python script.py {sufixo}"
+    assert hook._has_unquoted_shell_composition(comando) is False, (
+        f"{sufixo!r} foi lido como composicao de shell; ele nao introduz comando"
+    )
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "a && b",
+        "a ; b",
+        "a | b",
+        "sleep 1 &",
+        "echo $(whoami)",
+        "a &> saida.txt",
+        "a &>> saida.txt",
+        "a\nb",
+        "a `whoami`",
+        "python x.py 2>&1 && sed -i s/a/b/ y.py",
+    ],
+)
+def test_composicao_real_continua_sendo_composicao(comando: str):
+    """Segunda metade: sem ela, conserto e afrouxamento dao o mesmo verde.
+
+    `&>` entra de proposito: e redirecionamento de arquivo, nao duplicacao de
+    descritor, e a regua so libera `>&` ou `<&` seguido de digito ou `-`.
+    """
+    assert hook._has_unquoted_shell_composition(comando) is True, (
+        f"{comando!r} deixou de contar como composicao"
+    )
+
+
+def test_receita_do_portao_com_redirecionamento_nao_invalida(tmp_path: Path):
+    """O caso REAL do bloqueio de 2026-09-21, pelo caminho de producao.
+
+    Reproduzido do proprio `recusas.jsonl` do balde
+    `science-harness-f34c6792`, linha de `2026-09-21T09:04:48`:
+    `motivo=vazio-ou-operador`, `candidato='&'`. A evidencia tinha acabado de
+    ser gravada na revisao 4 e o toque seguinte, um segundo depois, subiu para
+    5 — deixando-a orfa da revisao corrente.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+    assert antes["verified"] is True, "o cenario precisa comecar verificado"
+
+    comando = hook.comando_de_evidencia(bucket, task["task_id"])
+    for marcador, valor in (("<N>", "3"), ("<P>", "3"), ("<S>", "0")):
+        comando = comando.replace(marcador, valor)
+    comando = f"{comando} 2>&1"
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": comando},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"], (
+        "a receita do portao com `2>&1` subiu code_revision.\n"
+        f"  {comando!r}\n"
+        f"  ultimos toques: {database.touches(task['task_id'], limite=3)}"
+    )
+    assert depois["verified"] is True
+
+
+def test_suite_com_redirecionamento_grava_evidencia(tmp_path: Path):
+    """`python -m pytest -q 2>&1` volta a contar como verificacao confiavel.
+
+    Era a outra metade do bloqueio: a mensagem dizia "rodar a suite em
+    primeiro plano ja grava sozinho", e com `2>&1` ela nao gravava. Na task
+    real, nenhuma das 13 linhas de evidence veio deste caminho.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    bucket, database, task = _active_task(raiz, cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "python -m pytest -q 2>&1"},
+                 tool_response={"exit_code": 0, "output": "3 passed in 0.10s"}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["verified"] is True, (
+        "a suite com `2>&1` nao gravou evidencia fresca"
+    )
+
+
+@pytest.mark.parametrize(
+    "comando",
+    ["git status 2>&1", "cat leia.txt 2>&1", "grep -n x y.txt 2>&1"],
+)
+def test_leitura_com_redirecionamento_nao_sobe_revisao(tmp_path: Path, comando: str):
+    """Inspecionar o repositorio com `2>&1` nao pode invalidar evidencia."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": comando},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"], (
+        f"{comando!r} subiu code_revision"
+    )
+
+
+def test_escrita_com_redirecionamento_continua_contando(tmp_path: Path):
+    """A metade que prova que o guarda nao foi cegado.
+
+    `2>&1` deixa de ser composicao, mas o redirecionamento que aponta para um
+    ARQUIVO continua sendo escrita, e continua invalidando.
+    """
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "python gera.py > saida.py 2>&1"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] > antes["code_revision"], (
+        "escrita real em arquivo deixou de invalidar evidencia"
     )
     assert depois["verified"] is False
