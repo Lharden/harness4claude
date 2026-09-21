@@ -215,6 +215,20 @@ A descrição estava **certa sobre o código** e errada como contrato. Aquilo er
 | neste branch, execução limpa | **1 410 passando · 6 subtests · 895,9 s · exit 0** |
 | delta | **+31, nenhuma falha** |
 
+**Os dois números acima são de CPython 3.11.15 (o `python` do PATH), no ramo `claude/portao-fd-e-pin`.** Escrever "1 410" sem essas duas coordenadas é este mesmo branch visto de outro ângulo: uma contagem sem interpretador e sem ramo descreve um alvo que o leitor não consegue reconstruir.
+
+O CI roda a matriz `3.10 · 3.11 · 3.14`, em Ubuntu e Windows. Cobertura local **medida**:
+
+| interpretador | o que rodou | resultado |
+|---|---|---|
+| 3.11.15 (PATH) | suíte inteira | **1 410 passando** |
+| 3.14.6 (`py -3.14`) | os 5 módulos afetados | **199 passando** |
+| 3.10 | — | **não existe nesta máquina; só o CI cobre** |
+
+Para 3.10 o ponto de atenção é `datetime.fromisoformat`, estrito só lá. A direção do erro é segura por construção: data que não parseia cai em `_quando → None`, `_pin_venceu` devolve `False` e o pin **não** cede — o oposto do repin indevido. `_renovar` então regrava `last_seen_at` num formato que o próprio 3.10 lê, e o pin se auto-corrige na resolução seguinte.
+
+> **De onde veio esta seção:** uma sessão irmã mediu que `python` do PATH e `./.venv/Scripts/python.exe` eram **3.11.15 e 3.12.13** no `science-harness`, e que varrer com o primeiro devolvia zero para um defeito que existia. A pergunta que isso obriga — *"e a minha própria contagem, medida em qual interpretador?"* — é o que produziu a tabela acima. Ver §6.
+
 Os 31 são 25 testes novos mais as parametrizações: 16 em `test_transactional_hook.py` (incluindo `2>&1`, `1>&2`, `>&2`, `2>&-`, `0<&-` e as dez formas de composição real), 9 em `test_harness_paths.py::TestPinVence`. Mais um teste existente com asserção invertida e justificada (§3.4).
 
 > ⚠️ **A mensagem do commit `ec74271` diz "1 379 -> 1 403". O número está errado.** `[superado 2026-09-21: 1 403 — nunca foi medido.]` Eu o escrevi contando testes à mão enquanto a execução limpa ainda rodava, em vez de esperar o total. Fica registrado porque é o erro que este repositório mais persegue, cometido no commit que o persegue: **número plausível no lugar da medição**. O valor medido é 1 410.
@@ -226,6 +240,32 @@ A primeira execução de verificação foi descartada por contaminação: ela co
 ## 5. O que este conserto NÃO faz
 
 - **Não corrige o estado já gravado.** As 110 tasks de `86459dbf` continuam no balde `science-harness`, e as 23 tasks com evidência e `verified=0` continuam assim. Migrar estado é decisão do autor, não consequência deste conserto.
-- **Não está no ar.** O plugin roda de `~/.claude/plugins/cache/harness4claude/...`, que é cópia de `main`. Enquanto este branch não for mesclado e o cache não for atualizado, o comportamento medido em 2026-09-21 continua valendo em sessões novas. Verificado: a árvore do cache é idêntica à de `main` — a deriva aparente em 27 arquivos é **só fim de linha** (terceira vez que esse mesmo instrumento engana neste repositório).
+- ~~**Não está no ar.**~~ `[superado 2026-09-21 13h40: mesclado em `a1fbe17` e deployado.]` Estava certo quando foi escrito. O plugin roda de `~/.claude/plugins/cache/harness4claude/...`, cópia de `main`; `deploy_to_cache.py --apply` copiou os 6 arquivos e `--publicado` devolve **0 divergentes**. As oito formas de comando foram reconferidas rodando a função **de dentro do cache**, não do repo. Antes do deploy, a deriva aparente de 27 arquivos entre repo e cache era **só fim de linha** — terceira vez que esse instrumento engana neste repositório.
 - **Não limpa o `recusas.jsonl`.** Os 1 062 `&` continuam sendo registrados como recusa mesmo depois do conserto, porque `shell_write_targets` segue sem conseguir tratar `&1` como caminho — e está certo: aquilo não é caminho. A recusa é o registro de atribuição de escrita, não a decisão de isenção. O log fica com essa fração de ruído, declarada.
 - **Não mexe em `_escopo.py`**, que é derivado e não se edita. O pin vive em `state_dir`, não em `project_slug`, exatamente como a nota de 2026-09-12 exige.
+
+---
+
+## 6. O terceiro caso da mesma família — ACHADO, não conserto
+
+Trazido por uma sessão irmã que mediu um `SyntaxWarning` invisível: no `science-harness`, `python` do PATH é **3.11.15** e `./.venv/Scripts/python.exe` é **3.12.13**, e só o segundo emite o aviso. Três varreduras do repositório inteiro com `ast.parse` e `compile` devolveram zero para um defeito que existia.
+
+A pergunta que isso força sobre este arquivo tem resposta medida, e ela é ruim. `VERIFICATION_PATTERNS` é ancorado em `^`, então **o portão só reconhece o interpretador que vem do PATH**. Rodado da função de produção, dentro do cache que está no ar:
+
+| comando | `is_trusted_verification` |
+|---|---|
+| `python -m pytest -q` | `True` |
+| `python.exe -m pytest -q` | `True` |
+| `./.venv/Scripts/python.exe -B -m pytest -q` | **`False`** |
+| `C:/repo/.venv/Scripts/python.exe -m pytest -q` | **`False`** |
+| `.venv/bin/python -m pytest -q` | **`False`** |
+| `uv run pytest -q` | **`False`** |
+| `PYTHONPATH=src python -m pytest -q` | **`False`** |
+
+**Todo projeto que roda a suíte pelo próprio venv é invisível para o portão.** Essas formas aparecem 25× e 18× entre os 649 comandos distintos recusados na medição de §1.3 — não é caso raro.
+
+No `science-harness` os dois defeitos se cruzam: **o portão empurra para o interpretador errado.** Ele exige o `python` do PATH, que é justamente o 3.11.15 que não emite o aviso que a sessão irmã precisava achar.
+
+**Fronteira medida, para não superestimar o alcance:** `slb-mestrado-projeto` **não tem `.venv`** — o `python` do PATH é o único interpretador que ele tem, e as contagens feitas lá valem. `harness4claude` também não tem. O cruzamento é específico de repositório com venv próprio.
+
+Fica como achado por três razões, e nenhuma é falta de clareza sobre o conserto: é **escopo novo**; mudar o que conta como verificação confiável é **decisão do autor**, não do agente; e afrouxar a âncora sem medir quantos comandos passam a ser aceitos repetiria o erro que §3.1 existe para impedir.
