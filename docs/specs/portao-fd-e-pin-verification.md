@@ -212,9 +212,14 @@ A descrição estava **certa sobre o código** e errada como contrato. Aquilo er
 | | |
 |---|---|
 | baseline em `main` (coleta anterior às edições) | **1 379 passando · 6 subtests · 912,9 s · exit 0** |
-| neste branch | preenchido pela execução final, abaixo |
+| neste branch, execução limpa | **1 410 passando · 6 subtests · 895,9 s · exit 0** |
+| delta | **+31, nenhuma falha** |
 
-24 testes novos: 15 em `test_transactional_hook.py`, 8 em `test_harness_paths.py::TestPinVence`, 1 teste existente com asserção invertida e justificada.
+Os 31 são 25 testes novos mais as parametrizações: 16 em `test_transactional_hook.py` (incluindo `2>&1`, `1>&2`, `>&2`, `2>&-`, `0<&-` e as dez formas de composição real), 9 em `test_harness_paths.py::TestPinVence`. Mais um teste existente com asserção invertida e justificada (§3.4).
+
+> ⚠️ **A mensagem do commit `ec74271` diz "1 379 -> 1 403". O número está errado.** `[superado 2026-09-21: 1 403 — nunca foi medido.]` Eu o escrevi contando testes à mão enquanto a execução limpa ainda rodava, em vez de esperar o total. Fica registrado porque é o erro que este repositório mais persegue, cometido no commit que o persegue: **número plausível no lugar da medição**. O valor medido é 1 410.
+
+A primeira execução de verificação foi descartada por contaminação: ela começou antes das últimas edições e foi interrompida em 40%. Um resultado de suíte cujo código mudou no meio não responde nada.
 
 ---
 
