@@ -189,7 +189,9 @@ def main() -> int:
                 kind=kind,
                 pipeline=load_pipelines().get(args.final, []),
                 source=args.source,
-                confidence=args.confidence if args.confidence is not None else 1.0,
+                # Ausente fica ausente. Ate 2026-09-23 virava 1,0: 113 de 141
+                # linhas do banco declaravam certeza que ninguem afirmou (HC-00d).
+                confidence=args.confidence,
             )
             state.update({
                 "revision": task["revision"],

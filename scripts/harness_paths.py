@@ -285,8 +285,11 @@ def _renovar(pin: dict, agora: datetime) -> bool:
     return parado is None or parado > RENOVACAO_MINIMA_S
 
 
-def _pinned_slug(base: Path, session: str, slug: str) -> str:
+def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True) -> str:
     """O slug que esta sessao usa, fixado na primeira resolucao.
+
+    `grava=False` resolve igual e nao toca o pin: e para quem so LE o estado
+    (o skill-router). Cunhar pin e trabalho dos hooks que escrevem no balde.
 
     Registrar a deriva e o que separa isto de um pin mudo: quem trocou de
     projeto de proposito ve por que o balde nao acompanhou, em vez de descobrir
@@ -308,6 +311,8 @@ def _pinned_slug(base: Path, session: str, slug: str) -> str:
     pin = _read_pin(path)
     if pin is None:
         pinned = _adopt(base, session) or slug
+        if not grava:
+            return pinned
         _write_pin(path, {
             "project_slug": pinned,
             "pinned_at": agora.isoformat(),
@@ -319,6 +324,8 @@ def _pinned_slug(base: Path, session: str, slug: str) -> str:
     pinned = pin["project_slug"]
 
     if slug != pinned and _pin_venceu(pin, agora):
+        if not grava:
+            return slug
         repins = [r for r in pin.get("repins", []) if isinstance(r, dict)]
         repins.append({
             "project_slug": pinned,
@@ -339,6 +346,8 @@ def _pinned_slug(base: Path, session: str, slug: str) -> str:
         _write_pin(path, pin)
         return slug
 
+    if not grava:
+        return pinned
     escrever = False
     if slug != pinned:
         drifts = [d for d in pin.get("drifts", []) if isinstance(d, dict)]
@@ -359,6 +368,7 @@ def state_dir(
     cwd: str | os.PathLike | None = None,
     scope: str | None = None,
     session_id: str | None = None,
+    grava_pin: bool = True,
 ) -> Path:
     """Estado por sessao do host e, quando ela e desconhecida, por worktree.
 
@@ -366,6 +376,9 @@ def state_dir(
     sessao grava o pin. Deixar a escrita so em `ensure_state_dir` faria dois
     chamadores de `state_dir` divergirem antes de qualquer diretorio existir —
     que e exatamente o defeito sendo consertado.
+
+    `grava_pin=False` e para leitor puro: resolve o mesmo balde que um escritor
+    resolveria agora, sem cunhar nem renovar o pin.
     """
     base = Path(root) if root is not None else default_root()
     if is_global_scope(scope):
@@ -375,7 +388,7 @@ def state_dir(
     if not session:
         return base / PROJECTS_SUBDIR / slug
     try:
-        slug = _pinned_slug(base, session, slug)
+        slug = _pinned_slug(base, session, slug, grava=grava_pin)
     except Exception:
         # O pin e correcao, nao dependencia. Qualquer surpresa cai na resolucao
         # por cwd — o comportamento de antes, que e ruim mas nao e quebrado.

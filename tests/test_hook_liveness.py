@@ -267,12 +267,38 @@ class TestRelatorioDeEntrega:
         p.write_text("".join(_json.dumps(x) + "\n" for x in linhas), encoding="utf-8")
         return p
 
-    def _home_com_transcript(self, tmp_path, session_id):
+    @staticmethod
+    def _sha8(texto):
+        import hashlib
+
+        return hashlib.sha256(texto.encode("utf-8")).hexdigest()[:8]
+
+    def _linha(self, kind, texto, session_id="s1", channel="additionalContext"):
+        """Uma linha do extrato como `emit.Emitter._record` escreve."""
+        return {"kind": kind, "channel": channel, "session_id": session_id,
+                "sha8": self._sha8(texto)}
+
+    def _home_com_transcript(self, tmp_path, session_id, contextos=(), stdouts=()):
+        """Transcript no formato medido em 2026-09-23 num jsonl real do host.
+
+        `additionalContext` vira `attachment.type == "hook_additional_context"`
+        com `content` em lista; stdout cru vira `hook_success` com `content`
+        em string.
+        """
+        import json as _json
+
         d = tmp_path / "home" / ".claude" / "projects" / "proj"
         d.mkdir(parents=True, exist_ok=True)
+        linhas = [{"type": "user", "message": {"content": "um prompt sobre hook"}}]
+        linhas += [{"type": "attachment", "attachment": {
+            "type": "hook_additional_context", "content": [c],
+            "hookName": "UserPromptSubmit", "hookEvent": "UserPromptSubmit"}}
+            for c in contextos]
+        linhas += [{"type": "attachment", "attachment": {
+            "type": "hook_success", "content": s, "hookName": "PostToolUse",
+            "hookEvent": "PostToolUse", "stdout": s}} for s in stdouts]
         (d / f"{session_id}.jsonl").write_text(
-            '{"type":"user","hookEvent":"UserPromptSubmit","content":"hook ok"}\n',
-            encoding="utf-8")
+            "".join(_json.dumps(x) + "\n" for x in linhas), encoding="utf-8")
         return tmp_path / "home"
 
     def test_sem_extrato_nao_acusa(self, hl, tmp_path):
@@ -280,13 +306,70 @@ class TestRelatorioDeEntrega:
         assert code == 0 and "sem extrato" in linhas[0]
 
     def test_emissao_entregue_conta_como_entregue(self, hl, tmp_path):
-        self._extrato(tmp_path, [
-            {"kind": "classify", "channel": "additionalContext", "session_id": "s1"},
-        ])
-        home = self._home_com_transcript(tmp_path, "s1")
+        self._extrato(tmp_path, [self._linha("classify", "HARNESS v3 CLASSIFIED: L1-bug")])
+        home = self._home_com_transcript(tmp_path, "s1",
+                                         contextos=["HARNESS v3 CLASSIFIED: L1-bug"])
         code, linhas = hl.delivery_report(tmp_path, home)
         assert code == 0
         assert "classify: 1/1 entregues" in "\n".join(linhas)
+
+    def test_transcript_com_hook_mas_sem_o_texto_nao_e_entrega(self, hl, tmp_path):
+        """HC-00f: bastava o transcript conter a palavra "hook".
+
+        Toda sessao do host tem `hook_success` de algum hook, entao a prova
+        antiga aprovava qualquer sessao que existisse — inclusive a que recebeu
+        outro texto e nunca o emitido.
+        """
+        self._extrato(tmp_path, [self._linha("classify", "HARNESS v3 CLASSIFIED: L1-bug")])
+        home = self._home_com_transcript(tmp_path, "s1",
+                                         contextos=["[skill-hint] outro hook falou"])
+        code, linhas = hl.delivery_report(tmp_path, home)
+        assert code == 1
+        assert "classify: 0/1" in "\n".join(linhas)
+
+    def test_blocos_juntados_num_contexto_sao_entregues_cada_um(self, hl, tmp_path):
+        """O Emitter junta blocos com linha em branco e registra um sha8 por bloco."""
+        a = "HARNESS v3 CONTINUING: L1-bug.\n\nContinue o pipeline."
+        b = "HARNESS v3 VIZINHANCA: 2 outra(s) sessao(oes) aqui"
+        self._extrato(tmp_path, [self._linha("classify", a), self._linha("vizinhanca", b)])
+        home = self._home_com_transcript(tmp_path, "s1", contextos=[a + "\n\n" + b])
+        code, linhas = hl.delivery_report(tmp_path, home)
+        texto = "\n".join(linhas)
+        assert code == 0
+        assert "classify: 1/1" in texto and "vizinhanca: 1/1" in texto
+
+    def test_stdout_cru_conta_pelo_hook_success(self, hl, tmp_path):
+        bloco = "<harness-reclassification>L2</harness-reclassification>"
+        self._extrato(tmp_path, [self._linha("reclassify", bloco, channel="stdout")])
+        home = self._home_com_transcript(tmp_path, "s1", stdouts=[bloco + "\n"])
+        code, linhas = hl.delivery_report(tmp_path, home)
+        assert code == 0 and "reclassify: 1/1" in "\n".join(linhas)
+
+    def test_entrega_ao_subagente_fica_no_transcript_dele(self, hl, tmp_path):
+        """`SubagentStart` entrega no `<sessao>/subagents/*.jsonl`, nao no da sessao.
+
+        Medido em 2026-09-23 com a prova por sha8 lendo so o transcript
+        principal: `resume` 0/1263 — e o texto estava la, no do subagente.
+        """
+        import json as _json
+
+        bloco = "HARNESS v3 RESUMING: scoped task t-1."
+        self._extrato(tmp_path, [self._linha("resume", bloco)])
+        home = self._home_com_transcript(tmp_path, "s1")
+        sub = home / ".claude" / "projects" / "proj" / "s1" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a1.jsonl").write_text(_json.dumps({"type": "attachment", "attachment": {
+            "type": "hook_additional_context", "content": [bloco],
+            "hookEvent": "SubagentStart"}}) + "\n", encoding="utf-8")
+        code, linhas = hl.delivery_report(tmp_path, home)
+        assert code == 0 and "resume: 1/1" in "\n".join(linhas)
+
+    def test_linha_sem_sha8_nao_prova_entrega(self, hl, tmp_path):
+        self._extrato(tmp_path, [
+            {"kind": "classify", "channel": "additionalContext", "session_id": "s1"}])
+        home = self._home_com_transcript(tmp_path, "s1", contextos=["qualquer coisa"])
+        code, linhas = hl.delivery_report(tmp_path, home)
+        assert code == 1 and "classify: 0/1" in "\n".join(linhas)
 
     def test_emissao_sem_transcript_e_alarme(self, hl, tmp_path):
         """A assinatura exata da falha de 2026: emitiu, ninguem recebeu."""
@@ -308,12 +391,11 @@ class TestRelatorioDeEntrega:
         assert "so tem emissoes silenciosas" in "\n".join(linhas)
 
     def test_linha_corrompida_nao_quebra(self, hl, tmp_path):
-        p = self._extrato(tmp_path, [
-            {"kind": "classify", "channel": "additionalContext", "session_id": "s1"},
-        ])
+        p = self._extrato(tmp_path, [self._linha("classify", "HARNESS v3 CLASSIFIED: L1-bug")])
         with open(p, "a", encoding="utf-8") as fh:
             fh.write("{lixo}\n")
-        home = self._home_com_transcript(tmp_path, "s1")
+        home = self._home_com_transcript(tmp_path, "s1",
+                                         contextos=["HARNESS v3 CLASSIFIED: L1-bug"])
         code, _ = hl.delivery_report(tmp_path, home)
         assert code == 0
 

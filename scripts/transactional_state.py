@@ -343,11 +343,12 @@ class HarnessDatabase:
         kind: str,
         pipeline: list[str],
         source: str,
-        confidence: float,
+        confidence: float | None,
     ) -> dict[str, Any]:
         if source not in {"semantic", "human_override"}:
             raise StateTransitionError(f"invalid classification source: {source}")
-        if not 0 <= confidence <= 1:
+        # None = confianca nao declarada; a coluna e o schema aceitam nulo.
+        if confidence is not None and not 0 <= confidence <= 1:
             raise StateTransitionError("classification confidence must be between 0 and 1")
         final = f"{tier}-{kind}"
         with self._write() as connection:

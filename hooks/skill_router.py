@@ -21,7 +21,7 @@ HARNESS_DIR = os.environ.get("HARNESS_DIR") or os.path.join(HOME, ".claude", "ha
 IDX_DIR = os.environ.get("HARNESS_SKILLS_INDEX",
                          os.path.join(HARNESS_DIR, "skills-index"))
 ROUTER_DIR = os.path.join(HARNESS_DIR, "router")
-STATE_JSON = os.path.join(HARNESS_DIR, "state.json")
+SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
 OLLAMA_URL = os.environ.get("HARNESS_OLLAMA_URL", "http://127.0.0.1:11434")
 EMBED_MODEL = os.environ.get("HARNESS_EMBED_MODEL", "nomic-embed-text-v2-moe")
 
@@ -263,7 +263,25 @@ def route(prompt, skills, vecs):
     return pick(a_hits, b_scored)
 
 
-def passes_guards(prompt, state_json=STATE_JSON):
+def state_json_da_sessao(payload):
+    """O `state.json` que os hooks escritores usam para esta sessao (HC-00b).
+
+    Ate 2026-09-23 a guarda lia `$HARNESS_DIR/state.json`, o arquivo global que
+    ninguem mais escreve desde o balde por sessao — e nunca via pipeline ativo.
+    Resolve com `grava_pin=False`: este hook so le, e cunhar pin e trabalho de
+    quem escreve no balde.
+    """
+    if SCRIPTS_DIR not in sys.path:
+        sys.path.insert(0, SCRIPTS_DIR)
+    import harness_paths  # noqa: PLC0415 - so no caminho que precisa dele
+
+    balde = harness_paths.state_dir(
+        HARNESS_DIR, payload.get("cwd") or None,
+        session_id=payload.get("session_id") or None, grava_pin=False)
+    return os.path.join(str(balde), "state.json")
+
+
+def passes_guards(prompt, state_json):
     p = (prompt or "").strip()
     if not (MIN_LEN <= len(p) <= MAX_LEN):
         return False
@@ -358,7 +376,12 @@ def main():
     except (ValueError, OSError):
         return 0
     prompt = payload.get("prompt", "") or ""
-    if not passes_guards(prompt):
+    try:
+        state_json = state_json_da_sessao(payload)
+    except Exception as e:  # sem balde nao ha como saber do pipeline: nao oferece
+        _dbg(f"state resolve failed: {type(e).__name__}: {e}")
+        return 0
+    if not passes_guards(prompt, state_json):
         return 0
     try:
         index, vecs = load_index()
@@ -369,13 +392,36 @@ def main():
     chosen = apply_dedupe(route(prompt, skills, vecs), payload.get("session_id", ""))
     if not chosen:
         return 0
-    sys.stdout.write(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": render_hint(chosen),
-        }
-    }))
+    emitir(payload, render_hint(chosen))
     return 0
+
+
+def emitir(payload, texto):
+    """Entrega pelo emissor central (HC-00c; D-08 em master-harness/docs/DECISAO-CANAL.md).
+
+    O emissor escolhe o canal e deixa a linha em `emissions.jsonl`, que e o que
+    permite provar a entrega depois. Se ele nao carregar, a dica sai pelo canal
+    provado e o motivo fica no log do router.
+    """
+    try:
+        import importlib.util  # noqa: PLC0415
+
+        caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emit.py")
+        spec = importlib.util.spec_from_file_location("harness_emit", caminho)
+        if spec is None or spec.loader is None:
+            raise ImportError(caminho)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.Emitter(
+            "UserPromptSubmit", hook="skill_router",
+            session_id=payload.get("session_id"), cwd=payload.get("cwd"),
+            root=HARNESS_DIR,
+        ).add("skill_hint", texto).flush()
+    except Exception as e:
+        _dbg(f"emit.py indisponivel: {type(e).__name__}: {e}")
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit", "additionalContext": texto}},
+            ensure_ascii=False))
 
 
 if __name__ == "__main__":

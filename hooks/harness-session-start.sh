@@ -335,8 +335,8 @@ export SESSIONS_DIGEST
 # ---------------------------------------------------------------------------
 # Aqui e nao no classify: drenar e SQLite, e `docs/DECISAO-CANAL.md` proibe
 # SQLite no turno comum. O SessionStart roda UMA vez por sessao contra um
-# timeout de 15s, e o hook inteiro ja gasta ~5s — ha folga, e o custo nao se
-# repete a cada prompt.
+# timeout de 60 s (hooks.json, em segundos; medido em 2026-09-23: p50 7,3 s,
+# p99 18,5 s) — ha folga, e o custo nao se repete a cada prompt.
 #
 # **Silencioso quando corre bem, uma linha quando falha.** E o unico jeito de a
 # automacao nao trocar um problema visivel por um invisivel: enquanto o dreno
