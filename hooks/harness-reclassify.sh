@@ -90,31 +90,18 @@ fi
 
 # All logic in single Python call to avoid path issues
 "$PY" -c "
-import json, os, sys, time
+import json, os, sys
 
 
 def gravar_estado(caminho, dados):
-    # tmp com nome unico e troca atomica. Ate 2026-09-23 este hook gravava a
+    # Helper unico (scripts/projecao.py). Ate 2026-09-23 este hook gravava a
     # projecao com open(caminho, 'w'), que TRUNCA antes de escrever: um leitor
-    # que chegasse no meio lia arquivo vazio. Era um dos escritores por tras do
-    # incidente 2 (ramo ciclo-de-vida-da-task). No Windows o replace falha
-    # enquanto alguem le o destino; a janela e de milissegundos.
-    tmp = caminho + '.' + str(os.getpid()) + '.' + str(time.monotonic_ns()) + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(dados, f, indent=2)
-    for espera in (0.0, 0.002, 0.005, 0.01, 0.02, 0.05):
-        if espera:
-            time.sleep(espera)
-        try:
-            os.replace(tmp, caminho)
-            return
-        except OSError:
-            continue
-    try:
-        os.unlink(tmp)
-    except OSError:
-        pass
-    raise OSError('projecao nao gravada: ' + caminho)
+    # que chegasse no meio lia arquivo vazio (ramo ciclo-de-vida-da-task). O
+    # helper nunca levanta: falha de PROJECAO nao pode ser confundida com falha
+    # do BANCO no try que envolve o touch transacional logo abaixo.
+    sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR'])
+    from projecao import gravar_json_atomico
+    return gravar_json_atomico(caminho, dados)
 
 
 harness_dir = r'$HARNESS_DIR_WIN'

@@ -433,8 +433,14 @@ O script (idempotente por `task_id`):
 3. Acrescenta/atualiza a task em `signals.json` → array `tasks`
 4. Recalcula `aggregates`, incluindo o bloco `classify` (`avg_classify_accuracy`,
    `regex_vs_semantic_agreement`, `human_override_count`) — fechando o loop de feedback
+5. Com `--abandoned`, encerra a task como `abandoned` no `harness.db`
 
-Depois, marque `status: "done"` no `state.json` com `Edit`.
+**Não edite o `state.json` à mão para encerrar.** Desde 2026-09-23 (ramo
+`ciclo-de-vida-da-task`) quem responde "há task viva?" é o `harness.db`, não a
+projeção: `state_cli.py complete` encerra a task concluída, `record_signal.py
+--abandoned` encerra a abandonada, e o `state.json` só acompanha. Uma projeção
+editada para `done` com a task viva no banco é reescrita no prompt seguinte, e a
+task volta como CONTINUING.
 
 ## Artefatos
 

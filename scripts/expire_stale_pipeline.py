@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from projecao import gravar_json_atomico  # type: ignore[import-not-found]
 from record_signal import build_task, record  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase  # type: ignore[import-not-found]
 
@@ -92,16 +93,13 @@ def is_expired(state: dict, ttl_hours: float, *, now: datetime | None = None) ->
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    """tmp -> flush+fsync -> os.replace, igual ao harness-classify.sh."""
-    tmp = path.parent / f"{path.name}.tmp-{os.getpid()}"
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    """Helper unico (`projecao.gravar_json_atomico`); a falha levanta, como antes."""
+    erro = gravar_json_atomico(path, data)
+    if erro is not None:
+        raise erro
 
 
-def _sync_projection(path: Path, current: dict) -> None:
+def _sync_projection(path: Path, current: dict, classification_meta: dict | None = None) -> None:
     projection = {
         "task_id": current["task_id"],
         "schema_version": 3,
@@ -117,6 +115,10 @@ def _sync_projection(path: Path, current: dict) -> None:
         "pending_gate": current["pending_gate"],
         "scope_id": current["scope_id"],
     }
+    # Sem o meta a projecao reparada perde o `suggested` do regex, e
+    # `record_signal`/`confirm_classification` deixam de medir a acuracia.
+    if classification_meta:
+        projection["classification_meta"] = classification_meta
     _atomic_write_json(path, projection)
 
 
@@ -142,38 +144,63 @@ def expire(
     try:
         with state_path.open(encoding="utf-8") as fh:
             state = json.load(fh)
+        if not isinstance(state, dict):
+            state = {}
     except (OSError, ValueError):
-        return None
-
-    if not is_expired(state, ttl_hours, now=now):
-        return None
-
-    task_id = state.get("task_id") or "unknown"
+        state = {}
 
     database_path = harness_dir / "harness.db"
     if database_path.exists():
+        # O BANCO decide (ramo ciclo-de-vida-da-task, 2026-09-23). Ate aqui a
+        # projecao era o portao: ilegivel (a janela do replace no Windows) ou
+        # atrasada, o disjuntor pulava a expiracao — enquanto o classify, que
+        # agora pergunta ao banco, continuava a task alem do TTL.
         try:
             database = HarnessDatabase(harness_dir)
-            scope_id = str(state.get("scope_id") or "legacy")
-            current_task = database.current_task(scope_id)
+            # O classify grava `scope_id` = o proprio balde; "legacy" e o dos
+            # bancos anteriores ao balde por sessao.
+            escopos = [str(state["scope_id"])] if state.get("scope_id") else [str(harness_dir), "legacy"]
+            scope_id, current_task = escopos[0], None
+            for candidato in escopos:
+                current_task = database.current_task(candidato)
+                if current_task is not None:
+                    scope_id = candidato
+                    break
             if current_task is not None:
-                if current_task["task_id"] != task_id:
-                    _sync_projection(state_path, current_task)
-                    return None
                 current = now or datetime.now(timezone.utc)
                 expired_task = database.expire_stale_task(
                     scope_id,
                     ttl_seconds=ttl_hours * 3600,
                     now=current.timestamp(),
-                    expected_task_id=str(task_id),
+                    expected_task_id=str(current_task["task_id"]),
                 )
                 if expired_task is None:
-                    _sync_projection(state_path, current_task)
+                    if state.get("task_id") != current_task["task_id"]:
+                        _sync_projection(state_path, current_task,
+                                         database.classification(current_task["task_id"]))
                     return None
+                if state.get("task_id") != expired_task["task_id"]:
+                    # Telemetria de uma task que a projecao nao nomeava.
+                    state = {
+                        "task_id": expired_task["task_id"],
+                        "classification": expired_task["legacy_level"],
+                        "status": expired_task["status"],
+                        "pipeline": expired_task["pipeline"],
+                        "started_at": expired_task["started_at"],
+                    }
+                task_id = expired_task["task_id"]
+            elif not is_expired(state, ttl_hours, now=now):
+                return None
+            else:
+                task_id = state.get("task_id") or "unknown"
         except Exception:
             # A transactional store that exists is authoritative. Preserve the
             # projection on uncertainty instead of erasing a potentially live task.
             return None
+    else:
+        if not is_expired(state, ttl_hours, now=now):
+            return None
+        task_id = state.get("task_id") or "unknown"
 
     # Telemetria antes do reset: sem isso a task some sem deixar rastro e a
     # taxa de abandono (sinal de que o pipeline e pesado demais) fica invisivel.

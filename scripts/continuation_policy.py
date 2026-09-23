@@ -54,14 +54,32 @@ class Pergunta:
 
 
 def continua(task: dict[str, Any]) -> bool:
-    """Uma task do banco que o proximo prompt deve continuar, e nao substituir."""
+    """Uma task do banco que o proximo prompt deve continuar, e nao substituir.
+
+    A excecao e a entrega sem `complete`: fase final, evidencia fresca, nenhum
+    gate humano pendente. Antes do conserto de R1 a evidencia punha
+    `status='verified'`, que o classify nao continuava, e o prompt seguinte
+    fechava essa task como `superseded` — era, na pratica, o fechamento das
+    tasks que o modelo esquecia de completar. Sem esta regra, o conserto do
+    HC-00h transformaria trabalho entregue em CONTINUING por 24 h (achado do
+    /code-review). No MEIO do pipeline a evidencia continua sem efeito: la ela
+    e so a prova que o portao de Stop pediu.
+    """
     from transactional_state import ACTIVE_STATUSES
 
-    return task.get("status") in ACTIVE_STATUSES and bool(task.get("pipeline"))
+    pipeline = task.get("pipeline") or []
+    if task.get("status") not in ACTIVE_STATUSES or not pipeline:
+        return False
+    entregue = (
+        task.get("phase") == pipeline[-1]
+        and bool(task.get("verified"))
+        and not task.get("pending_gate")
+    )
+    return not entregue
 
 
 def task_viva(balde: str | Path) -> Pergunta:
-    """Pergunta ao `harness.db` do balde. Nunca levanta; nunca cria o banco.
+    """Pergunta ao `harness.db` do balde. Nunca levanta, nunca cria nem escreve no banco.
 
     `scope_id` e o proprio balde, como `harness-classify.sh` grava em
     `start_task(scope_id=os.path.dirname(state_file))`.
@@ -70,9 +88,11 @@ def task_viva(balde: str | Path) -> Pergunta:
     if not os.path.isfile(os.path.join(balde, "harness.db")):
         return Pergunta(NENHUMA)
     try:
-        from transactional_state import HarnessDatabase
+        from transactional_state import ler_task_corrente
 
-        task = HarnessDatabase(balde).current_task(balde)
+        # Somente leitura: `HarnessDatabase(...)` migraria o schema, e a
+        # pergunta roda em todo prompt (achado do /code-review).
+        task = ler_task_corrente(balde, balde)
         viva = task is not None and continua(task)
     except Exception as exc:  # noqa: BLE001 - a causa e o produto desta resposta
         return Pergunta(DESCONHECIDA, erro=f"{type(exc).__name__}: {exc}")

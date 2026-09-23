@@ -150,6 +150,32 @@ class TestLinhaVelhaVerifiedMigra:
                         (task["task_id"],))
         assert HarnessDatabase(tmp_path).task(task["task_id"])["status"] == "superseded"
 
+    def test_migracao_deixa_evento_por_task_convertida(self, tmp_path):
+        """O criterio de fechamento da pendencia (F9): linha 'verified' nova so
+        aparece se ainda ha hook antigo rodando. Zero eventos depois do deploy e
+        do reload = a tolerancia pode sair, com prova e nao com palpite."""
+        db = HarnessDatabase(tmp_path)
+        task = db.start_task(scope_id="s", legacy_level="L2-bug", tier="L2", kind="bug",
+                             pipeline=PIPELINE_L2, prompt="x")
+        with sqlite3.connect(db.path) as raw:
+            raw.execute("UPDATE tasks SET status = 'verified', verified = 1 WHERE task_id = ?",
+                        (task["task_id"],))
+        HarnessDatabase(tmp_path)
+        with sqlite3.connect(f"file:{db.path}?mode=ro", uri=True) as raw:
+            eventos = raw.execute(
+                "SELECT task_id FROM events WHERE event_type = 'migracao-verified'").fetchall()
+        assert eventos == [(task["task_id"],)]
+
+    def test_sem_linha_velha_nao_ha_evento(self, tmp_path):
+        """Falsificacao: evento em toda abertura tornaria o criterio inutil."""
+        db = HarnessDatabase(tmp_path)
+        db.start_task(scope_id="s", legacy_level="L2-bug", tier="L2", kind="bug",
+                      pipeline=PIPELINE_L2, prompt="x")
+        HarnessDatabase(tmp_path)
+        with sqlite3.connect(f"file:{db.path}?mode=ro", uri=True) as raw:
+            n = raw.execute("SELECT COUNT(*) FROM events WHERE event_type = 'migracao-verified'").fetchone()[0]
+        assert n == 0
+
     def test_tolerancia_continua_no_conjunto_vivo(self):
         """Tirar `verified` daqui antes do reload abriria duas tasks vivas por escopo."""
         assert "verified" in ACTIVE_STATUSES
@@ -467,6 +493,191 @@ class TestEscritorDaProjecao:
         """`open(state_file, 'w')` trunca antes de escrever: um leitor no meio le vazio."""
         hook = (ROOT / "hooks" / "harness-reclassify.sh").read_text(encoding="utf-8")
         assert "open(state_file, 'w'" not in hook
+
+
+# ============================================================================
+# Achados do /code-review (2026-09-23) sobre o proprio conserto
+# ============================================================================
+
+
+def _l1_na_fase_final(db: HarnessDatabase, balde: str) -> dict:
+    task = db.start_task(scope_id=balde, legacy_level="L1-bug", tier="L1", kind="bug",
+                         pipeline=["tdd", "verify"], prompt="x")
+    return db.transition(task["task_id"], "verify", expected_revision=task["revision"])
+
+
+class TestRevisaoFechamento:
+    def test_f2_task_verificada_na_fase_final_nao_continua(self, tmp_path):
+        """Antes do conserto o prompt seguinte a fechava como `superseded`; o
+        conserto de R1 nao pode transformar "trabalho entregue sem `complete`"
+        em CONTINUING por 24 h."""
+        db = HarnessDatabase(tmp_path)
+        task = _l1_na_fase_final(db, str(tmp_path))
+        _evidencia_valida(db, task["task_id"])
+        assert continuation_policy.task_viva(str(tmp_path)).resposta == continuation_policy.NENHUMA
+
+    def test_f2_task_na_fase_final_sem_evidencia_continua(self, tmp_path):
+        """Falsificacao: so a evidencia fecha; fase final sem prova segue viva."""
+        db = HarnessDatabase(tmp_path)
+        _l1_na_fase_final(db, str(tmp_path))
+        assert continuation_policy.task_viva(str(tmp_path)).resposta == continuation_policy.VIVA
+
+    def test_f1_record_signal_abandoned_fecha_a_task_no_banco(self, tmp_path):
+        """O protocolo documentado de abandono tem de encerrar a task na autoridade."""
+        db = HarnessDatabase(tmp_path)
+        task = db.start_task(scope_id=str(tmp_path), legacy_level="L2-bug", tier="L2",
+                             kind="bug", pipeline=PIPELINE_L2, prompt="x")
+        (tmp_path / "state.json").write_text(json.dumps(
+            {"task_id": task["task_id"], "classification": "L2-bug", "status": "active",
+             "pipeline": PIPELINE_L2}), encoding="utf-8")
+        res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "record_signal.py"), "--abandoned",
+             "--reason", "user_switch", "--expect-task", task["task_id"],
+             "--harness-dir", str(tmp_path), "--signals-dir", str(tmp_path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert res.returncode == 0, res.stderr
+        assert HarnessDatabase(tmp_path).task(task["task_id"])["status"] == "abandoned"
+        assert continuation_policy.task_viva(str(tmp_path)).resposta == continuation_policy.NENHUMA
+
+
+class TestRevisaoPerguntaSoLe:
+    def test_f5_pergunta_responde_com_escrita_em_andamento(self, tmp_path):
+        """Leitura nao pode esperar trava de escrita (WAL deixa ler)."""
+        import time as _t
+
+        db = HarnessDatabase(tmp_path)
+        task = db.start_task(scope_id=str(tmp_path), legacy_level="L2-bug", tier="L2",
+                             kind="bug", pipeline=PIPELINE_L2, prompt="x")
+        escritor = sqlite3.connect(db.path, timeout=0.1)
+        # Linha de hook antigo: a migracao de `_ensure_schema` quereria escreve-la.
+        escritor.execute("UPDATE tasks SET status = 'verified' WHERE task_id = ?", (task["task_id"],))
+        escritor.commit()
+        escritor.execute("BEGIN IMMEDIATE")
+        try:
+            t0 = _t.perf_counter()
+            r = continuation_policy.task_viva(str(tmp_path))
+            gasto = _t.perf_counter() - t0
+        finally:
+            escritor.rollback()
+            escritor.close()
+        assert r.resposta == continuation_policy.VIVA, r.erro
+        assert gasto < 2.0, f"a pergunta esperou a trava de escrita: {gasto:.1f}s"
+
+    def test_f5_pergunta_nao_escreve(self, tmp_path):
+        db = HarnessDatabase(tmp_path)
+        task = db.start_task(scope_id=str(tmp_path), legacy_level="L2-bug", tier="L2",
+                             kind="bug", pipeline=PIPELINE_L2, prompt="x")
+        with sqlite3.connect(db.path) as raw:
+            raw.execute("UPDATE tasks SET status = 'verified' WHERE task_id = ?", (task["task_id"],))
+        continuation_policy.task_viva(str(tmp_path))
+        with sqlite3.connect(f"file:{db.path}?mode=ro", uri=True) as raw:
+            status = raw.execute("SELECT status FROM tasks").fetchone()[0]
+        assert status == "verified", "a pergunta migrou o banco — leitura nao escreve"
+
+
+def _carregar_projecao():
+    spec = importlib.util.spec_from_file_location("projecao_ciclo", ROOT / "scripts" / "projecao.py")
+    mod = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestRevisaoEscritaUnica:
+    def test_f6_retentativa_supera_falha_transitoria(self, tmp_path, monkeypatch):
+        projecao = _carregar_projecao()
+        real = os.replace
+        falhas = {"n": 2}
+
+        def instavel(origem, destino):
+            if falhas["n"]:
+                falhas["n"] -= 1
+                raise PermissionError(13, "leitor segurando o destino")
+            return real(origem, destino)
+
+        monkeypatch.setattr(projecao.os, "replace", instavel)
+        monkeypatch.setattr(projecao.time, "sleep", lambda s: None)
+        erro = projecao.gravar_json_atomico(tmp_path / "state.json", {"task_id": "t"})
+        assert erro is None
+        assert json.loads((tmp_path / "state.json").read_text(encoding="utf-8")) == {"task_id": "t"}
+
+    def test_f6_falha_esgotada_devolve_erro_sem_levantar_e_sem_lixo(self, tmp_path, monkeypatch):
+        projecao = _carregar_projecao()
+
+        def sempre(origem, destino):
+            raise PermissionError(13, "simulado")
+
+        monkeypatch.setattr(projecao.os, "replace", sempre)
+        monkeypatch.setattr(projecao.time, "sleep", lambda s: None)
+        erro = projecao.gravar_json_atomico(tmp_path / "state.json", {"task_id": "t"})
+        assert isinstance(erro, OSError)
+        assert list(tmp_path.iterdir()) == [], "tmp orfao ficou no balde"
+
+    @pytest.mark.parametrize("arquivo", [
+        "hooks/harness-classify.sh",
+        "hooks/harness-transactional.py",
+        "hooks/harness-reclassify.sh",
+        "scripts/confirm_classification.py",
+        "scripts/expire_stale_pipeline.py",
+    ])
+    def test_f6_todo_escritor_da_projecao_usa_o_helper(self, arquivo):
+        """Tres copias do laco eram o defeito; uma so e o conserto."""
+        texto = (ROOT / arquivo).read_text(encoding="utf-8")
+        assert "gravar_json_atomico" in texto, arquivo
+        assert "os.replace(" not in texto and ".replace(bucket" not in texto, arquivo
+
+
+class TestRevisaoProjecao:
+    def test_f7_escritor_nao_sobrescreve_projecao_de_outra_task(self, tmp_path):
+        tx = _carregar_transacional()
+        (tmp_path / "state.json").write_text(
+            json.dumps({"task_id": "t-nova", "status": "active"}), encoding="utf-8")
+        velha = {"task_id": "t-velha", "status": "active"}
+        tx._sync_projection(tmp_path, dict(velha), TASK_PROJETADA | {"task_id": "t-velha"})
+        atual = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+        assert atual["task_id"] == "t-nova"
+
+    def test_f7_escritor_atualiza_a_propria_task(self, tmp_path):
+        """Falsificacao: a guarda nao pode calar o escritor legitimo."""
+        tx = _carregar_transacional()
+        (tmp_path / "state.json").write_text(
+            json.dumps({"task_id": "t-x", "status": "active", "revision": 0}), encoding="utf-8")
+        tx._sync_projection(tmp_path, {"task_id": "t-x"}, TASK_PROJETADA | {"revision": 9})
+        assert json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))["revision"] == 9
+
+    def test_f8_ttl_decide_pelo_banco_com_projecao_ilegivel(self, tmp_path):
+        spec = importlib.util.spec_from_file_location(
+            "expire_ciclo", ROOT / "scripts" / "expire_stale_pipeline.py")
+        exp = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(exp)
+
+        db = HarnessDatabase(tmp_path)
+        task = db.start_task(scope_id=str(tmp_path), legacy_level="L2-bug", tier="L2",
+                             kind="bug", pipeline=PIPELINE_L2, prompt="x")
+        with sqlite3.connect(db.path) as raw:
+            raw.execute("UPDATE tasks SET started_at = '2026-01-01T00:00:00+00:00'")
+        (tmp_path / "state.json").write_text("{{{ilegivel", encoding="utf-8")
+
+        assert exp.expire(tmp_path, 24, signals_dir=tmp_path / "sinais") == task["task_id"]
+        assert HarnessDatabase(tmp_path).task(task["task_id"])["status"] == "abandoned"
+
+
+class TestRevisaoReparoGuardaMeta:
+    def test_f3_reparo_traz_classification_meta_do_banco(self, tmp_path):
+        cwd = _repo(tmp_path, "rf3")
+        tid = _abrir_l2(tmp_path, cwd, "s-f3")
+        balde = _balde(cwd, "s-f3")
+        (balde / "state.json").write_text('{"task_id": null, "status": "idle", "pipeline": []}',
+                                          encoding="utf-8")
+
+        _prompt(tmp_path, cwd, "s-f3", "segue")
+
+        estado = json.loads((balde / "state.json").read_text(encoding="utf-8"))
+        assert estado["task_id"] == tid
+        meta = estado.get("classification_meta") or {}
+        assert meta.get("suggested") == HarnessDatabase(balde).classification(tid)["suggested"]
 
 
 # ============================================================================

@@ -219,6 +219,18 @@ def main() -> int:
         timestamp=timestamp, harness_dir=args.harness_dir,
     )
     signals = record(args.signals_dir or args.harness_dir, task)
+    if args.abandoned and (state or {}).get("task_id") and (args.harness_dir / "harness.db").is_file():
+        # O abandono tem de chegar a autoridade: a continuacao pergunta ao banco,
+        # e uma task abandonada so na telemetria voltava como CONTINUING no
+        # prompt seguinte (ramo ciclo-de-vida-da-task, achado do /code-review).
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from transactional_state import HarnessDatabase
+
+            HarnessDatabase(args.harness_dir).abandon_task(str(state["task_id"]), reason=args.reason)
+        except Exception as exc:  # noqa: BLE001 - telemetria ja gravada; o erro vai escrito
+            logger.error("task %s NAO foi encerrada no harness.db: %s", state["task_id"], exc)
+            return 1
     accuracy = signals["aggregates"].get("classify", {}).get("avg_classify_accuracy")
     logger.info(
         "registrado %s (level=%s, files=%s); avg_classify_accuracy=%s",

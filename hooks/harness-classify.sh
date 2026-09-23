@@ -149,18 +149,25 @@ from datetime import datetime, timezone
 
 
 def _atomic_write_json(path, data):
-    """Escreve JSON de forma atomica: tmp no mesmo dir -> flush+fsync -> os.replace.
+    """Escreve JSON de forma atomica pelo helper unico (`scripts/projecao.py`).
 
-    Evita state.json/counter corrompido se o processo morrer no meio do dump (a
-    janela existia porque o release do lock e via trap EXIT). os.replace e rename
-    atomico no mesmo filesystem (NTFS via Git Bash, ext4, APFS).
+    Atomico evita state.json/counter corrompido se o processo morrer no meio do
+    dump. O laco proprio que existia aqui nao tinha retentativa: no Windows o
+    replace falha enquanto outro hook le o destino, e o hook morria com exit 1
+    antes de gravar a task no banco (achado do /code-review, ramo
+    ciclo-de-vida-da-task). A projecao e so projecao; quem responde se ha task
+    viva e o banco. Falha de escrita vai para o log do balde e o hook segue.
     """
-    tmp = f"{path}.tmp-{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    sys.path.insert(0, os.environ["HARNESS_SCRIPTS_DIR"])
+    from projecao import gravar_json_atomico
+
+    erro = gravar_json_atomico(path, data)
+    if erro is not None:
+        try:
+            with open(os.path.join(os.path.dirname(path), "projection-errors.log"), "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now(timezone.utc).isoformat()} classify {path}: {type(erro).__name__}: {erro}\n")
+        except OSError:
+            pass
 
 
 def _falar(kind, texto):
@@ -489,12 +496,33 @@ def _reparar_projecao(task):
             atual = json.load(f)
         if not isinstance(atual, dict):
             atual = {}
-    except Exception:
+    except FileNotFoundError:
         atual = {}
+    except OSError:
+        # Ilegivel AGORA (a janela do replace no Windows) nao e ausente.
+        # Reconstruir daqui descartaria `classification_meta`, `prompt_excerpt`
+        # e o resto do que so a projecao guarda — o mesmo "nao consegui ler =
+        # nao existe" que este ramo veio consertar (achado do /code-review).
+        return
+    except ValueError:
+        atual = {}  # JSON corrompido: o conteudo ja se perdeu, reconstruir e o certo
     if atual.get("task_id") == task["task_id"] and atual.get("status") == task["status"]:
         return
     if atual.get("task_id") != task["task_id"]:
         atual = {}
+        # Projecao de outra task: o `classification_meta` desta mora no banco.
+        # Sem ele, `record_signal` e `confirm_classification` perdem o
+        # `suggested` do regex e o laco de acuracia deixa de medir.
+        try:
+            from transactional_state import HarnessDatabase
+            atual["classification_meta"] = HarnessDatabase(_balde).classification(task["task_id"])
+        except Exception as exc:
+            try:
+                with open(os.path.join(_balde, "debug-classify.log"), "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now(timezone.utc).isoformat()} reparo sem classification_meta: "
+                            f"{type(exc).__name__}: {exc}\n")
+            except OSError:
+                pass
     atual.update({
         "task_id": task["task_id"],
         "schema_version": 3,
@@ -511,10 +539,7 @@ def _reparar_projecao(task):
         "pending_gate": task["pending_gate"],
         "scope_id": task["scope_id"],
     })
-    try:
-        _atomic_write_json(state_file, atual)
-    except Exception:
-        pass
+    _atomic_write_json(state_file, atual)
 
 
 # Task viva e NAO e troca explicita → continuacao. Com task viva, so troca
