@@ -440,27 +440,95 @@ except Exception:
     pass  # TTL e best-effort: falhar aqui nunca pode bloquear o prompt
 
 # ============================================================================
-# Check active pipeline in state.json
+# Ha task viva? Pergunta ao BANCO, nao a projecao (ramo ciclo-de-vida-da-task)
 # ============================================================================
-has_active = False
-try:
-    from continuation_policy import should_continue
-    with open(state_file, encoding='utf-8') as f:
-        state = json.load(f)
-    if should_continue(state):
-        has_active = True
-except Exception:
-    pass
+# Ate 2026-09-23 esta decisao lia `state.json` com `except Exception: pass`, e
+# as duas escolhas custaram uma task L2 cada, no mesmo dia:
+#
+# - a projecao e regravada pelo PostToolUse sem lock; no Windows, abrir o
+#   arquivo durante o `replace` da `PermissionError`. Medido: 5,5% das leituras
+#   com 1 escritor, 12,3% com 4. O except transformava "nao consegui ler" em
+#   "nao ha pipeline", e `start_task` fechava a task viva (incidente 2,
+#   t-1790183260657-e3470471, 17:12:32Z);
+# - o conjunto "continuavel" daqui nao tinha 'verified' e o do banco tinha, e a
+#   task com suite verde no meio do pipeline era morta pelo prompt seguinte
+#   (HC-00h, t-20260923-133144961992).
+#
+# `task_viva` responde em tres valores. DESCONHECIDA nunca abre task: abrir
+# fecharia a que talvez exista, e essa e a acao que nao se desfaz. O aviso diz a
+# causa, e o proximo prompt pergunta de novo (decisao do usuario, relatorio 8.4).
+from continuation_policy import DESCONHECIDA, VIVA, task_viva
 
-# If active pipeline and NOT a task switch → emit continuation and exit
-if has_active and not is_task_switch:
-    task_id = state.get("task_id", "unknown")
-    classification = state.get("classification", "unknown")
-    current_step = state.get("current_step")
-    pipeline = state.get("pipeline", [])
+_balde = os.path.dirname(state_file)
+pergunta = task_viva(_balde)
+
+if pergunta.resposta == DESCONHECIDA:
+    try:
+        with open(os.path.join(_balde, "debug-classify.log"), "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now(timezone.utc).isoformat()} harness.db ilegivel: {pergunta.erro}\n")
+    except Exception:
+        pass
+    _falar("warning", (
+        f"HARNESS v3 WARNING: estado ilegivel — nao foi possivel perguntar ao "
+        f"harness.db se ha task viva ({pergunta.erro}). Nenhuma task foi aberta e "
+        f"nenhuma foi encerrada. Responda direto, sem 'harness-workflow', e avise "
+        f"o usuario que o harness esta degradado neste turno."
+    ))
+    raise SystemExit(0)
+
+
+def _reparar_projecao(task):
+    """A projecao atrasada e reescrita a partir do banco.
+
+    O PostToolUse acha a task pelo `task_id` da projecao
+    (`harness-transactional.py:_database_for_payload`). Continuar a task sem
+    reparar a projecao deixaria a evidencia seguinte sem destino.
+    """
+    try:
+        with open(state_file, encoding="utf-8") as f:
+            atual = json.load(f)
+        if not isinstance(atual, dict):
+            atual = {}
+    except Exception:
+        atual = {}
+    if atual.get("task_id") == task["task_id"] and atual.get("status") == task["status"]:
+        return
+    if atual.get("task_id") != task["task_id"]:
+        atual = {}
+    atual.update({
+        "task_id": task["task_id"],
+        "schema_version": 3,
+        "classification": task["legacy_level"],
+        "status": task["status"],
+        "pipeline": task["pipeline"],
+        "current_step": task["phase"],
+        "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
+        "started_at": task["started_at"],
+        "revision": task["revision"],
+        "code_revision": task["code_revision"],
+        "owner_epoch": task["owner_epoch"],
+        "verified": task["verified"],
+        "pending_gate": task["pending_gate"],
+        "scope_id": task["scope_id"],
+    })
+    try:
+        _atomic_write_json(state_file, atual)
+    except Exception:
+        pass
+
+
+# Task viva e NAO e troca explicita → continuacao. Com task viva, so troca
+# explicita encerra — qualquer nivel de classificacao continua (D2).
+if pergunta.resposta == VIVA and not is_task_switch:
+    viva = pergunta.task
+    _reparar_projecao(viva)
+    task_id = viva["task_id"]
+    classification = viva["legacy_level"]
+    current_step = viva["phase"]
+    pipeline = viva["pipeline"]
     step_display = current_step if current_step else (pipeline[0] if pipeline else "none")
     pipe_display = ' -> '.join(pipeline)
-    gate_display = state.get('pending_gate')
+    gate_display = viva["pending_gate"]
     gate_instruction = (
         f" Resolve pending human gate {gate_display} through skill='harness-workflow'."
         if gate_display else

@@ -288,14 +288,15 @@ def passes_guards(prompt, state_json):
     low = p.lower()
     if any(sig in low for sig in AUTOMATION_SIGS):
         return False
-    try:
-        with open(state_json, encoding="utf-8") as f:
-            st = json.load(f)
-        if st.get("status") in ("active", "awaiting_gate") and st.get("pipeline"):
-            return False  # pipeline em andamento: harness-workflow ja esta roteando
-    except (OSError, ValueError):
-        pass
-    return True
+    # Pipeline em andamento: harness-workflow ja esta roteando. Mesma pergunta do
+    # classify, ao banco (ramo ciclo-de-vida-da-task); ate 2026-09-23 esta guarda
+    # tinha o seu proprio conjunto de "viva" e lia a projecao. DESCONHECIDA cala
+    # tambem: dica de skill e opcional, e na duvida o custo de calar e zero.
+    if SCRIPTS_DIR not in sys.path:
+        sys.path.insert(0, SCRIPTS_DIR)
+    from continuation_policy import NENHUMA, task_viva  # noqa: PLC0415
+
+    return task_viva(os.path.dirname(state_json)).resposta == NENHUMA
 
 
 def load_index(idx_dir=IDX_DIR):

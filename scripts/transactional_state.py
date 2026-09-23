@@ -251,6 +251,21 @@ class HarnessDatabase:
                 "ON gates(task_id, gate_type, subject_id) "
                 "WHERE status = 'pending' AND subject_id IS NOT NULL"
             )
+            # D1: 'verified' deixou de ser status. Linha gravada antes (ou por
+            # sessao ainda aberta com hook antigo) volta para 'active'; a coluna
+            # `verified` e intocada, entao a evidencia que existia continua
+            # existindo. Idempotente — roda a cada abertura do banco.
+            #
+            # PENDENCIA DECLARADA (relatorio ciclo-de-vida-da-task, 8.4): 'verified'
+            # continua em ACTIVE_STATUSES e no indice acima como TOLERANCIA,
+            # porque hook antigo ainda grava o status ate a sessao recarregar.
+            # Acao: remover dos dois lugares depois do deploy e do reload de
+            # todas as sessoes. Sem isso, tirar agora abriria duas tasks vivas
+            # por escopo.
+            # O SELECT antes e para nao pedir trava de escrita a cada abertura:
+            # todo hook abre o banco, e so linha velha precisa de UPDATE.
+            if connection.execute("SELECT 1 FROM tasks WHERE status = 'verified' LIMIT 1").fetchone():
+                connection.execute("UPDATE tasks SET status = 'active' WHERE status = 'verified'")
 
     def start_task(
         self,
@@ -1058,19 +1073,27 @@ class HarnessDatabase:
             # 'verified' ainda esta dentro de `one_active_task_per_scope`, entao
             # com uma task nova ja aberta a ressurreicao nem falhava em silencio:
             # estourava IntegrityError e derrubava o hook.
+            #
+            # "Tem evidencia fresca" vive SO na coluna `verified` (D1, 2026-09-23).
+            # Ate aqui a evidencia valida tambem punha `status='verified'`, e o
+            # mesmo fato ocupava dois lugares — um deles o eixo de ciclo de vida.
+            # O classify nao contava 'verified' como continuavel e o banco contava
+            # como vivo: a task era viva o bastante para ser MORTA pelo prompt
+            # seguinte e nao o bastante para ser CONTINUADA por ele (HC-00h,
+            # t-20260923-133144961992, fase 2 de 11). O status fica onde estava;
+            # 'verified' gravado por hook antigo volta para 'active'.
             terminal = row["status"] in TERMINAL_STATUSES
             if terminal:
                 novo_verified = int(row["verified"])
                 novo_status = row["status"]
-            elif valid_test:
-                novo_verified = 1
-                novo_status = "verified"
-            elif evidence_type == "test":
-                novo_verified = 0
-                novo_status = "active" if row["status"] == "verified" else row["status"]
             else:
-                novo_verified = int(row["verified"])
-                novo_status = row["status"]
+                novo_status = "active" if row["status"] == "verified" else row["status"]
+                if valid_test:
+                    novo_verified = 1
+                elif evidence_type == "test":
+                    novo_verified = 0
+                else:
+                    novo_verified = int(row["verified"])
             connection.execute(
                 "UPDATE tasks SET verified = ?, status = ?, "
                 "stop_continuations = CASE WHEN ? THEN 0 ELSE stop_continuations END, "

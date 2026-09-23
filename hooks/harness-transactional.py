@@ -836,9 +836,42 @@ def _sync_projection(bucket: Path, projection: dict[str, Any], task: dict[str, A
             "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
         }
     )
-    temporary = bucket / "state.json.transactional.tmp"
+    # Tres escolhas, cada uma contra uma falha medida (ramo ciclo-de-vida-da-task,
+    # 2026-09-23). Antes, com o tmp de nome fixo e `replace` direto, 56% das
+    # escritas levantavam com 1 escritor concorrente e 86% com 4 — e cada uma
+    # derrubava um PostToolUse que ja tinha gravado no banco:
+    #
+    # 1. tmp com nome UNICO: dois PostToolUse (comandos em segundo plano que
+    #    terminam juntos) escreviam o MESMO tmp e trocavam arquivo um do outro;
+    # 2. retentativa curta: no Windows o `replace` falha enquanto alguem le o
+    #    destino, e a janela e de milissegundos;
+    # 3. esgotou, registra e NAO levanta. A projecao e so projecao — quem decide
+    #    se ha task viva e o banco (`continuation_policy.task_viva`) — mas falha
+    #    engolida sem registro e o que deixou o incidente 2 sem prova.
+    destino = bucket / "state.json"
+    temporary = bucket / f"state.json.{os.getpid()}.{time.monotonic_ns()}.tmp"
     temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(bucket / "state.json")
+    ultimo: OSError | None = None
+    for espera in (0.0, 0.002, 0.005, 0.01, 0.02, 0.05):
+        if espera:
+            time.sleep(espera)
+        try:
+            os.replace(temporary, destino)
+            return
+        except OSError as exc:
+            ultimo = exc
+    try:
+        temporary.unlink()
+    except OSError:
+        pass
+    try:
+        with (bucket / "projection-errors.log").open("a", encoding="utf-8") as log:
+            log.write(
+                f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())} "
+                f"task={task['task_id']} {type(ultimo).__name__}: {ultimo}\n"
+            )
+    except OSError:
+        pass
 
 
 def _database_for_payload(
