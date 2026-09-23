@@ -223,6 +223,31 @@ def test_proxy_carrega_o_proprio_limite(rec):
     assert "acuracia" in c["proxy_nota"].lower()
 
 
+def test_proxy_mede_o_regex_e_nao_a_correcao(rec):
+    """HC-00e: `classification` e sobrescrita pela confirmacao.
+
+    `confirm_classification.py` troca `classification` pelo `final` quando
+    discorda do regex. O proxy lia esse campo — e passava a medir a correcao
+    semantica contra o observado, dizendo-se "regex vs observado".
+    """
+    corrigida = {
+        "task_id": "t-1",
+        "classification": "L1-bug",          # final, escrito pela confirmacao
+        "actual_level": "L1",
+        "classification_meta": {"suggested": "L2-docs", "final": "L1-bug",
+                                "agreed": False},
+    }
+    c = _agg(rec, [corrigida])
+    assert c["proxy_amostras"] == 1
+    assert c["proxy_regex_vs_observado"] == 0.0   # o regex disse L2; observado L1
+
+    # A outra metade: task antiga sem `classification_meta` segue contando pelo
+    # campo que ela tem, que ainda e o do regex porque ninguem o corrigiu.
+    legado = {"task_id": "t-2", "classification": "L1-bug", "actual_level": "L1"}
+    c = _agg(rec, [legado])
+    assert c["proxy_amostras"] == 1 and c["proxy_regex_vs_observado"] == 1.0
+
+
 def test_semantica_e_proxy_nao_se_misturam(rec):
     """Sao numeros diferentes medindo coisas diferentes, e podem discordar."""
     tasks = [_task("t-1", "L2-feature", "L0", agreed=True),   # semantica concorda

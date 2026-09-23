@@ -415,6 +415,50 @@ class TestPinDeSessao:
         assert saidas[0] == saidas[1]
 
 
+class TestLeitorPuro:
+    """`grava_pin=False` resolve o mesmo balde que um escritor e nao toca o pin.
+
+    Consumidor: `hooks/skill_router.py` (HC-00b), que so le o `state.json`.
+    """
+
+    def _pin(self, hp, root, sessao):
+        return root / hp.PINS_SUBDIR / f"{hp.session_slug(sessao)}.json"
+
+    def test_sem_pin_resolve_igual_e_nao_cunha(self, hp, tmp_path):
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        lido = hp.state_dir(root, str(a), session_id="s-1", grava_pin=False)
+        assert not self._pin(hp, root, "s-1").exists()
+        assert lido == hp.state_dir(root, str(a), session_id="s-1")
+
+    def test_deriva_segue_o_pin_sem_regravar(self, hp, tmp_path):
+        root = tmp_path / "root"
+        a = _repo(tmp_path, "alpha")
+        b = _repo(tmp_path, "beta")
+        escrito = hp.ensure_state_dir(root, str(a), session_id="s-1")
+        antes = self._pin(hp, root, "s-1").read_bytes()
+
+        lido = hp.state_dir(root, str(b), session_id="s-1", grava_pin=False)
+        assert lido == escrito
+        assert self._pin(hp, root, "s-1").read_bytes() == antes
+
+    def test_pin_vencido_aponta_o_balde_novo_sem_repinar(self, hp, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        velho = _repo(tmp_path, "velho")
+        novo = _repo(tmp_path, "novo")
+        hp.ensure_state_dir(root, str(velho), session_id="s-1")
+        arquivo = self._pin(hp, root, "s-1")
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["pinned_at"] = pin["last_seen_at"] = "2026-09-12T08:12:52+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+        antes = arquivo.read_bytes()
+
+        lido = hp.state_dir(root, str(novo), session_id="s-1", grava_pin=False)
+        assert lido.parent.parent.name == hp.project_slug(str(novo))
+        assert arquivo.read_bytes() == antes
+
+
 class TestPinVence:
     """O pin e do TRECHO DE TRABALHO, nao do id da sessao para sempre.
 

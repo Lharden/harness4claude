@@ -230,6 +230,42 @@ class TestCli:
         meta = json.loads((harness_dir / "state.json").read_text(encoding="utf-8"))["classification_meta"]
         assert meta["agreed"] is None, "rotulo invalido nao pode tocar o state"
 
+    def _task_no_banco(self, harness_dir: Path) -> str:
+        from transactional_state import HarnessDatabase
+
+        task = HarnessDatabase(harness_dir).start_task(
+            scope_id="s|repo|wt", legacy_level="L2-feature", tier="L2", kind="feature",
+            pipeline=["discuss", "tdd"], prompt="p",
+        )
+        st = _state()
+        st["task_id"] = task["task_id"]
+        (harness_dir / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        return task["task_id"]
+
+    # `harness_dir` e por classe: um `harness.db` nele vazaria para os testes
+    # seguintes, que montam state sem task no banco. Estes usam `tmp_path`.
+    def test_sem_confidence_grava_nulo_e_nao_certeza(self, tmp_path, cc):
+        """HC-00d: faltar `--confidence` gravava 1,0 no banco.
+
+        Medido em 2026-09-23: 113 de 141 linhas de `classifications` com 1,0,
+        porque a skill nunca passava o argumento. Certeza inventada e pior que
+        ausencia declarada: quem agrega nao distingue uma da outra.
+        """
+        from transactional_state import HarnessDatabase
+
+        tid = self._task_no_banco(tmp_path)
+        res = self._run(tmp_path, "--final", "L1-bug")
+        assert res.returncode == 0, res.stderr
+        assert HarnessDatabase(tmp_path).classification(tid)["confidence"] is None
+
+    def test_confidence_informada_chega_ao_banco(self, tmp_path, cc):
+        from transactional_state import HarnessDatabase
+
+        tid = self._task_no_banco(tmp_path)
+        res = self._run(tmp_path, "--final", "L1-bug", "--confidence", "0.7")
+        assert res.returncode == 0, res.stderr
+        assert HarnessDatabase(tmp_path).classification(tid)["confidence"] == 0.7
+
     def test_todo_rotulo_da_tabela_e_aceito(self, harness_dir, cc):
         """A porta recusa o que esta fora; ela nao pode recusar o que esta dentro."""
         for rotulo in sorted(cc.load_pipelines()):

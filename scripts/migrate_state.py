@@ -144,8 +144,18 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
     #
     # Inclui tasks abandonadas de proposito: elas foram classificadas e tocaram
     # arquivos, e exclui-las deixaria o canario com 1 amostra de 27.
+    #
+    # O lado "regex" vem de `classification_meta.suggested`, NAO de
+    # `classification`: a confirmacao sobrescreve `classification` com o `final`
+    # quando discorda. Ate 2026-09-23 (HC-00e) o canario lia esse campo e media
+    # a correcao semantica contra o observado. `classification` so vale para
+    # task sem meta, que ninguem confirmou e portanto ainda tem o do regex.
     observados = [
-        (str(t.get("classification") or "").split("-")[0], t.get("actual_level"))
+        (
+            str((t.get("classification_meta") or {}).get("suggested")
+                or t.get("classification") or "").split("-")[0],
+            t.get("actual_level"),
+        )
         for t in tasks
     ]
     observados = [(s, o) for s, o in observados if s and o]

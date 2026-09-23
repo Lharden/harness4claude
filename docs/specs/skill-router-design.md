@@ -160,7 +160,7 @@ máx. 1 bloco por prompt; arquivos de sessão podados no SessionStart (>7 dias).
 
 | Item | Caminho | Mudança |
 |---|---|---|
-| Router hook | `hooks/harness-skill-router.sh` + `hooks/skill_router.py` | **novo** (P1) — shim bash + lógica Python, padrão do classify (PYTHONUTF8, cygpath, `|| exit 0`), timeout hooks.json 5000ms |
+| Router hook | `hooks/harness-skill-router.sh` + `hooks/skill_router.py` | **novo** (P1) — shim bash + lógica Python, padrão do classify (PYTHONUTF8, cygpath, `|| exit 0`), timeout hooks.json 15 s (a unidade é segundo; o `5000ms` original foi corrigido em 2026-09-23, HC-00g) |
 | Warmup | `hooks/harness-router-warmup.sh` | **novo** (P1) — SessionStart: staleness + ping Ollama |
 | Builder do índice | `scripts/build_skills_index.py` | **novo** (P1) — scanner + embedder batch (299 docs ≈ 1-3s na RTX 5000); `--no-embed` mantém Camada A viva sem Ollama |
 | Feedback | `hooks/harness-skill-feedback.sh` | **novo** (P2) — PostToolUse matcher `Skill` → router-log.jsonl append-only |

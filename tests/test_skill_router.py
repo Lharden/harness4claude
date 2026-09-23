@@ -4,8 +4,21 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "hooks"))
 import skill_router as sr
+
+
+@pytest.fixture(autouse=True)
+def _harness_dir_isolado(tmp_path, monkeypatch):
+    """`sr.HARNESS_DIR` e lido no import, antes do isolamento do conftest.
+
+    Sem isto, todo teste que passa por `main()` resolveria o balde e gravaria o
+    extrato de emissoes no `~/.claude/harness` real.
+    """
+    monkeypatch.setattr(sr, "HARNESS_DIR", str(tmp_path / "harness-isolado"))
+    monkeypatch.setattr(sr, "ROUTER_DIR", str(tmp_path / "harness-isolado" / "router"))
 
 
 def _skill(sid, enabled=True, usage=0, aliases=None):
@@ -151,6 +164,86 @@ def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch):
                         io.StringIO(json.dumps({"session_id": "h", "prompt": "algo totalmente novo aqui"})))
     sr.main()
     assert called["embed"] == 1
+
+
+def _harness_paths():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import harness_paths
+    return harness_paths
+
+
+def _main_com_hit_na_camada_a(tmp_path, monkeypatch, payload):
+    """Roda `main()` com um indice que a Camada A sempre acerta. Devolve o stdout."""
+    idx = {"skills": [_skill("p:deckmaker", aliases=["deck"])], "dim": 0}
+    monkeypatch.setattr(sr, "load_index", lambda *a, **k: (idx, []))
+    monkeypatch.setattr(sr, "ROUTER_DIR", str(tmp_path / "router"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    assert sr.main() == 0
+
+
+def test_guarda_le_o_pipeline_no_balde_da_sessao(tmp_path, monkeypatch, capsys):
+    """HC-00b: o estado vivo mora no balde da sessao, nao em `$HARNESS_DIR/state.json`.
+
+    A guarda lia o arquivo global, parado desde 2026-08-12 — com pipeline ativo
+    no balde, o router seguia oferecendo skill no meio do pipeline.
+    """
+    hp = _harness_paths()
+    raiz, repo = tmp_path / "harness", tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.delenv("HARNESS_SCOPE", raising=False)
+    monkeypatch.setattr(sr, "HARNESS_DIR", str(raiz))
+    balde = hp.ensure_state_dir(raiz, repo, session_id="sessao-viva")
+    (balde / "state.json").write_text(
+        json.dumps({"status": "active", "pipeline": ["tdd"]}), encoding="utf-8")
+
+    _main_com_hit_na_camada_a(tmp_path, monkeypatch, {
+        "session_id": "sessao-viva", "cwd": str(repo), "prompt": "quero um deck bonito agora"})
+    assert capsys.readouterr().out == ""
+
+    # A outra metade: sessao sem pipeline no mesmo repo continua recebendo a dica.
+    _main_com_hit_na_camada_a(tmp_path, monkeypatch, {
+        "session_id": "outra-sessao", "cwd": str(repo), "prompt": "quero um deck bonito agora"})
+    assert "p:deckmaker" in capsys.readouterr().out
+
+
+def test_guarda_nao_grava_pin(tmp_path, monkeypatch):
+    """O router e read-only sobre o estado: resolver o balde nao pode cunhar pin."""
+    raiz, repo = tmp_path / "harness", tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.delenv("HARNESS_SCOPE", raising=False)
+    monkeypatch.setattr(sr, "HARNESS_DIR", str(raiz))
+    sr.state_json_da_sessao({"session_id": "s-nova", "cwd": str(repo)})
+    assert not (raiz / "pins").exists()
+    assert not (raiz / "projects").exists()
+
+
+def test_dica_sai_pelo_emissor_e_fica_no_extrato(tmp_path, monkeypatch, capsys):
+    """HC-00c: o router escrevia o JSON direto no stdout, fora de `hooks/emit.py`.
+
+    Medido em 2026-09-23: 0 das 3 328 linhas de `emissions.jsonl` eram dele —
+    a dica chegava ao modelo e nao deixava rastro para auditar entrega.
+    """
+    import hashlib
+
+    raiz, repo = tmp_path / "harness", tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.delenv("HARNESS_SCOPE", raising=False)
+    monkeypatch.setattr(sr, "HARNESS_DIR", str(raiz))
+    _main_com_hit_na_camada_a(tmp_path, monkeypatch, {
+        "session_id": "s-emit", "cwd": str(repo), "prompt": "quero um deck bonito agora"})
+
+    saida = json.loads(capsys.readouterr().out)
+    contexto = saida["hookSpecificOutput"]["additionalContext"]
+    assert saida["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert "p:deckmaker" in contexto
+
+    linhas = [json.loads(x) for x in
+              (raiz / "emissions.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(linhas) == 1
+    row = linhas[0]
+    assert (row["hook"], row["kind"], row["channel"], row["session_id"]) == (
+        "skill_router", "skill_hint", "additionalContext", "s-emit")
+    assert row["sha8"] == hashlib.sha256(contexto.encode("utf-8")).hexdigest()[:8]
 
 
 def test_main_subprocess_no_index(tmp_path):

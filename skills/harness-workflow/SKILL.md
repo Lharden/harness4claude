@@ -75,8 +75,10 @@ Para L0, NÃO ative — execute direto sem pipeline.
    python "<PLUGIN_ROOT>/scripts/harness_paths.py" --cwd "<cwd>" --session-id "<session_id>"
    # Passo 3 — substitua <PLUGIN_ROOT> e <STATE_DIR> pelos valores literais.
    #           Esta linha e isenta porque nao tem composicao nenhuma.
-   python "<PLUGIN_ROOT>/scripts/confirm_classification.py" --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>" --harness-dir "<STATE_DIR>"
+   python "<PLUGIN_ROOT>/scripts/confirm_classification.py" --final "<L1-feature|L2-bug|...>" --confidence "<0.0-1.0>" --expect-task "<task_id>" --harness-dir "<STATE_DIR>"
    ```
+
+   - **`--confidence`** é a sua confiança na classificação final, de 0 a 1 — não a do regex. Sem ele o banco grava `NULL` (não declarada). Até 2026-09-23 a falta virava `1.0`, e 113 de 141 linhas afirmavam uma certeza que ninguém tinha declarado.
 
    - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
    - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → passe o `--final` correto: o script grava `agreed = false`, corrige `classification` e **troca `pipeline`** sozinho, lendo a arvore de contrato que estiver valendo (`contract/pipelines.json`, ou a canonica do master-harness quando ela estiver alcancavel).
