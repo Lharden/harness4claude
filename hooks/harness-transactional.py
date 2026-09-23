@@ -22,6 +22,7 @@ CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
+from projecao import gravar_json_atomico  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
 
 VERIFICATION_PATTERNS = (
@@ -836,9 +837,30 @@ def _sync_projection(bucket: Path, projection: dict[str, Any], task: dict[str, A
             "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
         }
     )
-    temporary = bucket / "state.json.transactional.tmp"
-    temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(bucket / "state.json")
+    # A projecao lida no inicio do hook pode ja ter sido trocada: um prompt de
+    # troca explicita abriu outra task enquanto este PostToolUse rodava.
+    # Regravar o snapshot antigo apontaria a projecao para a task superada, e
+    # todo PostToolUse seguinte (toques, evidencia) iria para ela. Relido aqui,
+    # no ultimo momento; a janela que sobra e a do proprio replace.
+    atual = _projection(bucket).get("task_id")
+    if atual and atual != task["task_id"]:
+        return
+    # Escrita pelo helper unico (`scripts/projecao.py`): tmp de nome unico,
+    # retentativa curta, nunca levanta. Com o tmp fixo e `replace` direto, 56%
+    # das escritas levantavam com 1 escritor concorrente e 86% com 4 (ramo
+    # ciclo-de-vida-da-task). Esgotou, registra — falha engolida sem registro e
+    # o que deixou o incidente 2 sem prova.
+    ultimo = gravar_json_atomico(bucket / "state.json", projection)
+    if ultimo is None:
+        return
+    try:
+        with (bucket / "projection-errors.log").open("a", encoding="utf-8") as log:
+            log.write(
+                f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())} "
+                f"task={task['task_id']} {type(ultimo).__name__}: {ultimo}\n"
+            )
+    except OSError:
+        pass
 
 
 def _database_for_payload(

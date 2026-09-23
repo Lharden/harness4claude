@@ -8,7 +8,7 @@
     "scope_id": {"type": "string"},
     "tier": {"enum": ["L0", "L1", "L2"]},
     "kind": {"type": "string"},
-    "status": {"enum": ["suggested", "active", "awaiting_gate", "verified", "done", "abandoned", "rolled_back"]},
+    "status": {"enum": ["suggested", "active", "awaiting_gate", "verified", "done", "abandoned", "superseded", "rolled_back"]},
     "revision": {"type": "integer", "minimum": 0},
     "owner_epoch": {"type": "integer", "minimum": 0},
     "pipeline": {"type": "array", "items": {"type": "string"}},

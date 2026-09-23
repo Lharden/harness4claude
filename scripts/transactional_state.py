@@ -251,6 +251,34 @@ class HarnessDatabase:
                 "ON gates(task_id, gate_type, subject_id) "
                 "WHERE status = 'pending' AND subject_id IS NOT NULL"
             )
+            # D1: 'verified' deixou de ser status. Linha gravada antes (ou por
+            # sessao ainda aberta com hook antigo) volta para 'active'; a coluna
+            # `verified` e intocada, entao a evidencia que existia continua
+            # existindo. Idempotente — roda a cada abertura do banco.
+            #
+            # PENDENCIA DECLARADA (relatorio ciclo-de-vida-da-task, 8.4 e 9.1):
+            # 'verified' continua em ACTIVE_STATUSES e no indice acima como
+            # TOLERANCIA, porque hook antigo ainda grava o status ate a sessao
+            # recarregar; tirar agora abriria duas tasks vivas por escopo.
+            #   Acao: remover dos dois lugares, com teste vermelho antes.
+            #   Criterio: zero eventos `migracao-verified` depois do deploy e do
+            #     reload — linha 'verified' nova so nasce de hook antigo vivo.
+            #   Prazo: 2026-09-30 (antes, se o criterio fechar antes).
+            #   Dono: o usuario faz o reload das sessoes apos `mh deploy apply`;
+            #     uma sessao nova do ciclo de vida confere os eventos e remove.
+            # O SELECT antes e para nao pedir trava de escrita a cada abertura:
+            # todo hook abre o banco, e so linha velha precisa de UPDATE.
+            velhas = connection.execute(
+                "SELECT task_id, scope_id FROM tasks WHERE status = 'verified'"
+            ).fetchall()
+            if velhas:
+                agora = utc_now()
+                connection.execute("UPDATE tasks SET status = 'active' WHERE status = 'verified'")
+                connection.executemany(
+                    "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                    "VALUES (?, ?, 'migracao-verified', '{}', ?)",
+                    [(str(v[0]), str(v[1]), agora) for v in velhas],
+                )
 
     def start_task(
         self,
@@ -402,35 +430,45 @@ class HarnessDatabase:
             row = connection.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row is None:
                 raise StateTransitionError(f"task not found: {task_id}")
-            gate = connection.execute(
-                "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
-                "ORDER BY id DESC LIMIT 1",
+            return self._montar(connection, row)
+
+    @classmethod
+    def _montar(cls, connection: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+        """A task renderizada, com gate pendente e artefatos, a partir da linha.
+
+        Separada de `task()` para servir tambem a leitura somente-leitura de
+        `ler_task_corrente`, sem duas copias da montagem.
+        """
+        task_id = str(row["task_id"])
+        gate = connection.execute(
+            "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        # `record_artifact` sempre gravou aqui corretamente, mas nada lia a
+        # tabela de volta: a projecao `state.json` carregava
+        # `artifacts_so_far: []` para sempre, e quem le o state — inclusive
+        # o hook de lifecycle — via zero artefatos numa task que tinha
+        # varios. O dado existia; faltava o caminho de volta.
+        artifacts = [
+            {"type": r["artifact_type"], "path": r["path"], "phase": r["phase"]}
+            # `rowid` e nao `created_at`: o upsert de `record_artifact`
+            # reescreve `created_at`, entao ordenar por ele faria o artefato
+            # reaparecer no fim da lista a cada regravacao. `rowid` guarda a
+            # ordem de primeira insercao, que e a ordem em que o trabalho
+            # aconteceu. A tabela nao tem coluna `id` — a chave e composta.
+            for r in connection.execute(
+                "SELECT artifact_type, path, phase FROM artifacts WHERE task_id = ? "
+                "ORDER BY rowid",
                 (task_id,),
-            ).fetchone()
-            # `record_artifact` sempre gravou aqui corretamente, mas nada lia a
-            # tabela de volta: a projecao `state.json` carregava
-            # `artifacts_so_far: []` para sempre, e quem le o state — inclusive
-            # o hook de lifecycle — via zero artefatos numa task que tinha
-            # varios. O dado existia; faltava o caminho de volta.
-            artifacts = [
-                {"type": r["artifact_type"], "path": r["path"], "phase": r["phase"]}
-                # `rowid` e nao `created_at`: o upsert de `record_artifact`
-                # reescreve `created_at`, entao ordenar por ele faria o artefato
-                # reaparecer no fim da lista a cada regravacao. `rowid` guarda a
-                # ordem de primeira insercao, que e a ordem em que o trabalho
-                # aconteceu. A tabela nao tem coluna `id` — a chave e composta.
-                for r in connection.execute(
-                    "SELECT artifact_type, path, phase FROM artifacts WHERE task_id = ? "
-                    "ORDER BY rowid",
-                    (task_id,),
-                )
-            ]
+            )
+        ]
         pending_gate = None
         if gate:
             pending_gate = str(gate["gate_type"])
             if gate["subject_id"]:
                 pending_gate += f":{gate['subject_id']}"
-        return self._render_task(row, pending_gate, artifacts)
+        return cls._render_task(row, pending_gate, artifacts)
 
     def current_task(self, scope_id: str) -> dict[str, Any] | None:
         placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
@@ -497,6 +535,37 @@ class HarnessDatabase:
                 ),
             )
         return self.task(expired_task_id)
+
+    def abandon_task(self, task_id: str, *, reason: str | None = None) -> dict[str, Any]:
+        """Encerra uma task viva como `abandoned`, no banco — a autoridade.
+
+        Ate 2026-09-23 o protocolo de abandono (`record_signal.py --abandoned` e
+        editar o `state.json`) nao tocava o banco. Enquanto a continuacao lia a
+        projecao isso passava; depois que ela passou a perguntar ao banco, a task
+        abandonada voltava como CONTINUING no prompt seguinte (achado do
+        /code-review do ramo ciclo-de-vida-da-task). Status terminal nao muda.
+        """
+        agora = utc_now()
+        with self._write() as connection:
+            row = self._locked_task(connection, task_id)
+            if row["status"] in TERMINAL_STATUSES:
+                return self.task(task_id)
+            connection.execute(
+                "UPDATE tasks SET status = 'abandoned', revision = revision + 1, updated_at = ? "
+                "WHERE task_id = ?",
+                (agora, task_id),
+            )
+            connection.execute(
+                "UPDATE gates SET status = 'cancelled', decision = 'abandoned', resolved_at = ? "
+                "WHERE task_id = ? AND status = 'pending'",
+                (agora, task_id),
+            )
+            connection.execute(
+                "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                "VALUES (?, ?, 'task-abandoned', ?, ?)",
+                (task_id, row["scope_id"], json.dumps({"reason": reason}, sort_keys=True), agora),
+            )
+        return self.task(task_id)
 
     def acquire_lease(
         self,
@@ -1058,19 +1127,27 @@ class HarnessDatabase:
             # 'verified' ainda esta dentro de `one_active_task_per_scope`, entao
             # com uma task nova ja aberta a ressurreicao nem falhava em silencio:
             # estourava IntegrityError e derrubava o hook.
+            #
+            # "Tem evidencia fresca" vive SO na coluna `verified` (D1, 2026-09-23).
+            # Ate aqui a evidencia valida tambem punha `status='verified'`, e o
+            # mesmo fato ocupava dois lugares — um deles o eixo de ciclo de vida.
+            # O classify nao contava 'verified' como continuavel e o banco contava
+            # como vivo: a task era viva o bastante para ser MORTA pelo prompt
+            # seguinte e nao o bastante para ser CONTINUADA por ele (HC-00h,
+            # t-20260923-133144961992, fase 2 de 11). O status fica onde estava;
+            # 'verified' gravado por hook antigo volta para 'active'.
             terminal = row["status"] in TERMINAL_STATUSES
             if terminal:
                 novo_verified = int(row["verified"])
                 novo_status = row["status"]
-            elif valid_test:
-                novo_verified = 1
-                novo_status = "verified"
-            elif evidence_type == "test":
-                novo_verified = 0
-                novo_status = "active" if row["status"] == "verified" else row["status"]
             else:
-                novo_verified = int(row["verified"])
-                novo_status = row["status"]
+                novo_status = "active" if row["status"] == "verified" else row["status"]
+                if valid_test:
+                    novo_verified = 1
+                elif evidence_type == "test":
+                    novo_verified = 0
+                else:
+                    novo_verified = int(row["verified"])
             connection.execute(
                 "UPDATE tasks SET verified = ?, status = ?, "
                 "stop_continuations = CASE WHEN ? THEN 0 ELSE stop_continuations END, "
@@ -1221,3 +1298,30 @@ class HarnessDatabase:
             "started_at": row["started_at"],
             "updated_at": row["updated_at"],
         }
+
+
+def ler_task_corrente(home: str | Path, scope_id: str) -> dict[str, Any] | None:
+    """`current_task` sem abrir o banco para escrita.
+
+    `HarnessDatabase(...)` roda `_ensure_schema` — DDL, PRAGMAs e a migracao
+    `verified -> active` — e isso e escrita. A pergunta "ha task viva?" roda em
+    todo prompt, no classify e no router ao mesmo tempo; com um PostToolUse
+    segurando `BEGIN IMMEDIATE`, a migracao esperava o `busy_timeout` e a
+    pergunta virava DESCONHECIDA so por ter tentado escrever (achado do
+    /code-review do ramo ciclo-de-vida-da-task). Em WAL leitor nao espera
+    escritor: `mode=ro` responde na hora e nao muda nada.
+    """
+    caminho = Path(home) / "harness.db"
+    connection = sqlite3.connect(f"{caminho.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 5000")
+        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+        row = connection.execute(
+            f"SELECT * FROM tasks WHERE scope_id = ? AND status IN ({placeholders}) "
+            "ORDER BY started_at DESC LIMIT 1",
+            (scope_id, *ACTIVE_STATUSES),
+        ).fetchone()
+        return HarnessDatabase._montar(connection, row) if row is not None else None
+    finally:
+        connection.close()

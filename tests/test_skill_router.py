@@ -21,6 +21,19 @@ def _harness_dir_isolado(tmp_path, monkeypatch):
     monkeypatch.setattr(sr, "ROUTER_DIR", str(tmp_path / "harness-isolado" / "router"))
 
 
+def _task_viva_no_balde(balde):
+    """Task L2 viva no `harness.db` do balde, com o `scope_id` que o classify grava."""
+    scripts = os.path.join(os.path.dirname(__file__), "..", "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from transactional_state import HarnessDatabase
+
+    HarnessDatabase(balde).start_task(
+        scope_id=str(balde), legacy_level="L2-bug", tier="L2", kind="bug",
+        pipeline=["tdd"], prompt="x",
+    )
+
+
 def _skill(sid, enabled=True, usage=0, aliases=None):
     return {"id": sid, "name": sid.split(":")[-1], "plugin": f"{sid.split(':')[0]}@m",
             "source": "marketplace", "enabled": enabled, "path": "x", "description": f"desc {sid}",
@@ -88,11 +101,17 @@ def test_guards(tmp_path):
         "You are summarizing a Claude Code session for handoff purposes ok",
         state_json=str(st)) is False
     ok = "refatore o modulo de autenticacao por favor"
-    assert sr.passes_guards(ok, state_json=str(st)) is True  # state ausente = ok
-    st.write_text(json.dumps({"status": "active", "pipeline": ["tdd"]}), encoding="utf-8")
-    assert sr.passes_guards(ok, state_json=str(st)) is False  # pipeline ativo suprime
+    assert sr.passes_guards(ok, state_json=str(st)) is True  # banco ausente = ok
+    # A pergunta vai ao banco, nao a projecao (ramo ciclo-de-vida-da-task).
+    _task_viva_no_balde(tmp_path)
     st.write_text("{{{lixo", encoding="utf-8")
-    assert sr.passes_guards(ok, state_json=str(st)) is True   # torn read = sem pipeline
+    assert sr.passes_guards(ok, state_json=str(st)) is False  # pipeline ativo suprime
+    corrompido = tmp_path / "corrompido"
+    corrompido.mkdir()
+    (corrompido / "harness.db").write_bytes(b"lixo" * 256)
+    # Ate 2026-09-23 a leitura rasgada valia "sem pipeline" — o fail-open do
+    # incidente 2. Banco que nao responde agora cala a dica.
+    assert sr.passes_guards(ok, state_json=str(corrompido / "state.json")) is False
 
 
 def test_dedupe(tmp_path, monkeypatch):
@@ -193,8 +212,7 @@ def test_guarda_le_o_pipeline_no_balde_da_sessao(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("HARNESS_SCOPE", raising=False)
     monkeypatch.setattr(sr, "HARNESS_DIR", str(raiz))
     balde = hp.ensure_state_dir(raiz, repo, session_id="sessao-viva")
-    (balde / "state.json").write_text(
-        json.dumps({"status": "active", "pipeline": ["tdd"]}), encoding="utf-8")
+    _task_viva_no_balde(balde)
 
     _main_com_hit_na_camada_a(tmp_path, monkeypatch, {
         "session_id": "sessao-viva", "cwd": str(repo), "prompt": "quero um deck bonito agora"})

@@ -129,10 +129,28 @@ def run_hook(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def write_state(data: dict) -> None:
-    """Escreve state.json para setup de testes."""
+def write_state(data: dict, *, banco: bool = True) -> None:
+    """Escreve state.json para setup de testes — e a task no banco, quando viva.
+
+    Desde o ramo ciclo-de-vida-da-task (2026-09-23) quem responde "ha pipeline
+    em andamento?" e o `harness.db`, nao a projecao. Um cenario que declara
+    pipeline ativo so na projecao descreve um estado que o hook nao ve mais —
+    e que, no uso real, so existe quando o escritor da projecao falhou.
+    """
     with open(_state_file(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    vivo = data.get("status") in {"active", "awaiting_gate", "verified"} and data.get("pipeline")
+    if banco and vivo and data.get("task_id"):
+        sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+        from transactional_state import HarnessDatabase
+
+        classificacao = str(data.get("classification") or "L1-feature")
+        tier, _, kind = classificacao.partition("-")
+        HarnessDatabase(_state_dir()).start_task(
+            scope_id=_state_dir(), legacy_level=classificacao, tier=tier or "L1",
+            kind=kind or "feature", pipeline=list(data["pipeline"]), prompt="teste",
+            task_id=str(data["task_id"]),
+        )
 
 
 def read_state() -> dict:
@@ -154,7 +172,18 @@ def read_counter() -> dict:
 
 
 def fresh_state() -> None:
-    """Reseta state.json para estado limpo (sem pipeline ativo)."""
+    """Reseta o estado para limpo (sem pipeline ativo): projecao E banco.
+
+    Resetar so a projecao deixava viva, no `harness.db`, a task do teste
+    anterior — e o classify, que agora pergunta ao banco, a continuava.
+    """
+    import gc
+
+    gc.collect()  # conexao sqlite esquecida segura o arquivo no Windows
+    for nome in ("harness.db", "harness.db-wal", "harness.db-shm"):
+        caminho = os.path.join(_state_dir(), nome)
+        if os.path.exists(caminho):
+            os.remove(caminho)
     write_state({"task_id": None, "classification": None, "status": None})
 
 
@@ -1237,7 +1266,11 @@ class TestReclassify(HarnessTestBase):
             "artifacts_so_far": ["docs/specs/x-spec-light.md"],
             "started_at": RECENT_ISO,
         }
-        write_state(original)
+        # So a projecao, de proposito: o que se mede aqui e a politica de
+        # PROMOCAO (`reclassification_policy`), que le a projecao. Com a task no
+        # banco o hook ressincronizaria revisao/fase/escopo a partir dele — o
+        # comportamento certo, e fora do que este teste afirma.
+        write_state(original, banco=False)
         write_counter({"count": 0, "files": [], "task_id": "t-test-act"})
         for f in ["C:/p/q.py", "C:/p/r.py", "C:/p/s.py", "C:/p/t.py"]:
             run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})

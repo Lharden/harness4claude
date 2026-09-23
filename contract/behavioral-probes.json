@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "adapters": {
     "harness4codex": {
       "classification.deterministic-suggestion": ["tests/test_classifier.py::test_bug_promotes_debugging_and_tdd"],
