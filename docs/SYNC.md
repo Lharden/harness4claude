@@ -20,6 +20,7 @@ numa maquina nova, de forma portavel (Windows/Git Bash, macOS, Linux).
 | API key do Obsidian REST | ❌ segredo | **manual** via `OBSIDIAN_API_KEY` (nunca versionado) |
 | Cert do Local REST API, plugins do app Obsidian | ❌ GUI/segredo | **manual** |
 | Pacote `graphify` (typo-safe: PyPI `graphifyy`) | ❌ install de pacote | `setup-graphify.sh` (decisao humana) |
+| Manifesto do `vault_sync`, sementes de ramo, `.remember/` dos repos | ❌ por maquina / ignorado pelo git | **manual** — ver [`vault-sync-troca-de-maquina.md`](vault-sync-troca-de-maquina.md) |
 
 ---
 
