@@ -4,7 +4,7 @@
 Mirrors (idempotente, decidido por hash de conteudo):
   <balde>/traces/*.md             -> <vault>/wiki/sessions/
   <cwd>/docs/specs/*.md           -> <vault>/wiki/specs/          (carimba frontmatter)
-  <cwd>/docs/CONTEXT.md           -> <vault>/wiki/decisions/      (carimba frontmatter)
+  <cwd>/docs/CONTEXT.md           -> <vault>/wiki/decisions/<repo>-context.md  (carimba)
   <raiz>/projects/<slug>/branches/*.seed.md -> <vault>/wiki/branches/  (carimba)
   <repo>/.remember/today-X.md     -> <vault>/raw/inbox/<repo>--today-X.md
   C:/.remember/today-X.md         -> <vault>/raw/inbox/maquina--today-X.md
@@ -192,8 +192,9 @@ def _chave(dst: Path) -> str:
     return os.path.normcase(str(dst.resolve()))
 
 
-# Campos que o carimbo varia sem que o conteudo mude: a data do dia e o slug de onde
-# o sync rodou (worktree e checkout principal dao slugs diferentes).
+# Campos que o carimbo varia sem que o conteudo mude: a data do dia e o slug. Desde
+# 2026-09-24 o slug e o do repositorio, mas paginas escritas antes carregam o do
+# worktree de onde o sync rodou, e continuam sendo adotaveis.
 _CARIMBO_VOLATIL = re.compile(r"^(?:created|updated|project):.*(?:\n|\Z)", re.M)
 
 
@@ -452,7 +453,9 @@ def fontes_do_inbox(cwd: Path, remember_global: Path = REMEMBER_GLOBAL) -> dict[
     bases: list[tuple[Path, str]] = []
     dono = _raiz_do_repo(cwd)
     for projeto in ([dono] if dono else []) + [cwd]:
-        bases.append((projeto / ".remember", project_slug(projeto)))
+        # Rotulo da PASTA, nao do repositorio: com `project_slug`, a nota do `.remember`
+        # de um worktree cairia na mesma pagina que a de mesmo nome do principal.
+        bases.append((projeto / ".remember", _slug_do_nome(projeto)))
     bases.append((remember_global, ROTULO_REMEMBER_GLOBAL))
     nomes: dict[Path, str] = {}
     vistas: set[str] = set()
@@ -507,9 +510,29 @@ def append_log(vault: Path, message: str) -> None:
         logger.warning("nao foi possivel escrever log.md: %s", exc)
 
 
+def _slug_do_nome(pasta: Path) -> str:
+    """Slug kebab-case do nome de uma pasta."""
+    return re.sub(r"[^a-z0-9]+", "-", pasta.name.lower()).strip("-") or "projeto"
+
+
 def project_slug(cwd: Path) -> str:
-    """Slug kebab-case do projeto, usado para nomear a decisao no vault."""
-    return re.sub(r"[^a-z0-9]+", "-", cwd.name.lower()).strip("-") or "projeto"
+    """Slug kebab-case do REPOSITORIO dono do `cwd`: nomeia a decisao e o campo `project:`.
+
+    O repositorio e o checkout principal, pela mesma regra do balde (`_raiz_do_repo`):
+    worktree colapsa no principal, submodulo nao. Fora do git, vale o nome da pasta.
+
+    Ate 2026-09-24 era sempre o nome da pasta, e sessao em worktree nomeava a pagina
+    pelo worktree: no AI-Brain, 8 paginas `*-context.md` com o mesmo CONTEXT.md do
+    harness4claude, uma por worktree.
+
+    Consequencia declarada: worktrees do mesmo repositorio, cada um no seu ramo, escrevem
+    a MESMA pagina de decisao. Com CONTEXT.md diferentes, vale a regra de colisao do
+    manifesto (`_espelhar`): a fonte mais nova assume a pagina, e a mais velha nao a
+    retoma enquanto nao ficar mais nova. A pagina mostra o CONTEXT.md do ramo em que se
+    trabalhou por ultimo, e pode continuar com o de um worktree ja removido ate o
+    principal mudar o dele.
+    """
+    return _slug_do_nome(_raiz_do_repo(cwd) or cwd)
 
 
 def context_docs(cwd: Path) -> list[Path]:
