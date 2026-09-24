@@ -49,7 +49,7 @@ class TestMatrizDeCanais:
             ("UserPromptSubmit", "additionalContext"),
             ("userpromptsubmit", "additionalContext"),
             ("SessionStart", "additionalContext"),
-            ("PostToolUse", "stdout"),
+            ("PostToolUse", "additionalContext"),
             ("PreCompact", "stdout"),
             ("Stop", "silent"),
             ("SubagentStop", "silent"),
@@ -64,13 +64,17 @@ class TestMatrizDeCanais:
         assert emit.resolve_channel("EventoQueAindaNaoExiste") == "stdout"
         assert emit.resolve_channel(None) == "stdout"
 
-    def test_posttooluse_nunca_usa_additional_context(self, emit):
-        """additionalContext em PostToolUse nunca foi observado chegando.
+    def test_posttooluse_usa_additional_context(self, emit):
+        """https://code.claude.com/docs/en/hooks: PostToolUse nao esta entre as
 
-        Usa-lo seria repetir o erro do systemMessage: escrever num canal que
-        aceita a escrita e talvez nao entregue.
+        excecoes que recebem stdout cru como contexto (so UserPromptSubmit,
+        UserPromptExpansion, SessionStart e PostModelSwitch estao). O canal que
+        a doc da para "Add context for Claude" nesse evento e
+        hookSpecificOutput.additionalContext. Ate 2026-09-24 este teste travava
+        o oposto, apoiado em observacao de transcript que confundia "aparece na
+        UI" com "chega ao modelo" — o mesmo erro que o systemMessage cometia.
         """
-        assert emit.resolve_channel("PostToolUse") != "additionalContext"
+        assert emit.resolve_channel("PostToolUse") == "additionalContext"
 
 
 class TestSystemMessageNuncaMais:
@@ -149,7 +153,7 @@ class TestExtrato:
         for _ in range(3):
             emit.Emitter("UserPromptSubmit", hook="h", root=tmp_path) \
                 .add("classify", "xx").flush(stream=io.StringIO())
-        emit.Emitter("PostToolUse", hook="h", root=tmp_path) \
+        emit.Emitter("PreCompact", hook="h", root=tmp_path) \
             .add("reclassify", "yyy").flush(stream=io.StringIO())
         agg = emit.aggregate(tmp_path)
         assert agg["classify"]["n"] == 3
