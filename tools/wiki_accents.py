@@ -16,9 +16,11 @@ Nunca toca em: bloco de código, código inline, wikilink, frontmatter, URL. Fro
 fica de fora porque `tags: [decisao]` e um identificador, não prosa — acentuar mudaria
 a tag.
 
-Fronteira de escopo: `wiki/specs/` e **espelhado** de `docs/specs/` dos repos pelo
-vault_sync. Corrigir a copia a faria divergir da origem e o próximo sync poderia
-sobrescrever. Ficam de fora por padrão; `--incluir-espelhadas` forca.
+Fronteira de escopo: as páginas que o vault_sync **espelha** de fora do vault (specs,
+sessões, `decisions/*-context.md`, sementes de ramo) ficam de fora por padrão; a lista é
+a do `vault_sync.is_mirrored`. Corrigir a copia a faria divergir da origem,
+e desde 2026-09-24 o sync recusa página espelhada que mudou depois da última escrita: o
+espelho dela pararia. `--incluir-espelhadas` forca.
 
 Uso:
     python tools/wiki_accents.py --root DIR [--fix] [--incluir-espelhadas]
@@ -32,10 +34,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from vault_sync import is_mirrored
 from wiki_index import default_root
-
-# Áreas espelhadas de fora: a fonte da verdade não esta no vault.
-MIRRORED_AREAS = ("specs", "sessions")
 
 SEGURAS: dict[str, str] = {
     # adverbios e conectivos
@@ -324,7 +325,8 @@ def target_pages(root: Path, *, incluir_espelhadas: bool = False) -> list[Path]:
         partes = path.relative_to(wiki).parts
         if "graphs" in partes:
             continue
-        if not incluir_espelhadas and partes[0] in MIRRORED_AREAS:
+        # root e o AI-Brain, a mesma base dos destinos do vault_sync.
+        if not incluir_espelhadas and is_mirrored(path.relative_to(root).as_posix()):
             continue
         paginas.append(path)
     return paginas
@@ -336,7 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fix", action="store_true", help="Aplica; sem a flag, so relata.")
     parser.add_argument(
         "--incluir-espelhadas", action="store_true",
-        help="Inclui wiki/specs e wiki/sessions, espelhadas de fora do vault.",
+        help="Inclui as paginas espelhadas pelo vault_sync (specs, sessoes, *-context, sementes).",
     )
     return parser
 

@@ -426,6 +426,41 @@ def test_duas_fontes_para_a_mesma_pagina_nao_se_alternam(tmp_path: Path) -> None
     assert "do projeto B, editado" in _pagina(vault).read_text(encoding="utf-8")
 
 
+def test_is_mirrored_cobre_todo_destino_que_o_sync_escreve(tmp_path: Path) -> None:
+    """`is_mirrored` e o que vault_maintenance e wiki_accents consultam antes de editar.
+
+    Os destinos sao derivados RODANDO o sync com uma fonte de cada tipo, para a lista
+    nao envelhecer calada quando um destino novo for acrescentado.
+    """
+    import harness_paths
+
+    harness = tmp_path / "harness"
+    (harness / "traces").mkdir(parents=True)
+    (harness / "traces" / "sessao.md").write_text("# s\n", encoding="utf-8")
+    cwd = _projeto(tmp_path, spec="# x\n", context="# c\n")
+    (cwd / ".remember").mkdir()
+    (cwd / ".remember" / "today-2026-01-01.md").write_text("# r\n", encoding="utf-8")
+    sementes = harness_paths.state_dir(root=harness, cwd=cwd) / "branches"
+    sementes.mkdir(parents=True)
+    (sementes / "ramo.seed.md").write_text("# semente\n", encoding="utf-8")
+    vault = tmp_path / "ai-brain"
+
+    contagens = vs.sync(vault, harness, cwd)
+
+    assert all(contagens.values()), f"cada destino precisa receber uma pagina: {contagens}"
+    escritas = [p.relative_to(vault).as_posix() for p in vault.rglob("*.md")]
+    fora = [r for r in escritas if r != "wiki/log.md" and not vs.is_mirrored(r)]
+    assert fora == [], f"destino do sync sem cobertura em is_mirrored: {fora}"
+
+
+def test_is_mirrored_nao_pega_pagina_humana_das_mesmas_pastas() -> None:
+    assert not vs.is_mirrored("wiki/decisions/estado-duravel-do-pipeline.md")
+    assert not vs.is_mirrored("raw/inbox/Bem-vindo ao Obsidian.md")
+    assert not vs.is_mirrored("wiki/log.md")
+    assert vs.is_mirrored("wiki/decisions/harness4claude-context.md")
+    assert vs.is_mirrored("raw/inbox/today-2026-08-06.done.md")
+
+
 def test_cli_imprime_recusa_no_stderr_e_grava_manifesto_onde_mandado(tmp_path: Path) -> None:
     """E o stderr que o hook do PreCompact redireciona para o log."""
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo\n")

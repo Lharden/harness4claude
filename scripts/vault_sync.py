@@ -88,6 +88,28 @@ MANIFESTO = "vault-sync-manifest.json"
 # da fonte, mtime: mtime da fonte na escrita}
 Registro = dict[str, dict[str, Any]]
 
+# As paginas que este sync escreve, relativas ao AI-Brain. Quem mexe no vault por outro
+# caminho (tools/vault_maintenance.py, tools/wiki_accents.py) pergunta aqui antes de
+# editar: pagina espelhada editada e recusada na proxima mudanca da fonte, e o espelho
+# dela para. Destino exato, nao pasta: `wiki/decisions` tambem tem decisoes escritas no
+# vault, e `raw/inbox` tambem recebe notas humanas. A paridade com o que `sync()` escreve
+# de fato e travada em tests/test_vault_sync.py.
+PAGINAS_ESPELHADAS = tuple(
+    re.compile(padrao)
+    for padrao in (
+        r"wiki/sessions/[^/]+\.md",
+        r"wiki/specs/[^/]+\.md",
+        r"wiki/decisions/[^/]+-context\.md",
+        r"wiki/branches/[^/]+\.seed\.md",
+        r"raw/inbox/today-[^/]+\.md",
+    )
+)
+
+
+def is_mirrored(relativo: str) -> bool:
+    """True se a pagina (caminho relativo ao AI-Brain, com `/`) e escrita por este sync."""
+    return any(padrao.fullmatch(relativo) for padrao in PAGINAS_ESPELHADAS)
+
 
 # BOM e espaco a esquerda toleram arquivo salvo pelo Obsidian no Windows.
 _FRONTMATTER_RE = re.compile(r"\A﻿?[ \t\r\n]*---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.S)

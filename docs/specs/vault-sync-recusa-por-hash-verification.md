@@ -83,13 +83,33 @@ Os dois testes de mtime (M2 e o da página com mtime mexido) caíram também con
 
 - **Sementes de ramo nunca chegam ao vault pelo hook.** O hook passa o balde da sessão como `--harness-dir`, e `branch_seeds` o trata como raiz. Medido: 0 sementes pelo balde, contra 7 (slb) e 4 (harness4claude) pela raiz; há 29 sementes nos baldes e 1 página em `wiki/branches`. Defeito anterior, contradiz `branch-keeper-design.md:50`. Registrado como tarefa separada.
 - **Notas diárias de repositórios diferentes colidem em `raw/inbox`.** Só a mais nova de cada nome sobrevive no espelho. Mudar o nome de destino afeta quem consome `raw/inbox`, e por isso é decisão do autor. Registrado na mesma tarefa.
-- **`tools/vault_maintenance.py` (`normalize`/`organize`) reescreve páginas espelhadas.** Com o manifesto, uma página normalizada por ele passa a ser recusada na próxima mudança da fonte: nada se perde, mas o espelho dela para até alguém resolver. Hoje há 0 casos. Excluir as pastas espelhadas da manutenção é decisão pendente do autor.
+- **`tools/vault_maintenance.py` (`normalize`/`organize`) reescreve páginas espelhadas.** Com o manifesto, uma página normalizada por ele passa a ser recusada na próxima mudança da fonte: nada se perde, mas o espelho dela para até alguém resolver. Hoje há 0 casos. [decidido 2026-09-24: o autor escolheu excluir os espelhos da manutenção; feito no commit seguinte, seção "Manutenção fora dos espelhos" abaixo]
 - **Transição.** Uma página existente sem registro, diferente da fonte e mais velha que ela é recusada com aviso na primeira execução, mesmo que ninguém a tenha editado, porque sem histórico não há como distinguir. Na cópia do vault real, isso deu 0 casos.
+
+## Manutenção fora dos espelhos (commit seguinte, decisão do autor em 2026-09-24)
+
+Quais páginas são espelho é contrato de quem as escreve: `scripts/vault_sync.py` ganhou `PAGINAS_ESPELHADAS` e `is_mirrored(relativo_ao_ai_brain)`, ao lado dos destinos que eles descrevem. O destino é **exato**, e não a pasta: `wiki/decisions` mistura `<slug>-context.md` (espelho do `CONTEXT.md`) com decisões escritas no vault, e `raw/inbox` recebe `today-*.md` do sync e notas humanas. Excluir as pastas deixaria de normalizar texto humano.
+
+| Padrão (relativo ao AI-Brain) | Origem no `vault_sync` |
+|---|---|
+| `wiki/sessions/*.md` | traces |
+| `wiki/specs/*.md` | `docs/specs` |
+| `wiki/decisions/*-context.md` | `docs/CONTEXT.md` |
+| `wiki/branches/*.seed.md` | sementes de ramo |
+| `raw/inbox/today-*.md` | `.remember/today-*.md` |
+
+- **Consumidores:** `tools/vault_maintenance.py` (`_is_mirrored`, que traduz o caminho a partir da raiz do vault) e `tools/wiki_accents.py`. Na manutenção, `apply_text_normalization` pula a página espelhada e conta em `mirrored_skipped`, e `organize_notes` não reescreve link dentro dela, porque o link certo é o da fonte. O `wiki_accents` protegia só `specs` e `sessions`, e acentuaria `decisions/*-context.md` e `branches/*.seed.md`; agora usa a mesma lista.
+- **A lista não envelhece calada:** `test_is_mirrored_cobre_todo_destino_que_o_sync_escreve` roda o `sync` com uma fonte de cada tipo e exige que toda página escrita seja reconhecida como espelho.
+- **Por que a lista não ficou no `vault_maintenance`, como na primeira versão:** o `wiki_accents` é alcançável da produção (o `compendium` o importa). Importar dele o `vault_maintenance` fez o guarda de órfão (`tools/orfaos.py`) tratar o bloco `__main__` do módulo importado como vivo e declarar obsoletas as 12 linhas de ferramenta de mão do `vault_maintenance`. Rodar `--sync` ali gravaria uma mentira: as funções continuam sem chamador de produção. Com a lista no dono, o `vault_maintenance` volta a não ser importado por ninguém, e o guarda fica `ready: true` com 0 obsoletas e 0 órfãs.
+- Mutantes, 8 de 8 mortos: V1 normalize não pula · V2 organize não pula · V3 sem o padrão de decisions · V4 decisions inteira vira espelho · V5 inbox inteiro vira espelho · V6 sem o padrão de branches · V7 manutenção ignora o prefixo `AI-Brain/` · W1 `wiki_accents` com a lista antiga.
+- `test_vault_sync.py`, `test_vault_maintenance.py`, `test_wiki_accents.py`, `test_orfaos.py`, `test_wiki_e2e.py`, `test_harness_dir_resolution.py`: 110 passando; `ruff` limpo; as duas CLIs importam.
+- Suíte completa, uma vez, na árvore final (14 min): **1492 passando · 1 pulado · 1 falha**, e a falha é a mesma `test_deploy_drift` de `main` declarada acima.
 
 ## Nível de garantia
 
 | Afirmação | O que sustenta | Status |
 |---|---|---|
 | "Página editada no vault não é sobrescrita pelo PreCompact" | M1 e M4 mortos; adoção e recusa testadas; ponta a ponta pelo hook (28b) | SUSTENTA |
+| "A manutenção do vault não mexe em página espelhada" | V1–V6 e W1 mortos; contrato derivado do `sync` real | SUSTENTA |
 | "Erro do sincronizador aparece no log" | M5, M10 e M11 mortos; 28b lê o log gravado pelo hook real | SUSTENTA |
 | — | nada afirma que as sementes de ramo são espelhadas; não são, e está declarado acima | SUSTENTA |
