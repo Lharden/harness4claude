@@ -128,10 +128,28 @@ EOF
 
 # Auto-sync para o vault Obsidian (E3) — non-blocking; nunca quebra o handoff.
 # Espelha traces/specs/.remember para o vault. Se vault ausente, sai 0 (graceful).
+#
+# A saida vai para um log na RAIZ do harness, nao para /dev/null: ate 2026-09-24 uma
+# recusa ou uma falha de escrita nao deixava rastro nenhum. Com --quiet so sai o que
+# e problema (recusa de pagina editada no vault, falha de E/S, manifesto ilegivel) e,
+# se o Python cair, o traceback. Log acima de 512 KB vira .1 (uma geracao).
+# O manifesto tambem fica na raiz: o --harness-dir e o bucket da SESSAO, e um
+# manifesto ali recomecaria vazio a cada sessao.
 PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VAULT_SYNC="$PLUGIN_DIR/scripts/vault_sync.py"
 if [ -f "$VAULT_SYNC" ]; then
-    "$PY" "$VAULT_SYNC" --quiet --harness-dir "$HARNESS_DIR_WIN" >/dev/null 2>&1 || true
+    VAULT_SYNC_LOG="$HARNESS_DIR/logs/vault-sync.log"
+    mkdir -p "$HARNESS_DIR/logs" 2>/dev/null || true
+    if [ -f "$VAULT_SYNC_LOG" ]; then
+        LOG_SIZE=$(wc -c < "$VAULT_SYNC_LOG" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        if [ "${LOG_SIZE:-0}" -gt 524288 ]; then
+            mv -f "$VAULT_SYNC_LOG" "$VAULT_SYNC_LOG.1" 2>/dev/null || true
+        fi
+    fi
+    # Log que nao abre nao pode impedir o sync de rodar.
+    { : >> "$VAULT_SYNC_LOG"; } 2>/dev/null || VAULT_SYNC_LOG=/dev/null
+    "$PY" "$VAULT_SYNC" --quiet --harness-dir "$HARNESS_DIR_WIN" \
+        --manifesto "$HARNESS_ROOT_WIN/vault-sync-manifest.json" >> "$VAULT_SYNC_LOG" 2>&1 || true
 fi
 
 exit 0

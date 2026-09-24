@@ -477,7 +477,11 @@ python scripts/migrate_state.py --dry-run  # report only, no writes
 ### Obsidian integration per machine
 
 `vault_sync.py` (mirrors traces/specs/`.remember` into the vault on PreCompact) and
-the [`tools/`](tools/) vault utilities ship with the plugin. The two MCP servers —
+the [`tools/`](tools/) vault utilities ship with the plugin. A mirrored page that was
+edited in the vault is never overwritten: a manifest outside the vault
+(`~/.claude/harness/vault-sync-manifest.json`) records the hash of what the sync wrote,
+and a page that no longer matches it is refused. Refusals and write failures go to
+`~/.claude/harness/logs/vault-sync.log`. The two MCP servers —
 `obsidian-fs` (mcpvault, filesystem) and `obsidian` (Local REST API over https) — are
 wired **automatically** by `scripts/sync-machine.sh`, which merges
 [`sync/templates/mcp.obsidian.snippet.json`](sync/templates/mcp.obsidian.snippet.json)
