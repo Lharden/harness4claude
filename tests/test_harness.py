@@ -1465,6 +1465,83 @@ class TestPrecompact(HarnessTestBase):
             size = os.path.getsize(trace_file)
             self.assertLess(size, 51200, "trace-current.md deve ser menor após rotação")
 
+    def _precompact_isolado(self, tmp: str) -> tuple[str, str, str]:
+        """HARNESS_DIR e vault temporarios; devolve (raiz, bucket, vault)."""
+        tmp_harness = os.path.join(tmp, "harness")
+        tmp_vault = os.path.join(tmp, "vault")
+        os.makedirs(tmp_harness)
+        os.makedirs(tmp_vault)
+        sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+        from harness_paths import ensure_state_dir
+        tmp_state = str(ensure_state_dir(tmp_harness, os.getcwd()))
+        return tmp_harness, tmp_state, tmp_vault
+
+    def _rodar_precompact(self, tmp_harness: str, tmp_vault: str) -> int:
+        code, _out, _err = run_hook(self.HOOK, {}, env_extra={
+            "HARNESS_DIR": tmp_harness.replace(os.sep, "/"),
+            "AI_BRAIN_PATH": tmp_vault,
+        }, timeout=60)
+        return code
+
+    # --- Cenario 28b: o erro do vault_sync vai para o log, nao para /dev/null ---
+    def test_28b_erro_do_vault_sync_vai_para_o_log(self):
+        """Ate 2026-09-24 o hook descartava a saida inteira do vault_sync
+        (`>/dev/null 2>&1 || true`): uma falha de escrita ou uma recusa nao
+        deixava rastro nenhum. O destino ocupado por uma pasta forca a falha."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness, tmp_state, tmp_vault = self._precompact_isolado(tmp)
+            os.makedirs(os.path.join(tmp_state, "traces"))
+            with open(os.path.join(tmp_state, "traces", "sessao-x.md"), "w", encoding="utf-8") as f:
+                f.write("# trace\n")
+            os.makedirs(os.path.join(tmp_vault, "wiki", "sessions", "sessao-x.md"))
+
+            self.assertEqual(self._rodar_precompact(tmp_harness, tmp_vault), 0)
+
+            log = os.path.join(tmp_harness, "logs", "vault-sync.log")
+            self.assertTrue(os.path.isfile(log), "o hook deve gravar a saida do vault_sync")
+            with open(log, encoding="utf-8") as f:
+                conteudo = f.read()
+            self.assertIn("falha", conteudo)
+            self.assertIn("sessao-x.md", conteudo)
+
+    # --- Cenario 28c: o manifesto vive na raiz do harness, nao no bucket ---
+    def test_28c_manifesto_do_vault_sync_fica_na_raiz(self):
+        """O bucket e por sessao: um manifesto ali recomecaria vazio a cada sessao,
+        e toda pagina que a fonte mudou seria recusada como se alguem a tivesse editado."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness, tmp_state, tmp_vault = self._precompact_isolado(tmp)
+            os.makedirs(os.path.join(tmp_state, "traces"))
+            with open(os.path.join(tmp_state, "traces", "sessao-y.md"), "w", encoding="utf-8") as f:
+                f.write("# trace\n")
+
+            self.assertEqual(self._rodar_precompact(tmp_harness, tmp_vault), 0)
+
+            self.assertTrue(os.path.isfile(os.path.join(tmp_vault, "wiki", "sessions", "sessao-y.md")))
+            self.assertTrue(os.path.isfile(os.path.join(tmp_harness, "vault-sync-manifest.json")))
+            if os.path.normcase(tmp_state) != os.path.normcase(tmp_harness):
+                self.assertFalse(os.path.exists(os.path.join(tmp_state, "vault-sync-manifest.json")))
+
+    # --- Cenario 28d: o log do vault_sync nao cresce sem teto ---
+    def test_28d_log_do_vault_sync_rotaciona(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness, _tmp_state, tmp_vault = self._precompact_isolado(tmp)
+            logs = os.path.join(tmp_harness, "logs")
+            os.makedirs(logs)
+            log = os.path.join(logs, "vault-sync.log")
+            with open(log, "w", encoding="utf-8") as f:
+                f.write("x" * 600_000)
+
+            self.assertEqual(self._rodar_precompact(tmp_harness, tmp_vault), 0)
+
+            self.assertTrue(os.path.isfile(log + ".1"), "o log grande vira .1")
+            self.assertLess(os.path.getsize(log) if os.path.exists(log) else 0, 600_000)
+
 
 # ===========================================================================
 # INTEGRATION TESTS — Fluxo completo

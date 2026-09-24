@@ -2,6 +2,7 @@ from pathlib import Path
 
 from tools.vault_maintenance import (
     accentuate_prose,
+    apply_text_normalization,
     audit_vault,
     find_broken_wikilinks,
     normalize_markdown,
@@ -9,6 +10,9 @@ from tools.vault_maintenance import (
     repair_mojibake,
     update_wikilinks,
 )
+
+# Texto que a normalizacao muda: tres linhas em branco viram uma, e "usuario" ganha acento.
+NORMALIZAVEL = "# T\n\n\n\nusuario\n"
 
 
 def test_repair_mojibake_restores_common_portuguese_characters() -> None:
@@ -172,3 +176,52 @@ def test_audit_vault_reports_duplicates_empty_mojibake_and_formatting(
     assert report["empty_notes"] == ["Vazia.md"]
     assert report["mojibake_sources"] == ["Mojibake.md"]
     assert report["formatting_issue_sources"] == ["Mojibake.md", "Vazia.md"]
+
+
+# --- paginas espelhadas pelo vault_sync ficam fora da manutencao -------------
+#
+# Desde 2026-09-24 o vault_sync guarda o hash do que escreveu e RECUSA pagina que
+# mudou depois. Uma pagina espelhada normalizada aqui deixaria de receber a fonte.
+# A exclusao e por destino exato: `wiki/decisions` mistura `<slug>-context.md`
+# (espelho do CONTEXT.md) com decisoes escritas no vault, e `raw/inbox` recebe
+# `today-*.md` do sync e notas humanas.
+
+
+def _nota(root: Path, relativo: str, texto: str = NORMALIZAVEL) -> Path:
+    caminho = root / relativo
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    caminho.write_text(texto, encoding="utf-8")
+    return caminho
+
+
+def test_normalize_nao_toca_pagina_espelhada(tmp_path: Path) -> None:
+    """A lista de espelhos e do vault_sync (a paridade com o que ele escreve e travada
+    em test_vault_sync.py); aqui, a traducao do caminho a partir da raiz do vault."""
+    espelhadas = [
+        _nota(tmp_path, "AI-Brain/wiki/specs/x-spec.md"),
+        _nota(tmp_path, "AI-Brain/wiki/decisions/projeto-x-context.md"),
+        _nota(tmp_path, "AI-Brain/raw/inbox/today-2026-08-06.done.md"),
+    ]
+    humanas = [
+        _nota(tmp_path, "AI-Brain/wiki/decisions/decisao-humana.md"),
+        _nota(tmp_path, "AI-Brain/raw/inbox/Bem-vindo ao Obsidian.md"),
+        _nota(tmp_path, "wiki/specs/fora-do-ai-brain.md"),
+        _nota(tmp_path, "Notas/Comum.md"),
+    ]
+
+    resultado = apply_text_normalization(tmp_path)
+
+    assert [p.read_text(encoding="utf-8") for p in espelhadas] == [NORMALIZAVEL] * 3
+    assert all(p.read_text(encoding="utf-8") != NORMALIZAVEL for p in humanas)
+    assert resultado["mirrored_skipped"] == 3
+
+
+def test_organize_nao_reescreve_link_dentro_de_pagina_espelhada(tmp_path: Path) -> None:
+    _nota(tmp_path, "Origem/Indice.md", "# Indice\n")
+    espelho = _nota(tmp_path, "AI-Brain/wiki/specs/x-spec.md", "[[Indice]]\n")
+    comum = _nota(tmp_path, "Home.md", "[[Indice]]\n")
+
+    organize_notes(tmp_path, {"Origem/Indice.md": "Destino/Índice.md"})
+
+    assert espelho.read_text(encoding="utf-8") == "[[Indice]]\n"
+    assert comum.read_text(encoding="utf-8") == "[[Índice]]\n"
