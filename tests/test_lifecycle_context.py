@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -26,11 +31,7 @@ def _mensagem(saida: str) -> str:
     return payload["hookSpecificOutput"]["additionalContext"]
 
 
-def test_postcompact_reloads_the_exact_scoped_task(tmp_path: Path):
-    harness_root = tmp_path / "harness"
-    cwd = tmp_path / "repo"
-    cwd.mkdir()
-    session_id = "session-a"
+def _bucket_com_gate_pendente(harness_root: Path, cwd: Path, session_id: str) -> Path:
     bucket = ensure_state_dir(harness_root, cwd, session_id=session_id)
     (bucket / "state.json").write_text(
         json.dumps(
@@ -42,10 +43,30 @@ def test_postcompact_reloads_the_exact_scoped_task(tmp_path: Path):
                 "current_step": "approve-spec",
                 "pending_gate": "approve-spec",
                 "artifacts_so_far": ["docs/specs/demo-spec.md"],
+                # sem isto o TTL do SessionStart expira o pipeline antes de retomar
+                "started_at": datetime.now(timezone.utc).isoformat(),
             }
         ),
         encoding="utf-8",
     )
+    return bucket
+
+
+def test_postcompact_registra_e_nao_emite(tmp_path: Path):
+    """PostCompact nao tem canal para o modelo, entao registra e fica calado.
+
+    https://code.claude.com/docs/en/hooks, "Decision control": PostCompact esta
+    em "None — No decision control" e o host descarta `systemMessage` e
+    `continue`. Ate 2026-09-24 este teste exigia `hookSpecificOutput` daqui —
+    era a especificacao do defeito: o host rejeitava a saida com "Hook JSON
+    output validation failed" e a retomada nunca chegava. A retomada agora e
+    verificada no canal que entrega: SessionStart com source "compact" (abaixo).
+    """
+    harness_root = tmp_path / "harness"
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    session_id = "session-a"
+    bucket = _bucket_com_gate_pendente(harness_root, cwd, session_id)
     env = os.environ.copy()
     env["HARNESS_DIR"] = str(harness_root)
 
@@ -59,13 +80,72 @@ def test_postcompact_reloads_the_exact_scoped_task(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stderr
-    message = _mensagem(result.stdout)
-    assert "t-scoped" in message
-    assert "approve-spec" in message
-    assert "docs/specs/demo-spec.md" in message
+    assert result.stdout.strip() == "", result.stdout
     assert (bucket / "lifecycle.db").exists()
     assert not (harness_root / "lifecycle.db").exists()
     assert (harness_root / "heartbeats" / "PostCompact").exists()
+
+
+def test_session_start_dispara_na_compactacao():
+    """O hook de SessionStart nao pode filtrar fora o source "compact".
+
+    E ele que carrega a retomada depois de /compact; um matcher como "startup"
+    calaria a retomada sem erro nenhum.
+    """
+    grupos = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]["SessionStart"]
+    com_session_start = [
+        g for g in grupos
+        if any("harness-session-start.sh" in h.get("command", "") for h in g.get("hooks", []))
+    ]
+    assert com_session_start
+    for grupo in com_session_start:
+        matcher = grupo.get("matcher", "")
+        assert matcher in ("", "*") or re.fullmatch(matcher, "compact"), matcher
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash ausente no PATH")
+def test_retomada_pos_compact_chega_pelo_session_start(tmp_path: Path):
+    harness_root = tmp_path / "home" / ".claude" / "harness"
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    session_id = "session-a"
+    _bucket_com_gate_pendente(harness_root, cwd, session_id)
+    env = {
+        **os.environ,
+        "CLAUDE_PLUGIN_ROOT": str(ROOT),
+        "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
+        "HARNESS_DIR": str(harness_root),
+        "HARNESS_SKIP_DEPCHECK": "1",
+    }
+    env.pop("AI_BRAIN_PATH", None)
+    env.pop("VAULT_PATH", None)
+
+    result = subprocess.run(
+        ["bash", str(ROOT / "hooks" / "harness-session-start.sh")],
+        input=json.dumps({
+            "session_id": session_id,
+            "cwd": str(cwd),
+            "hook_event_name": "SessionStart",
+            "source": "compact",
+        }),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        env=env,
+        cwd=str(cwd),
+        timeout=90,
+    )
+
+    assert result.returncode == 0, result.stderr
+    bloco = json.loads(result.stdout)["hookSpecificOutput"]
+    assert bloco["hookEventName"] == "SessionStart"
+    message = _mensagem(result.stdout)
+    assert "HARNESS v3 RESUMING" in message
+    assert "t-scoped" in message
+    assert "Pending human gate: approve-spec" in message
 
 
 def test_subagent_start_includes_scoped_node_contract(tmp_path: Path):

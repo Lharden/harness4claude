@@ -210,8 +210,11 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
   context instead of creating a replacement task
 - Each `PostToolUse` file edit or shell command advances the transactional code revision,
   so evidence collected before a possible mutation cannot satisfy completion
-- Compact and subagent lifecycle context is rendered from the same session/worktree
-  scope and includes the active task, phase, pending gate and artifact paths
+- Post-compaction resume is delivered by `SessionStart` (source `compact`) from the
+  same session/worktree scope, with the active task, phase and pending gate;
+  `PostCompact` only records the event, because the host gives it no channel to the
+  model. `SubagentStart` context is rendered from the same scope and includes the
+  active task, phase, pending gate and artifact paths
 - Skills communicate via `signals.json` rather than direct invocation, enabling loose coupling
 - The orchestrator (`harness-workflow`) is the only skill that reads classification tags directly
 

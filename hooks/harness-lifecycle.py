@@ -42,12 +42,11 @@ def _resume_message(event: str, state: dict) -> str:
 
 
 def _emit(payload: dict, event: str, texto: str) -> None:
-    """Entrega a retomada pelo emissor central.
+    """Entrega o contexto do SubagentStart pelo emissor central.
 
-    `systemMessage` e canal de UI e nunca chegou. PostCompact e SubagentStart
-    tambem nunca foram observados entregando por canal nenhum, entao o mapa do
-    emissor os marca como nao verificados — mas o que sai daqui e instrucao de
-    retomada, e nao ha regressao possivel: hoje ja se perde.
+    `systemMessage` e canal de UI e nunca chegou. SubagentStart aceita
+    `hookSpecificOutput.additionalContext` com `hookEventName` "SubagentStart"
+    (https://code.claude.com/docs/en/hooks, secao SubagentStart).
     """
     if not texto:
         return
@@ -229,7 +228,14 @@ def main() -> int:
         )
     if event == "SessionEnd":
         _fechar_sessao(payload, root)
-    if event in {"PostCompact", "SubagentStart"}:
+    # PostCompact registra e fica calado. Ele nao tem canal para o modelo: a doc
+    # (https://code.claude.com/docs/en/hooks, "Decision control") o poe em "None
+    # — No decision control", o host descarta `systemMessage` e `continue`, e
+    # stdout cru vai so para o log de debug. Emitir `hookSpecificOutput` aqui
+    # fazia o host rejeitar a saida com "Hook JSON output validation failed".
+    # A retomada pos-compactacao sai pelo SessionStart, que dispara de novo com
+    # source "compact" e roda harness-session-start.sh sem matcher.
+    if event == "SubagentStart":
         _emit(payload, event, _resume_message(event, _load_state(bucket)))
     return 0
 
