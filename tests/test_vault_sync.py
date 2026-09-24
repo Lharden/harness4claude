@@ -114,7 +114,7 @@ def test_spec_crua_chega_ao_vault_com_frontmatter(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\nREQ-001: algo.")
     vault = tmp_path / "ai-brain"
 
-    counts = vs.sync(vault, tmp_path / "harness", cwd)
+    counts = vs.sync(vault, tmp_path / "harness", cwd, raiz=tmp_path / "harness")
 
     espelhada = vault / "wiki" / "specs" / "feature-spec.md"
     assert counts["specs"] == 1
@@ -126,7 +126,7 @@ def test_context_vira_pagina_de_decisao_nomeada_pelo_projeto(tmp_path: Path) -> 
     cwd = _projeto(tmp_path, context="# CONTEXT\n\n## Locked Decisions\n- L-01: usar SQLite.")
     vault = tmp_path / "ai-brain"
 
-    counts = vs.sync(vault, tmp_path / "harness", cwd)
+    counts = vs.sync(vault, tmp_path / "harness", cwd, raiz=tmp_path / "harness")
 
     decisao = vault / "wiki" / "decisions" / "projeto-x-context.md"
     assert counts["decisions"] == 1
@@ -140,8 +140,8 @@ def test_sync_permanece_idempotente(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo", context="# CONTEXT\n\ncorpo")
     vault = tmp_path / "ai-brain"
 
-    primeira = vs.sync(vault, tmp_path / "harness", cwd)
-    segunda = vs.sync(vault, tmp_path / "harness", cwd)
+    primeira = vs.sync(vault, tmp_path / "harness", cwd, raiz=tmp_path / "harness")
+    segunda = vs.sync(vault, tmp_path / "harness", cwd, raiz=tmp_path / "harness")
 
     assert primeira == {"sessions": 0, "specs": 1, "decisions": 1, "inbox": 0, "branches": 0}
     assert segunda == {"sessions": 0, "specs": 0, "decisions": 0, "inbox": 0, "branches": 0}
@@ -151,7 +151,7 @@ def test_projeto_sem_context_nao_cria_decisions(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo")
     vault = tmp_path / "ai-brain"
 
-    counts = vs.sync(vault, tmp_path / "harness", cwd)
+    counts = vs.sync(vault, tmp_path / "harness", cwd, raiz=tmp_path / "harness")
 
     assert counts["decisions"] == 0
     assert not (vault / "wiki" / "decisions").exists()
@@ -170,14 +170,18 @@ def test_semente_de_ramo_vai_para_o_vault(tmp_path: Path) -> None:
     import harness_paths
 
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo")
-    harness = tmp_path / "harness"
-    destino = harness_paths.state_dir(root=harness, cwd=cwd) / "branches"
+    raiz = tmp_path / "harness"
+    # Balde de SESSAO, como o hook passa. Ate 2026-09-24 este teste usava o mesmo
+    # diretorio como raiz e como balde, e por isso ficava verde com o hook quebrado.
+    balde = harness_paths.state_dir(root=raiz, cwd=cwd, session_id="sessao-de-teste")
+    assert balde != harness_paths.state_dir(root=raiz, cwd=cwd)
+    destino = harness_paths.state_dir(root=raiz, cwd=cwd) / "branches"
     destino.mkdir(parents=True, exist_ok=True)
     (destino / "sensor-de-deriva.seed.md").write_text(
         "# Sensor de Deriva\n\ncorpo da semente", encoding="utf-8"
     )
 
-    counts = vs.sync(tmp_path / "ai-brain", harness, cwd)
+    counts = vs.sync(tmp_path / "ai-brain", balde, cwd, raiz=raiz)
 
     espelho = tmp_path / "ai-brain" / "wiki" / "branches" / "sensor-de-deriva.seed.md"
     assert counts["branches"] == 1
@@ -215,14 +219,14 @@ def _pagina(vault: Path) -> Path:
 def test_edicao_humana_sobrevive_a_mudanca_da_fonte(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\nversao 1\n")
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
-    vs.sync(vault, harness, cwd)
+    vs.sync(vault, harness, cwd, raiz=harness)
     pagina = _pagina(vault)
     pagina.write_text(pagina.read_text(encoding="utf-8") + "\nNOTA DO AUTOR\n", encoding="utf-8")
     _fonte(cwd).write_text("# Feature\n\nversao 2\n", encoding="utf-8")
     _no_futuro(_fonte(cwd))
     eventos: list[str] = []
 
-    counts = vs.sync(vault, harness, cwd, eventos=eventos)
+    counts = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert "NOTA DO AUTOR" in pagina.read_text(encoding="utf-8")
     assert "versao 2" not in pagina.read_text(encoding="utf-8")
@@ -233,12 +237,12 @@ def test_edicao_humana_sobrevive_a_mudanca_da_fonte(tmp_path: Path) -> None:
 def test_pagina_intocada_e_atualizada_quando_a_fonte_muda(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\nversao 1\n")
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
-    vs.sync(vault, harness, cwd)
+    vs.sync(vault, harness, cwd, raiz=harness)
     _fonte(cwd).write_text("# Feature\n\nversao 2\n", encoding="utf-8")
     _no_futuro(_fonte(cwd))
     eventos: list[str] = []
 
-    counts = vs.sync(vault, harness, cwd, eventos=eventos)
+    counts = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert counts["specs"] == 1
     assert "versao 2" in _pagina(vault).read_text(encoding="utf-8")
@@ -249,12 +253,12 @@ def test_mtime_novo_sem_mudanca_de_conteudo_nao_reescreve(tmp_path: Path) -> Non
     """Checkout, Obsidian Sync e `touch` mexem no mtime sem mexer no texto."""
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo\n")
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
-    vs.sync(vault, harness, cwd)
+    vs.sync(vault, harness, cwd, raiz=harness)
     _no_passado(_pagina(vault))
     antes = _pagina(vault).stat().st_mtime
     _no_futuro(_fonte(cwd))
 
-    counts = vs.sync(vault, harness, cwd)
+    counts = vs.sync(vault, harness, cwd, raiz=harness)
 
     assert counts["specs"] == 0
     assert _pagina(vault).stat().st_mtime == antes
@@ -264,11 +268,11 @@ def test_pagina_com_mtime_mexido_mas_intocada_ainda_atualiza(tmp_path: Path) -> 
     """O inverso: mtime da pagina mais novo que a fonte nao prova edicao humana."""
     cwd = _projeto(tmp_path, spec="# Feature\n\nversao 1\n")
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
-    vs.sync(vault, harness, cwd)
+    vs.sync(vault, harness, cwd, raiz=harness)
     _no_futuro(_pagina(vault), 5000)
     _fonte(cwd).write_text("# Feature\n\nversao 2\n", encoding="utf-8")
 
-    counts = vs.sync(vault, harness, cwd)
+    counts = vs.sync(vault, harness, cwd, raiz=harness)
 
     assert counts["specs"] == 1
     assert "versao 2" in _pagina(vault).read_text(encoding="utf-8")
@@ -294,14 +298,14 @@ def test_primeiro_contato_adota_pagina_igual_a_menos_de_datas_slug_e_fim_de_linh
     bytes_antes = _pagina(vault).read_bytes()
     eventos: list[str] = []
 
-    primeira = vs.sync(vault, harness, cwd, eventos=eventos)
+    primeira = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert primeira["specs"] == 0, "adotar nao e reescrever"
     assert _pagina(vault).read_bytes() == bytes_antes
     assert eventos == []
 
     _fonte(cwd).write_text("# Feature\n\nversao 2\n", encoding="utf-8")
-    segunda = vs.sync(vault, harness, cwd)
+    segunda = vs.sync(vault, harness, cwd, raiz=harness)
 
     assert segunda["specs"] == 1, "a adocao registrou a pagina: a mudanca da fonte chega"
     assert "versao 2" in _pagina(vault).read_text(encoding="utf-8")
@@ -315,7 +319,7 @@ def test_primeiro_contato_recusa_pagina_diferente(tmp_path: Path) -> None:
     _no_passado(_pagina(vault))
     eventos: list[str] = []
 
-    counts = vs.sync(vault, harness, cwd, eventos=eventos)
+    counts = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert counts["specs"] == 0
     assert "TEXTO ESCRITO NO OBSIDIAN" in _pagina(vault).read_text(encoding="utf-8")
@@ -330,6 +334,8 @@ def test_primeiro_contato_com_pagina_mais_nova_que_a_fonte_nao_escreve_nem_avisa
     Medido na copia do AI-Brain real (2026-09-24): 5 paginas de `raw/inbox` eram de
     outro repositorio com `.remember/today-*.md` de mesmo nome, mais novas que o arquivo
     do SLB. Avisar ali repetiria o mesmo aviso a cada PreCompact, sem acao possivel.
+    [superado no inbox, 2026-09-24: as notas diarias ganharam o rotulo do repo no nome e
+    nao colidem mais; o caso continua valendo para specs de mesmo nome em repos diferentes.]
     """
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo\n")
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
@@ -338,7 +344,7 @@ def test_primeiro_contato_com_pagina_mais_nova_que_a_fonte_nao_escreve_nem_avisa
     _pagina(vault).write_text("# Feature\n\nconteudo de outra fonte\n", encoding="utf-8")
     eventos: list[str] = []
 
-    counts = vs.sync(vault, harness, cwd, eventos=eventos)
+    counts = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert counts["specs"] == 0
     assert "conteudo de outra fonte" in _pagina(vault).read_text(encoding="utf-8")
@@ -355,7 +361,7 @@ def test_erro_num_arquivo_nao_derruba_o_lote(tmp_path: Path) -> None:
     (vault / "wiki" / "specs" / "a-spec.md").mkdir(parents=True)  # destino ocupado: a escrita falha
     eventos: list[str] = []
 
-    counts = vs.sync(vault, harness, cwd, eventos=eventos)
+    counts = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert (vault / "wiki" / "specs" / "b-spec.md").is_file()
     assert (vault / "wiki" / "decisions" / "projeto-x-context.md").is_file()
@@ -368,7 +374,7 @@ def test_manifesto_fica_fora_do_vault(tmp_path: Path) -> None:
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
     manifesto = tmp_path / "raiz-do-harness" / vs.MANIFESTO
 
-    vs.sync(vault, harness, cwd, manifesto=manifesto)
+    vs.sync(vault, harness, cwd, raiz=harness, manifesto=manifesto)
 
     assert manifesto.is_file()
     assert not (harness / vs.MANIFESTO).exists()
@@ -379,7 +385,7 @@ def test_manifesto_padrao_fica_no_harness_dir(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo\n")
     harness = tmp_path / "harness"
 
-    vs.sync(tmp_path / "ai-brain", harness, cwd)
+    vs.sync(tmp_path / "ai-brain", harness, cwd, raiz=harness)
 
     assert (harness / vs.MANIFESTO).is_file()
 
@@ -387,18 +393,18 @@ def test_manifesto_padrao_fica_no_harness_dir(tmp_path: Path) -> None:
 def test_manifesto_corrompido_vale_como_vazio_e_avisa(tmp_path: Path) -> None:
     cwd = _projeto(tmp_path, spec="# Feature\n\ncorpo\n")
     vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
-    vs.sync(vault, harness, cwd)
+    vs.sync(vault, harness, cwd, raiz=harness)
     (harness / vs.MANIFESTO).write_text("{isto nao e json", encoding="utf-8")
     eventos: list[str] = []
 
-    counts = vs.sync(vault, harness, cwd, eventos=eventos)
+    counts = vs.sync(vault, harness, cwd, raiz=harness, eventos=eventos)
 
     assert counts["specs"] == 0, "a pagina igual a fonte e adotada, nao reescrita"
     assert any("manifesto" in e for e in eventos), eventos
     assert json.loads((harness / vs.MANIFESTO).read_text(encoding="utf-8"))["paginas"]
 
     _fonte(cwd).write_text("# Feature\n\nversao 2\n", encoding="utf-8")
-    assert vs.sync(vault, harness, cwd)["specs"] == 1
+    assert vs.sync(vault, harness, cwd, raiz=harness)["specs"] == 1
 
 
 def test_duas_fontes_para_a_mesma_pagina_nao_se_alternam(tmp_path: Path) -> None:
@@ -414,15 +420,15 @@ def test_duas_fontes_para_a_mesma_pagina_nao_se_alternam(tmp_path: Path) -> None
     b = _projeto(tmp_path / "b", spec="# Feature\n\ndo projeto B\n")
     _no_passado(_fonte(b))
 
-    vs.sync(vault, harness, a)
-    assert vs.sync(vault, harness, b)["specs"] == 0, "a fonte mais velha nao assume a pagina"
-    assert vs.sync(vault, harness, a)["specs"] == 0
+    vs.sync(vault, harness, a, raiz=harness)
+    assert vs.sync(vault, harness, b, raiz=harness)["specs"] == 0, "a fonte mais velha nao assume a pagina"
+    assert vs.sync(vault, harness, a, raiz=harness)["specs"] == 0
     assert "do projeto A" in _pagina(vault).read_text(encoding="utf-8")
 
     _fonte(b).write_text("# Feature\n\ndo projeto B, editado\n", encoding="utf-8")
     _no_futuro(_fonte(b))
-    assert vs.sync(vault, harness, b)["specs"] == 1, "a fonte mais nova assume"
-    assert vs.sync(vault, harness, a)["specs"] == 0
+    assert vs.sync(vault, harness, b, raiz=harness)["specs"] == 1, "a fonte mais nova assume"
+    assert vs.sync(vault, harness, a, raiz=harness)["specs"] == 0
     assert "do projeto B, editado" in _pagina(vault).read_text(encoding="utf-8")
 
 
@@ -445,7 +451,7 @@ def test_is_mirrored_cobre_todo_destino_que_o_sync_escreve(tmp_path: Path) -> No
     (sementes / "ramo.seed.md").write_text("# semente\n", encoding="utf-8")
     vault = tmp_path / "ai-brain"
 
-    contagens = vs.sync(vault, harness, cwd)
+    contagens = vs.sync(vault, harness, cwd, raiz=harness)
 
     assert all(contagens.values()), f"cada destino precisa receber uma pagina: {contagens}"
     escritas = [p.relative_to(vault).as_posix() for p in vault.rglob("*.md")]
@@ -458,7 +464,142 @@ def test_is_mirrored_nao_pega_pagina_humana_das_mesmas_pastas() -> None:
     assert not vs.is_mirrored("raw/inbox/Bem-vindo ao Obsidian.md")
     assert not vs.is_mirrored("wiki/log.md")
     assert vs.is_mirrored("wiki/decisions/harness4claude-context.md")
+    assert vs.is_mirrored("raw/inbox/slb-mestrado-projeto--today-2026-08-06.done.md")
+    # Nome sem rotulo: as paginas legadas, de antes de 2026-09-24, continuam protegidas.
     assert vs.is_mirrored("raw/inbox/today-2026-08-06.done.md")
+    assert not vs.is_mirrored("raw/inbox/_processed/slb-mestrado-projeto--today-2026-08-06.done.md")
+
+
+# --- notas diarias: um nome por repositorio, e nota consumida nao volta --------
+#
+# Ate 2026-09-24 toda `.remember/today-*.md` ia para `raw/inbox/` com o nome da fonte.
+# Medido no AI-Brain real: 22 nomes tinham mais de uma fonte, e 33 versoes de 7 repos
+# estavam fora do vault porque a nota mais nova de outro repo ocupava o nome. E uma nota
+# tirada do inbox voltava no PreCompact seguinte: 11 nomes estavam em `_processed/` e no
+# inbox ao mesmo tempo.
+
+NOTA = "today-2026-08-06.done.md"
+
+
+def _repo(base: Path, nome: str, notas: dict[str, str]) -> Path:
+    """Repositorio falso (`.git` diretorio) com `.remember/` e as notas dadas."""
+    raiz = base / nome
+    (raiz / ".git").mkdir(parents=True)
+    (raiz / ".remember").mkdir()
+    for arquivo, texto in notas.items():
+        (raiz / ".remember" / arquivo).write_text(texto, encoding="utf-8")
+    return raiz
+
+
+def _sync_inbox(tmp_path: Path, cwd: Path, remember_global: Path | None = None) -> dict[str, int]:
+    """Sync hermetico: nunca le o `C:/.remember` real."""
+    harness = tmp_path / "harness"
+    global_ = remember_global or tmp_path / "sem-remember-global"
+    return vs.sync(tmp_path / "ai-brain", harness, cwd, raiz=harness, remember_global=global_)
+
+
+def _inbox(tmp_path: Path) -> dict[str, str]:
+    pasta = tmp_path / "ai-brain" / "raw" / "inbox"
+    return {p.name: p.read_text(encoding="utf-8") for p in sorted(pasta.glob("*.md"))}
+
+
+def test_notas_de_repos_diferentes_com_o_mesmo_nome_nao_colidem(tmp_path: Path) -> None:
+    a = _repo(tmp_path, "repo-a", {NOTA: "# do repo A\n"})
+    b = _repo(tmp_path, "repo-b", {NOTA: "# do repo B\n"})
+
+    _sync_inbox(tmp_path, a)
+    _sync_inbox(tmp_path, b)
+
+    assert _inbox(tmp_path) == {f"repo-a--{NOTA}": "# do repo A\n", f"repo-b--{NOTA}": "# do repo B\n"}
+
+
+def test_sessao_em_worktree_espelha_as_notas_do_checkout_dono(tmp_path: Path) -> None:
+    """O plugin remember escreve no checkout principal; nenhum dos 9 worktrees medidos
+    tinha `.remember`. Pelo `cwd` do worktree, a sessao nao espelhava nota nenhuma."""
+    principal = _repo(tmp_path, "repo-principal", {NOTA: "# nota\n"})
+    gitdir = principal / ".git" / "worktrees" / "wt"
+    gitdir.mkdir(parents=True)
+    worktree = tmp_path / "pasta-do-worktree"
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+    _sync_inbox(tmp_path, worktree)
+
+    assert list(_inbox(tmp_path)) == [f"repo-principal--{NOTA}"]
+
+
+def test_remember_global_tem_rotulo_fixo_e_uma_pagina_so(tmp_path: Path) -> None:
+    """Com o rotulo do `cwd`, cada repo copiaria a mesma nota global com o proprio prefixo."""
+    global_ = tmp_path / "remember-global"
+    global_.mkdir()
+    (global_ / NOTA).write_text("# global\n", encoding="utf-8")
+    a = _repo(tmp_path, "repo-a", {})
+    b = _repo(tmp_path, "repo-b", {})
+
+    assert _sync_inbox(tmp_path, a, global_)["inbox"] == 1
+    assert _sync_inbox(tmp_path, b, global_)["inbox"] == 0
+    assert list(_inbox(tmp_path)) == [f"{vs.ROTULO_REMEMBER_GLOBAL}--{NOTA}"]
+
+
+def test_nota_apagada_do_inbox_nao_volta_enquanto_a_fonte_nao_muda(tmp_path: Path) -> None:
+    a = _repo(tmp_path, "repo-a", {NOTA: "# v1\n"})
+    _sync_inbox(tmp_path, a)
+    pagina = tmp_path / "ai-brain" / "raw" / "inbox" / f"repo-a--{NOTA}"
+    pagina.unlink()
+
+    assert _sync_inbox(tmp_path, a)["inbox"] == 0
+    assert not pagina.exists()
+
+    (a / ".remember" / NOTA).write_text("# v2, conteudo novo\n", encoding="utf-8")
+    assert _sync_inbox(tmp_path, a)["inbox"] == 1, "conteudo novo e trabalho novo: volta"
+    assert pagina.read_text(encoding="utf-8") == "# v2, conteudo novo\n"
+
+
+def test_nota_movida_para_processed_nao_volta_mesmo_sem_manifesto(tmp_path: Path) -> None:
+    """`_processed/` vive no vault: vale nas duas maquinas e sobrevive a perda do
+    manifesto, que fica em `~/.claude/harness`, um por maquina."""
+    a = _repo(tmp_path, "repo-a", {NOTA: "# v1\n"})
+    _sync_inbox(tmp_path, a)
+    inbox = tmp_path / "ai-brain" / "raw" / "inbox"
+    (inbox / "_processed").mkdir()
+    (inbox / f"repo-a--{NOTA}").rename(inbox / "_processed" / f"repo-a--{NOTA}")
+    (tmp_path / "harness" / vs.MANIFESTO).unlink()
+
+    assert _sync_inbox(tmp_path, a)["inbox"] == 0
+    assert not (inbox / f"repo-a--{NOTA}").exists()
+
+
+def test_nota_consumida_com_rotulo_repetido_so_volta_pela_fonte_mais_nova(tmp_path: Path) -> None:
+    """Dois repos com a mesma pasta dao o mesmo rotulo e caem no mesmo destino.
+
+    A fonte que nao escreveu a pagina nao a recria so por ter sha diferente do
+    registrado: vale a regra de sempre, a mais nova vence.
+    """
+    a = _repo(tmp_path / "x", "repo", {NOTA: "# do x\n"})
+    b = _repo(tmp_path / "y", "repo", {NOTA: "# do y, mais velho\n"})
+    _no_passado(b / ".remember" / NOTA)
+    _sync_inbox(tmp_path, a)
+    pagina = tmp_path / "ai-brain" / "raw" / "inbox" / f"repo--{NOTA}"
+    pagina.unlink()
+
+    assert _sync_inbox(tmp_path, b)["inbox"] == 0
+    assert not pagina.exists()
+
+    (b / ".remember" / NOTA).write_text("# do y, editado\n", encoding="utf-8")
+    _no_futuro(b / ".remember" / NOTA)
+    assert _sync_inbox(tmp_path, b)["inbox"] == 1
+    assert pagina.read_text(encoding="utf-8") == "# do y, editado\n"
+
+
+def test_nota_processada_com_nome_antigo_nao_volta_com_nome_novo(tmp_path: Path) -> None:
+    """As notas de `_processed/` anteriores a 2026-09-24 tem o nome sem rotulo."""
+    a = _repo(tmp_path, "repo-a", {NOTA: "# v1\n"})
+    processadas = tmp_path / "ai-brain" / "raw" / "inbox" / "_processed"
+    processadas.mkdir(parents=True)
+    (processadas / NOTA).write_bytes(b"# v1\r\n")
+
+    assert _sync_inbox(tmp_path, a)["inbox"] == 0
+    assert _inbox(tmp_path) == {}
 
 
 def test_cli_imprime_recusa_no_stderr_e_grava_manifesto_onde_mandado(tmp_path: Path) -> None:

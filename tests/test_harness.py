@@ -1525,6 +1525,52 @@ class TestPrecompact(HarnessTestBase):
             if os.path.normcase(tmp_state) != os.path.normcase(tmp_harness):
                 self.assertFalse(os.path.exists(os.path.join(tmp_state, "vault-sync-manifest.json")))
 
+    # --- Cenario 28e: sementes de ramo chegam ao vault pelo hook ---
+    def test_28e_semente_de_ramo_chega_ao_vault_pelo_hook(self):
+        """Ate 2026-09-24 o hook passava o balde da SESSAO em `--harness-dir`, e o
+        vault_sync o tratava como a RAIZ ao procurar as sementes: resolvia
+        `<balde>/projects/<slug>/branches`, que nunca existe. Medido: 29 sementes
+        em `~/.claude/harness/projects/*/branches` e 1 pagina em `wiki/branches`.
+
+        O `cwd` do payload difere do `cwd` do processo de proposito: o balde e
+        calculado pelo do payload, e as fontes do sync tem de vir do mesmo lugar.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness = os.path.join(tmp, "harness")
+            tmp_vault = os.path.join(tmp, "vault")
+            projeto = os.path.join(tmp, "projeto-28e")
+            os.makedirs(tmp_harness)
+            os.makedirs(tmp_vault)
+            os.makedirs(os.path.join(projeto, "docs", "specs"))
+            with open(os.path.join(projeto, "docs", "specs", "so-do-payload-spec.md"), "w",
+                      encoding="utf-8") as f:
+                f.write("# spec do projeto do payload\n")
+            sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+            from harness_paths import state_dir
+            # Onde o escritor de producao (`branch_state.branches_dir`) poe a semente:
+            # `state_dir(cwd)` a partir da raiz, sem sessao.
+            sementes = os.path.join(str(state_dir(root=tmp_harness, cwd=projeto)), "branches")
+            os.makedirs(sementes)
+            with open(os.path.join(sementes, "ramo-28e.seed.md"), "w", encoding="utf-8") as f:
+                f.write("# Ramo 28e\n\ncorpo da semente\n")
+
+            code, _out, _err = run_hook(
+                self.HOOK, {"cwd": projeto, "session_id": "sessao-28e"},
+                env_extra={"HARNESS_DIR": tmp_harness.replace(os.sep, "/"),
+                           "AI_BRAIN_PATH": tmp_vault},
+                timeout=60,
+            )
+
+            self.assertEqual(code, 0)
+            espelho = os.path.join(tmp_vault, "wiki", "branches", "ramo-28e.seed.md")
+            log = os.path.join(tmp_harness, "logs", "vault-sync.log")
+            detalhe = open(log, encoding="utf-8").read() if os.path.isfile(log) else "(sem log)"
+            self.assertTrue(os.path.isfile(espelho), f"semente nao espelhada. Log: {detalhe}")
+            specs = sorted(os.listdir(os.path.join(tmp_vault, "wiki", "specs")))
+            self.assertEqual(specs, ["so-do-payload-spec.md"], "as fontes vem do cwd do payload")
+
     # --- Cenario 28d: o log do vault_sync nao cresce sem teto ---
     def test_28d_log_do_vault_sync_rotaciona(self):
         import tempfile
