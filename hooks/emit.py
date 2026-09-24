@@ -28,7 +28,17 @@ de documentacao:
 | PostToolUse      | stdout cru         | `<harness-reclassification>` chega      |
 | PostToolUse      | additionalContext  | NUNCA observado — nao usar              |
 | Stop             | decision/block     | interrompe de verdade; so para gate     |
+| SubagentStart    | additionalContext  | doc oficial, secao SubagentStart        |
+| PostCompact      | nenhum             | doc oficial: "No decision control"      |
 | qualquer         | systemMessage      | MORTO                                   |
+
+As duas linhas marcadas "doc oficial" vem de
+https://code.claude.com/docs/en/hooks ("Add context for Claude" e "Decision
+control"), nao de transcript. O PostCompact nao tem canal para o modelo: o host
+rejeita `hookSpecificOutput` nele ("Hook JSON output validation failed"),
+descarta `systemMessage` e `continue`, e manda stdout cru so para o log de
+debug. A retomada pos-compactacao sai pelo SessionStart, que dispara de novo
+com source "compact".
 
 Duas regras seguem dai, e as duas sao de projeto, nao de gosto:
 
@@ -83,19 +93,18 @@ SILENT = "silent"
 # Canal por evento. Ausente do mapa => stdout, o canal conservador que
 # comprovadamente chega. `stop` e silencioso de proposito; ver docstring.
 #
-# NAO VERIFICADO: `postcompact` e `subagentstart` nunca foram observados
-# entregando por canal nenhum — nao ha um so exemplo nos 343 transcripts.
-# Ficam em additionalContext pelo criterio semantico (o que sai deles e
-# instrucao de retomada, nao dado) e porque nao ha regressao a temer: hoje
-# esses sinais saem por systemMessage e ja se perdem. Se um dia aparecer
-# evidencia de entrega, e aqui que ela vira certeza.
+# `postcompact` e `subagentstart` seguem a doc oficial
+# (https://code.claude.com/docs/en/hooks), nao transcript: ate 2026-09-24
+# `postcompact` ia para additionalContext "por criterio semantico" e o host
+# rejeitava a saida inteira. Evento sem canal para o modelo e SILENT aqui —
+# stdout nele so enche o log de debug.
 CHANNEL_BY_EVENT = {
     "userpromptsubmit": ADDCTX,
     "sessionstart": ADDCTX,
     "posttooluse": STDOUT,
     "precompact": STDOUT,
-    "postcompact": ADDCTX,  # nao verificado
-    "subagentstart": ADDCTX,  # nao verificado
+    "postcompact": SILENT,  # doc: "No decision control"
+    "subagentstart": ADDCTX,  # doc: secao SubagentStart
     "stop": SILENT,
     "subagentstop": SILENT,
     "sessionend": SILENT,
@@ -109,6 +118,7 @@ CANONICAL_EVENT = {
     "pretooluse": "PreToolUse",
     "precompact": "PreCompact",
     "postcompact": "PostCompact",
+    "subagentstart": "SubagentStart",
     "stop": "Stop",
     "subagentstop": "SubagentStop",
     "sessionend": "SessionEnd",
