@@ -476,8 +476,11 @@ python scripts/migrate_state.py --dry-run  # report only, no writes
 
 ### Obsidian integration per machine
 
-`vault_sync.py` (mirrors traces/specs/`.remember` into the vault on PreCompact) and
-the [`tools/`](tools/) vault utilities ship with the plugin. A mirrored page that was
+`vault_sync.py` (mirrors traces, specs, `CONTEXT.md`, branch seeds and `.remember`
+daily notes into the vault on PreCompact) and the [`tools/`](tools/) vault utilities
+ship with the plugin. Daily notes land as `raw/inbox/<repo>--today-*.md`, one name per
+repository, and a note taken out of the inbox (deleted, or moved to `_processed/`) is
+not recreated until its source changes. A mirrored page that was
 edited in the vault is never overwritten: a manifest outside the vault
 (`~/.claude/harness/vault-sync-manifest.json`) records the hash of what the sync wrote,
 and a page that no longer matches it is refused. Refusals and write failures go to

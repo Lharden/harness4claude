@@ -57,6 +57,19 @@ except Exception:
 STATE_DIR="${STATE_DIR%$'\r'}"   # $() tira \n final, mas nao o \r do Windows
 [ -z "$STATE_DIR" ] && STATE_DIR="$HARNESS_DIR"
 
+# O `cwd` do payload, o mesmo que escolheu o balde acima. O vault_sync o recebe
+# explicito: com o `cwd` do processo, specs e sementes poderiam sair de outro
+# projeto que nao o dos traces. Vazio = o sync usa o diretorio atual, como o
+# `ensure_state_dir` acima faz quando o payload nao traz `cwd`.
+PAYLOAD_CWD="$(printf '%s' "$INPUT" | "$PY" -c "
+import sys, json
+try:
+    print(json.load(sys.stdin).get('cwd') or '')
+except Exception:
+    print('')
+" 2>/dev/null || true)"
+PAYLOAD_CWD="${PAYLOAD_CWD%$'\r'}"
+
 STATE_FILE="$STATE_DIR/state.json"
 TRACE_FILE="$STATE_DIR/trace-current.md"
 COUNTER_FILE="$STATE_DIR/.session-files-count"
@@ -133,8 +146,9 @@ EOF
 # recusa ou uma falha de escrita nao deixava rastro nenhum. Com --quiet so sai o que
 # e problema (recusa de pagina editada no vault, falha de E/S, manifesto ilegivel) e,
 # se o Python cair, o traceback. Log acima de 512 KB vira .1 (uma geracao).
-# O manifesto tambem fica na raiz: o --harness-dir e o bucket da SESSAO, e um
-# manifesto ali recomecaria vazio a cada sessao.
+# Raiz e balde vao separados e nomeados: `--harness-dir` e o balde da SESSAO (de
+# onde saem os traces), `--raiz` e a raiz (sementes de ramo e manifesto). Ate
+# 2026-09-24 so ia o balde, e o sync procurava as sementes dentro dele.
 PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VAULT_SYNC="$PLUGIN_DIR/scripts/vault_sync.py"
 if [ -f "$VAULT_SYNC" ]; then
@@ -148,8 +162,9 @@ if [ -f "$VAULT_SYNC" ]; then
     fi
     # Log que nao abre nao pode impedir o sync de rodar.
     { : >> "$VAULT_SYNC_LOG"; } 2>/dev/null || VAULT_SYNC_LOG=/dev/null
-    "$PY" "$VAULT_SYNC" --quiet --harness-dir "$HARNESS_DIR_WIN" \
-        --manifesto "$HARNESS_ROOT_WIN/vault-sync-manifest.json" >> "$VAULT_SYNC_LOG" 2>&1 || true
+    VAULT_SYNC_ARGS=(--quiet --raiz "$HARNESS_ROOT_WIN" --harness-dir "$HARNESS_DIR_WIN")
+    [ -n "$PAYLOAD_CWD" ] && VAULT_SYNC_ARGS+=(--cwd "$PAYLOAD_CWD")
+    "$PY" "$VAULT_SYNC" "${VAULT_SYNC_ARGS[@]}" >> "$VAULT_SYNC_LOG" 2>&1 || true
 fi
 
 exit 0

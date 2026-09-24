@@ -2,10 +2,22 @@
 """Espelha artefatos vivos do Harness para o vault Obsidian (AI-Brain).
 
 Mirrors (idempotente, decidido por hash de conteudo):
-  ~/.claude/harness/traces/*.md   -> <vault>/wiki/sessions/
+  <balde>/traces/*.md             -> <vault>/wiki/sessions/
   <cwd>/docs/specs/*.md           -> <vault>/wiki/specs/          (carimba frontmatter)
   <cwd>/docs/CONTEXT.md           -> <vault>/wiki/decisions/      (carimba frontmatter)
-  <cwd>/.remember/today-*.md      -> <vault>/raw/inbox/   (e C:/.remember tambem)
+  <raiz>/projects/<slug>/branches/*.seed.md -> <vault>/wiki/branches/  (carimba)
+  <repo>/.remember/today-X.md     -> <vault>/raw/inbox/<repo>--today-X.md
+  C:/.remember/today-X.md         -> <vault>/raw/inbox/maquina--today-X.md
+
+As notas diarias levam o rotulo do repositorio no nome: todo repo tem um
+`today-2026-08-06.done.md`, e com o nome da fonte so o de um repo sobrevivia no vault
+(medido em 2026-09-24: 33 versoes de 7 repos fora). O repo e o checkout DONO do `cwd`,
+o mesmo que da identidade ao balde: sessao em worktree espelha as notas do principal.
+
+Nota diaria tirada do inbox nao volta: conta como consumida se o manifesto registra a
+escrita e a pagina sumiu, ou se `raw/inbox/_processed/` tem copia de mesmo conteudo
+(com o nome novo ou o antigo). A segunda regra vive no vault e vale em qualquer maquina.
+Fonte com conteudo novo volta sempre.
 
 O CONTEXT.md gerado pela skill `discuss` ja e um registro de assimilacao em tres tiers
 (Locked/Deferred/Discretion). Espelha-lo para wiki/decisions/ faz a camada de decisao do
@@ -24,9 +36,10 @@ carimbadas, do slug do projeto e do fim de linha. Diferente disso, e recusada co
 quando a fonte e mais nova que ela (o caso em que o espelho por mtime a sobrescreveria);
 com a fonte mais velha, fica como esta e sem aviso, porque nada se perderia.
 
-Duas fontes de mesmo nome (projetos ou worktrees diferentes) caem na mesma pagina: vence
-a mais nova, como no espelho por mtime, e a mais velha nao a retoma. O mtime so arbitra
-entre fontes; a protecao da edicao humana e sempre por hash.
+Duas fontes de mesmo nome ainda podem cair na mesma pagina: specs de projetos diferentes
+(1 nome em 2 repos, medido em 2026-09-24) e sementes de ramo. Vence a mais nova, como no
+espelho por mtime, e a mais velha nao a retoma. O mtime so arbitra entre fontes; a
+protecao da edicao humana e sempre por hash.
 
 Uma falha de E/S num arquivo vira evento e o lote segue. Os eventos (recusas, falhas,
 manifesto ilegivel) saem como WARNING no stderr, que o hook do PreCompact grava em
@@ -36,7 +49,8 @@ Degradacao graceful: se o vault nao existir, sai 0 sem erro. Usado pelo
 harness-precompact.sh (auto-sync no handoff) e pela skill vault-bridge.
 
 Uso:
-    python vault_sync.py [--vault DIR] [--harness-dir DIR] [--manifesto ARQ] [--quiet]
+    python vault_sync.py [--vault DIR] [--raiz DIR] [--harness-dir BALDE] [--cwd DIR]
+                         [--manifesto ARQ] [--quiet]
 Env: AI_BRAIN_PATH sobrescreve o default. NAO usar VAULT_PATH aqui: desde a
 migracao MCP (2026-06-12), VAULT_PATH aponta para a RAIZ do vault Obsidian
 (consumida pelo NODE_EXTRA_CA_CERTS/MCP), e o alvo deste sync e o sub-vault
@@ -101,6 +115,9 @@ PAGINAS_ESPELHADAS = tuple(
         r"wiki/specs/[^/]+\.md",
         r"wiki/decisions/[^/]+-context\.md",
         r"wiki/branches/[^/]+\.seed\.md",
+        r"raw/inbox/[^/]+--today-[^/]+\.md",
+        # Nome sem rotulo: as paginas escritas antes de 2026-09-24. O sync nao as escreve
+        # mais, mas continuam sendo copia de fonte, e editar copia nao muda a fonte.
         r"raw/inbox/today-[^/]+\.md",
     )
 )
@@ -196,6 +213,47 @@ def _equivalente(esperado: str, atual: str, *, carimbada: bool) -> bool:
     return esperado == atual
 
 
+PASTA_PROCESSADAS = "_processed"
+
+
+def _foi_consumida(
+    src: Path,
+    dst: Path,
+    conteudo: str,
+    anterior: dict[str, Any] | None,
+    *,
+    origem: str,
+    fonte_sha: str,
+    fonte_mtime: float,
+    carimbada: bool,
+) -> bool:
+    """A pagina AUSENTE ja cumpriu o papel e nao deve ser recriada?
+
+    Duas provas, e basta uma:
+
+    - `<pasta>/_processed/` tem copia de mesmo conteudo, com o nome da pagina ou o da
+      fonte (as processadas antes de 2026-09-24 tem o nome sem rotulo). Vive no vault:
+      vale em qualquer maquina e sobrevive a perda do manifesto.
+    - O manifesto registra que o sync escreveu esta pagina a partir desta mesma fonte,
+      com este mesmo conteudo, e ela sumiu: alguem a tirou dali.
+
+    Fonte com conteudo novo nunca e consumida: e trabalho novo. Registro de OUTRA fonte
+    no mesmo destino segue a regra de sempre: so a mais nova escreve.
+    """
+    processadas = dst.parent / PASTA_PROCESSADAS
+    for nome in dict.fromkeys((dst.name, src.name)):
+        copia = processadas / nome
+        if copia.is_file():
+            atual = copia.read_bytes().decode("utf-8", errors="replace")
+            if _equivalente(conteudo, atual, carimbada=carimbada):
+                return True
+    if anterior is None:
+        return False
+    if anterior.get("origem") == origem:
+        return anterior.get("fonte") == fonte_sha
+    return fonte_mtime <= float(anterior.get("mtime") or 0)
+
+
 def _espelhar(
     src: Path,
     dst: Path,
@@ -205,8 +263,13 @@ def _espelhar(
     project: str | None,
     registro: Registro,
     eventos: list[str],
+    consumo: bool = False,
 ) -> bool:
-    """Decide e executa a copia de UMA pagina. True se escreveu."""
+    """Decide e executa a copia de UMA pagina. True se escreveu.
+
+    `consumo` liga a regra de pagina consumida (`_foi_consumida`) para destinos que sao
+    fila de trabalho, como `raw/inbox`: la, pagina que sumiu foi processada.
+    """
     dados_fonte = src.read_bytes()
     fonte_sha = _sha(dados_fonte)
     # read_text faria a traducao universal de fim de linha; decodificar uma vez so
@@ -226,6 +289,12 @@ def _espelhar(
         registro[chave] = {
             "destino": _sha(dados_destino), "fonte": fonte_sha, "origem": origem, "mtime": fonte_mtime,
         }
+
+    if consumo and not dst.exists() and _foi_consumida(
+        src, dst, conteudo, anterior, origem=origem, fonte_sha=fonte_sha,
+        fonte_mtime=fonte_mtime, carimbada=bool(page_type),
+    ):
+        return False
 
     if dst.exists():
         dados_destino = dst.read_bytes()
@@ -279,6 +348,7 @@ def mirror(
     project: str | None = None,
     registro: Registro | None = None,
     eventos: list[str] | None = None,
+    consumo: bool = False,
 ) -> int:
     """Espelha cada source em dst_dir, pagina a pagina. Retorna nº de escritas feitas.
 
@@ -303,7 +373,7 @@ def mirror(
         try:
             if _espelhar(
                 src, dst, page_type=page_type, today=today, project=project,
-                registro=registro, eventos=eventos,
+                registro=registro, eventos=eventos, consumo=consumo,
             ):
                 copied += 1
         except OSError as exc:
@@ -350,12 +420,50 @@ def glob_md(directory: Path, pattern: str = "*.md") -> list[Path]:
     return sorted(directory.glob(pattern)) if directory.is_dir() else []
 
 
-def remember_today(cwd: Path) -> list[Path]:
-    """Encontra notas .remember/today-*.md no cwd e em C:/.remember."""
-    found: list[Path] = []
-    for base in (cwd / ".remember", Path("C:/.remember")):
-        found.extend(glob_md(base, "today-*.md"))
-    return found
+REMEMBER_GLOBAL = Path("C:/.remember")
+# Rotulo fixo do `.remember` global. Com o rotulo do `cwd`, cada repo copiaria a mesma
+# nota global para o inbox com o proprio prefixo.
+ROTULO_REMEMBER_GLOBAL = "maquina"
+
+
+def _raiz_do_repo(cwd: Path) -> Path | None:
+    """Checkout DONO do `cwd` (num worktree, o principal), pela mesma regra do balde."""
+    try:
+        import sys as _sys
+
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import _escopo
+
+        raiz = _escopo.raiz_do_repo(cwd)
+    except Exception:
+        return None
+    return Path(raiz) if raiz else None
+
+
+def fontes_do_inbox(cwd: Path, remember_global: Path = REMEMBER_GLOBAL) -> dict[Path, str]:
+    """Notas `.remember/today-*.md` -> nome da pagina em `raw/inbox/`.
+
+    Fontes: o `.remember` do checkout dono do `cwd`, o do proprio `cwd` quando for outro
+    diretorio, e o global. O nome e `<rotulo>--<nome da fonte>`, com o rotulo da pasta
+    que contem o `.remember`: todo repo tem `today-2026-08-06.done.md`, e sem rotulo so
+    um deles sobrevivia no vault. O plugin remember escreve no checkout principal, e por
+    isso o dono entra: pelo `cwd` de um worktree, nenhuma nota era achada.
+    """
+    bases: list[tuple[Path, str]] = []
+    dono = _raiz_do_repo(cwd)
+    for projeto in ([dono] if dono else []) + [cwd]:
+        bases.append((projeto / ".remember", project_slug(projeto)))
+    bases.append((remember_global, ROTULO_REMEMBER_GLOBAL))
+    nomes: dict[Path, str] = {}
+    vistas: set[str] = set()
+    for base, rotulo in bases:
+        chave = os.path.normcase(os.path.realpath(base))
+        if chave in vistas:
+            continue
+        vistas.add(chave)
+        for fonte in glob_md(base, "today-*.md"):
+            nomes[fonte] = f"{rotulo}--{fonte.name}"
+    return nomes
 
 
 LOG_HEADER = """---
@@ -410,13 +518,18 @@ def context_docs(cwd: Path) -> list[Path]:
     return [context] if context.is_file() else []
 
 
-def branch_seeds(harness_dir: Path, cwd: Path) -> list[Path]:
+def branch_seeds(raiz: Path, cwd: Path) -> list[Path]:
     """Sementes de ramo deste projeto (vazio se nao houver nenhuma).
 
     A semente e o unico registro legivel de por que um ramo existe. Ela vive no
     bucket do harness, que e volatil por natureza; espelhar no vault e o que
     permite reencontrar um ramo meses depois pela busca, sem depender de a
     sessao ainda existir.
+
+    `raiz` e a RAIZ do harness, nunca o balde da sessao. O escritor
+    (`branch_state.branches_dir`) resolve `state_dir(cwd)` a partir da raiz e sem
+    sessao; este leitor resolve igual. Ate 2026-09-24 o hook passava o balde aqui,
+    o caminho virava `<balde>/projects/<slug>/branches`, e nenhuma semente chegava.
     """
     try:
         import sys as _sys
@@ -424,7 +537,7 @@ def branch_seeds(harness_dir: Path, cwd: Path) -> list[Path]:
         _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import harness_paths
 
-        d = harness_paths.state_dir(root=harness_dir, cwd=cwd) / "branches"
+        d = harness_paths.state_dir(root=raiz, cwd=cwd) / "branches"
     except Exception:
         return []
     return glob_md(d, "*.seed.md")
@@ -435,22 +548,33 @@ def sync(
     harness_dir: Path,
     cwd: Path,
     *,
+    raiz: Path,
     manifesto: Path | None = None,
     eventos: list[str] | None = None,
+    remember_global: Path = REMEMBER_GLOBAL,
 ) -> dict[str, int]:
     """Executa o espelhamento. Retorna contagens de escritas por destino.
 
-    `manifesto` default e `<harness_dir>/vault-sync-manifest.json`. O hook do PreCompact
-    passa o da RAIZ do harness, porque o `--harness-dir` dele e o bucket da sessao: um
-    manifesto ali recomecaria vazio a cada sessao. `eventos` recebe recusas e falhas.
+    Duas entradas de estado, cada uma com um papel, e nenhuma deduzida da outra:
+
+    - `harness_dir` e o BALDE da sessao, a convencao de `record_signal.py` e
+      `confirm_classification.py`: dele saem os traces (`<balde>/traces`).
+    - `raiz` e a RAIZ do harness: dela saem as sementes de ramo e o manifesto.
+
+    Ate 2026-09-24 um argumento so fazia os dois papeis. O hook passava o balde, e as
+    sementes eram procuradas num caminho que nao existe.
+
+    `manifesto` default e `<raiz>/vault-sync-manifest.json`: no balde ele recomecaria
+    vazio a cada sessao. `eventos` recebe recusas e falhas.
     """
     eventos = [] if eventos is None else eventos
-    caminho_manifesto = manifesto or harness_dir / MANIFESTO
+    caminho_manifesto = manifesto or raiz / MANIFESTO
     lido = carregar_registro(caminho_manifesto, eventos)
     # Manifesto ilegivel e regravado mesmo sem mudanca: senao o aviso se repetiria para sempre.
     antes = None if lido is None else json.dumps(lido, sort_keys=True)
     registro: Registro = {} if lido is None else lido
     slug = project_slug(cwd)
+    notas = fontes_do_inbox(cwd, remember_global)
     comum = {"registro": registro, "eventos": eventos}
     counts = {
         "sessions": mirror(glob_md(harness_dir / "traces"), vault / "wiki" / "sessions", **comum),
@@ -469,9 +593,15 @@ def sync(
             project=slug,
             **comum,
         ),
-        "inbox": mirror(remember_today(cwd), vault / "raw" / "inbox", **comum),
+        "inbox": mirror(
+            list(notas),
+            vault / "raw" / "inbox",
+            rename=notas.__getitem__,
+            consumo=True,
+            **comum,
+        ),
         "branches": mirror(
-            branch_seeds(harness_dir, cwd),
+            branch_seeds(raiz, cwd),
             vault / "wiki" / "branches",
             page_type="branch",
             project=slug,
@@ -501,10 +631,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Espelha artefatos do Harness para o vault.")
     # DEFAULT_VAULT ja resolve AI_BRAIN_PATH / VAULT_PATH / ~ de forma portavel.
     parser.add_argument("--vault", type=Path, default=DEFAULT_VAULT)
-    parser.add_argument("--harness-dir", type=Path, default=_default_harness_dir())
+    parser.add_argument(
+        "--raiz", type=Path, default=_default_harness_dir(),
+        help="raiz do harness: sementes de ramo e manifesto (default: HARNESS_DIR ou ~/.claude/harness)",
+    )
+    parser.add_argument(
+        "--harness-dir", type=Path, default=None,
+        help="balde da sessao, de onde saem os traces (default: a raiz)",
+    )
+    parser.add_argument(
+        "--cwd", type=Path, default=None,
+        help="projeto de onde saem specs, CONTEXT, notas e sementes (default: o diretorio atual)",
+    )
     parser.add_argument(
         "--manifesto", type=Path, default=None,
-        help=f"manifesto de hashes (default: <harness-dir>/{MANIFESTO}); fica fora do vault",
+        help=f"manifesto de hashes (default: <raiz>/{MANIFESTO}); fica fora do vault",
     )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
@@ -519,7 +660,10 @@ def main() -> int:
         return 0
 
     eventos: list[str] = []
-    counts = sync(args.vault, args.harness_dir, Path.cwd(), manifesto=args.manifesto, eventos=eventos)
+    counts = sync(
+        args.vault, args.harness_dir or args.raiz, args.cwd or Path.cwd(),
+        raiz=args.raiz, manifesto=args.manifesto, eventos=eventos,
+    )
     for evento in eventos:
         logger.warning("%s", evento)
     logger.info("sessions:%s specs:%s decisions:%s inbox:%s branches:%s",

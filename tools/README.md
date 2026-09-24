@@ -24,6 +24,7 @@ Todos operam sobre a **raiz do vault** via `--root`. Aponte para o seu vault
 | `design_scope.py` | Qual design doc governa um caminho, via `applies_to` declarado no front matter | `python tools/design_scope.py --changed --explain` |
 | `arsenal.py` | Registry das ferramentas **ativas**: contrato, reconciliação com o disco, orçamento de tokens do roster e colisão de gatilho | `python tools/arsenal.py budget --report` |
 | `orfaos.py` | Guarda de órfão: função pública sem caminho até uma raiz que o host execute. Reprova o que não estiver declarado em `orfaos.json` | `python tools/orfaos.py --report` |
+| `migrar_inbox_rotulado.py` | Migração única: renomeia as notas diárias legadas `raw/inbox/today-*.md` para `<repo>--today-*.md`, o nome que o `vault_sync` grava desde 2026-09-24. Ensaio por padrão; `--aplicar` exige `--backup` fora do vault; `--restaurar` desfaz. Rodar depois de instalar o plugin novo, em cada máquina | `python tools/migrar_inbox_rotulado.py --vault "$VAULT_PATH/AI-Brain" --repo <dir> [--repo <dir> ...]` |
 
 **Esta tabela tem sete linhas, e `tools/` tem dezoito arquivos.** `wiki_lint.py` e
 `wiki_moc.py` — 17 funções, 31 testes — não estão aqui, não estão no

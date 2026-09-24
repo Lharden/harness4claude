@@ -88,7 +88,7 @@ def test_decisao_de_uma_sessao_chega_na_seguinte(tmp_path: Path) -> None:
     indice = tmp_path / "wiki-index"
 
     # --- sessão 1: o pipeline termina e o sync colhe o CONTEXT ------------
-    contagens = vs.sync(vault, tmp_path / "harness", projeto)
+    contagens = vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
 
     pagina = vault / "wiki" / "decisions" / "indexacao-vetorial-context.md"
     assert contagens["decisions"] == 1
@@ -144,7 +144,7 @@ def test_consulta_semantica_acha_a_decisao_sem_alias(tmp_path: Path) -> None:
     vault = montar_vault(tmp_path)
     indice = tmp_path / "wiki-index"
 
-    vs.sync(vault, tmp_path / "harness", projeto)
+    vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
     bwi.build(str(vault), str(indice))
 
     resultado = wq.query("qual indice usamos para o corpus vetorial", index_dir=indice, top_k=3)
@@ -159,10 +159,10 @@ def test_segunda_passagem_do_sync_nao_reescreve(tmp_path: Path) -> None:
     projeto = montar_projeto(tmp_path)
     vault = montar_vault(tmp_path)
 
-    primeira = vs.sync(vault, tmp_path / "harness", projeto)
+    primeira = vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
     pagina = vault / "wiki" / "decisions" / "indexacao-vetorial-context.md"
     carimbo = pagina.stat().st_mtime
-    segunda = vs.sync(vault, tmp_path / "harness", projeto)
+    segunda = vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
 
     assert primeira["decisions"] == 1
     assert segunda["decisions"] == 0
@@ -175,7 +175,7 @@ def test_log_do_vault_registra_a_colheita(tmp_path: Path) -> None:
     projeto = montar_projeto(tmp_path)
     vault = montar_vault(tmp_path)
 
-    vs.sync(vault, tmp_path / "harness", projeto)
+    vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
 
     log = (vault / "wiki" / "log.md").read_text(encoding="utf-8")
     assert "decisions:1" in log
@@ -188,7 +188,7 @@ def test_ciclo_sobrevive_a_projeto_sem_context(tmp_path: Path) -> None:
     (projeto / "docs" / "specs" / "x-spec.md").write_text("# X\n\nREQ-001.", encoding="utf-8")
     vault = montar_vault(tmp_path)
 
-    contagens = vs.sync(vault, tmp_path / "harness", projeto)
+    contagens = vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
 
     assert contagens["specs"] == 1
     assert contagens["decisions"] == 0
@@ -204,7 +204,7 @@ def test_indice_fica_stale_quando_uma_decisao_e_adicionada(tmp_path: Path) -> No
     bwi.build(str(vault), str(indice), no_embed=True)
     assert bwi.check_stale(str(vault), str(indice)) is False
 
-    vs.sync(vault, tmp_path / "harness", projeto)
+    vs.sync(vault, tmp_path / "harness", projeto, raiz=tmp_path / "harness")
 
     assert bwi.check_stale(str(vault), str(indice)) is True
 
