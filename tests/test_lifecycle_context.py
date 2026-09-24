@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 sys.path.insert(0, str(ROOT / "scripts"))
 from harness_paths import ensure_state_dir  # type: ignore[import-not-found]
+from transactional_state import HarnessDatabase  # type: ignore[import-not-found]
 
 
 def _mensagem(saida: str) -> str:
@@ -32,7 +33,21 @@ def _mensagem(saida: str) -> str:
 
 
 def _bucket_com_gate_pendente(harness_root: Path, cwd: Path, session_id: str) -> Path:
+    """Task L2 viva com gate pendente, no banco e na projecao.
+
+    O `harness.db` e a autoridade: o SessionStart pergunta a ele
+    (`continuation_policy.task_viva`) se ha task viva. O `state.json` e so a
+    projecao, que o lifecycle ainda le. Mesmo caminho de `TestPerguntaUnica` em
+    test_ciclo_de_vida_da_task.py: `scope_id` e o proprio balde.
+    """
     bucket = ensure_state_dir(harness_root, cwd, session_id=session_id)
+    db = HarnessDatabase(bucket)
+    db.start_task(
+        scope_id=str(bucket), legacy_level="L2-feature", tier="L2", kind="feature",
+        pipeline=["write-spec", "approve-spec", "design-doc"], prompt="x",
+        task_id="t-scoped",
+    )
+    db.open_gate("t-scoped", "approve-spec")
     (bucket / "state.json").write_text(
         json.dumps(
             {
