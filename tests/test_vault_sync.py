@@ -432,6 +432,81 @@ def test_duas_fontes_para_a_mesma_pagina_nao_se_alternam(tmp_path: Path) -> None
     assert "do projeto B, editado" in _pagina(vault).read_text(encoding="utf-8")
 
 
+# --- o slug e do repositorio, nao da pasta -------------------------------------
+#
+# Ate 2026-09-24 `project_slug` usava o nome do diretorio. Sessao num worktree
+# (harness4claude/.claude/worktrees/portao-fd-e-pin) nomeava a decisao pelo worktree.
+# Medido no AI-Brain real: 11 paginas `*-context.md` com 4 corpos distintos, 8 delas
+# com o mesmo CONTEXT.md do harness4claude, e a wiki-query devolvendo o mesmo
+# documento ate 8 vezes. O mesmo slug ia no campo `project:` de specs e sementes.
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
+        env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+    )
+
+
+def _repo_com_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """Repositorio git de verdade com CONTEXT.md e um worktree em pasta de outro nome."""
+    principal = tmp_path / "repo-real"
+    (principal / "docs" / "specs").mkdir(parents=True)
+    (principal / "docs" / "CONTEXT.md").write_text("# CONTEXT\n\ndo principal\n", encoding="utf-8")
+    (principal / "docs" / "specs" / "feature-spec.md").write_text("# Feature\n", encoding="utf-8")
+    _git(principal, "init", "-q", "-b", "main")
+    _git(principal, "add", "-A")
+    _git(principal, "commit", "-q", "-m", "base", "--no-verify")
+    worktree = tmp_path / "repo-real" / ".claude" / "worktrees" / "ramo-com-outro-nome"
+    _git(principal, "worktree", "add", "-q", "-b", "ramo", str(worktree))
+    return principal, worktree
+
+
+def test_worktree_e_checkout_principal_escrevem_a_mesma_pagina_de_decisao(tmp_path: Path) -> None:
+    principal, worktree = _repo_com_worktree(tmp_path)
+    vault, harness = tmp_path / "ai-brain", tmp_path / "harness"
+    decisoes = vault / "wiki" / "decisions"
+
+    vs.sync(vault, harness, principal, raiz=harness)
+    (worktree / "docs" / "CONTEXT.md").write_text("# CONTEXT\n\ndo worktree\n", encoding="utf-8")
+    _no_futuro(worktree / "docs" / "CONTEXT.md")
+    counts = vs.sync(vault, harness, worktree, raiz=harness)
+
+    assert sorted(p.name for p in decisoes.iterdir()) == ["repo-real-context.md"]
+    assert counts["decisions"] == 1, "a fonte mais nova, do worktree, assume a pagina do repo"
+    pagina = (decisoes / "repo-real-context.md").read_text(encoding="utf-8")
+    assert "do worktree" in pagina
+    assert re.search(r"^project: repo-real$", pagina, re.M)
+    spec = (vault / "wiki" / "specs" / "feature-spec.md").read_text(encoding="utf-8")
+    assert re.search(r"^project: repo-real$", spec, re.M)
+
+    # A fonte mais velha nao retoma a pagina: e a regra de colisao do manifesto.
+    _no_passado(principal / "docs" / "CONTEXT.md")
+    assert vs.sync(vault, harness, principal, raiz=harness)["decisions"] == 0
+    assert "do worktree" in (decisoes / "repo-real-context.md").read_text(encoding="utf-8")
+
+
+def test_nota_do_remember_de_um_worktree_conserva_o_rotulo_da_pasta(tmp_path: Path) -> None:
+    """O rotulo do inbox nomeia a PASTA do `.remember`, nao o projeto.
+
+    Colapsa-lo no repositorio poria a nota do worktree e a do principal, de mesmo nome,
+    na mesma pagina.
+    """
+    principal, worktree = _repo_com_worktree(tmp_path)
+    (principal / ".remember").mkdir()
+    (principal / ".remember" / NOTA).write_text("# do principal\n", encoding="utf-8")
+    (worktree / ".remember").mkdir()
+    (worktree / ".remember" / NOTA).write_text("# do worktree\n", encoding="utf-8")
+
+    _sync_inbox(tmp_path, worktree)
+
+    assert _inbox(tmp_path) == {
+        f"ramo-com-outro-nome--{NOTA}": "# do worktree\n",
+        f"repo-real--{NOTA}": "# do principal\n",
+    }
+
+
 def test_is_mirrored_cobre_todo_destino_que_o_sync_escreve(tmp_path: Path) -> None:
     """`is_mirrored` e o que vault_maintenance e wiki_accents consultam antes de editar.
 
