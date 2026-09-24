@@ -1,8 +1,11 @@
 <!-- HARNESS4CLAUDE:BEGIN — gerenciado por scripts/sync-machine.sh. Nao edite entre os marcadores; rode o sync para atualizar. -->
 ## Harness v3 SDD (MANDATORY)
 - Hook classifica cada prompt como L0/L1/L2 (regex = `classification_meta.suggested`); harness-workflow confirma/corrige semanticamente (`classification_meta.final`/`agreed`). Loop de accuracy em signals.json (`aggregates.classify`)
-- systemMessage com "HARNESS v3 CLASSIFIED" L1/L2 -> MUST `Skill(skill="harness-workflow")` ANTES de responder
-- systemMessage com "HARNESS v3 CONTINUING" ou "HARNESS v3 RESUMING" -> invocar harness-workflow para continuar/retomar
+- "HARNESS v3 CLASSIFIED" L1/L2 no `additionalContext` -> **julgar primeiro o nivel real, sem carregar a skill.** A classificacao vem de regex e acerta ~30% (`aggregates.classify.proxy_regex_vs_observado = 0.297`)
+  - **L0 real:** so registrar e seguir direto: `python "<PR>/scripts/confirm_classification.py" --final "L0-question" --expect-task "<task_id do hook>" --harness-dir "<balde>"`. `<PR>` = conteudo de `~/.claude/harness/plugin-root`; `<balde>` = saida de `python "<PR>/scripts/harness_paths.py" --cwd "<cwd>" --session-id "<session_id>"`, resolvido uma vez por sessao. Uma chamada por linha, caminho literal
+  - **L1/L2 real:** invocar `Skill(skill="harness-workflow")` ANTES de responder e seguir o protocolo dela (confirmacao, fases, gates)
+  - Motivo (2026-09-24): carregar a skill (~10 mil tokens) so para rebaixar a L0 era o maior custo fixo do harness
+- "HARNESS v3 CONTINUING" ou "HARNESS v3 RESUMING" -> invocar harness-workflow para continuar/retomar
 - L0: executar diretamente, sem pipeline
 - State: `~/.claude/harness/state.json` | CLAUDE.md tem prioridade absoluta
 
@@ -42,13 +45,24 @@
 
 ## Branch Keeper (ramificacao passiva)
 - Sensor em `UserPromptSubmit` + `Stop`: camada A (regex PT/EN) + camada B (embedding vs ancora da sessao). Ramo exige A **e** B; sem Ollama, A sozinha oferece marcada como degradada
-- `HARNESS v3 BRANCH SIGNAL` no systemMessage -> invocar `Skill(skill="branch-out")` ANTES de responder ao conteudo
+- `HARNESS v3 BRANCH SIGNAL` chega no `additionalContext` (rotulado "hook additional context"). **Ele NAO manda oferecer** — manda OLHAR: julgue se o que apareceu tem vida propria; se sim, consulte `may-offer` e so entao invoque `branch-out`; se nao, ignore EM SILENCIO, sem mencionar o sinal
 - **Ramo** = ideia com vida propria -> oferece abrir sessao nova (`wt` + PS7, `claude --session-id <uuid>`) com prompt-semente. **Deriva** = conversa escorregando -> uma frase, nunca janela
 - Autocheck: se eu mesmo abrir assunto paralelo, ofereco ramo sem esperar o hook. O sensor e rede, nao substituto
-- Tema ramificado fica **parkeado** no pai (`<harness-parked>` a cada turno): nao desenvolver la; `/branch recall <slug>` desfaz
+- Sinal nascido no `Stop` e guardado em `pending-signal.json` e entregue no proximo `UserPromptSubmit` — no Stop o turno ja acabou e "antes de responder" chegaria tarde
+- Tema ramificado fica **parkeado** no pai (`<harness-parked>` a cada turno): nao desenvolver la; `/branch recall <slug>` desfaz. **So aparece depois que existir ramo aceito** — sem `branches.json` o bloco e vazio
 - "Agora nao" **parkeia**, nunca descarta. So descarte explicito apaga
 - Estado: `~/.claude/harness/projects/<slug>/branches.json` + sementes/launchers em `branches/`. Telemetria no bloco `branch` de `signals.json`
-- Config: `HARNESS_BRANCH=0` desliga; `HARNESS_BRANCH_HOST=none` nao abre janela; `MAX_OFFERS=2`, `MAX_OPEN=3`, `FLOOR=0.55`, `DRIFT_FLOOR=0.35`, `DRIFT_SAMPLE=2` (camada B so roda com marcador ou na amostragem — embed em todo prompt custaria ~1s)
+- Config (nomes REAIS lidos pelo codigo — os curtos que estavam aqui antes nao existiam e setar `FLOOR=0.7` nao fazia nada): `HARNESS_BRANCH=0` desliga; `HARNESS_BRANCH_HOST=none` nao abre janela; `HARNESS_BRANCH_MAX_OFFERS=2`, `HARNESS_BRANCH_MAX_OPEN=3`, `HARNESS_BRANCH_COOLDOWN_TURNS=8`, `HARNESS_BRANCH_FLOOR=0.55`, `HARNESS_BRANCH_DRIFT_FLOOR=0.35`, `HARNESS_BRANCH_DRIFT_SAMPLE=2` (camada B so roda com marcador ou na amostragem — embed em todo prompt custaria ~1s)
+- **Calibrado em 2026-09-02, e o resultado mudou o desenho** (703 pares rotulados por supervisao distante):
+  - **Camada A**: precisao ~0.10. `e se` e o unico padrao que ja acertou (2 de 20 disparos); 12 dos 16 nunca dispararam. 19 candidatos testados, nenhum aprovado
+  - **Camada B**: DESLIGADA por default (`HARNESS_BRANCH_LAYER_B=0`). Melhor F1 das 4 metricas: 0.209 contra 0.108 do acaso, e a direcao saiu invertida
+  - **Consequencia**: o sinal deixou de mandar oferecer e passou a pedir julgamento. Falso positivo deve ser ignorado EM SILENCIO. O autocheck e o `/branch` sao os caminhos que valem; o hook virou orcamento, dedupe e parking
+  - Tabelas em `~/.claude/harness/calib/`; refazer com `scripts/calibrate_branch_layer_a.py` e `calibrate_branch_floor.py`
+
+## Canais de hook (medido 2026-09-01)
+- `systemMessage` **nao chega ao modelo** — e canal de UI. Nos 343 transcripts, 100% das linhas com systemMessage no stdout tem `content` vazio. Custo real: 81 `CLASSIFIED` em 47 sessoes, 0 invocacoes de `harness-workflow`
+- Chegam: **stdout cru** (vira `content`, sem marca de proveniencia — so para DADO), **`hookSpecificOutput.additionalContext`** (rotulado — para toda INSTRUCAO), e **`{"decision":"block","reason":...}` no Stop** (interrompe — so para gate)
+- Todo hook emite via `hooks/emit.py`, que escolhe o canal e registra em `~/.claude/harness/emissions.jsonl`. Auditar com `python scripts/check_hook_liveness.py --delivery`
 
 ## Obsidian (vault-bridge)
 - Vault root via `env.VAULT_PATH`; sub-vault de espelhamento = `<VAULT_PATH>/AI-Brain` (ou `AI_BRAIN_PATH`)

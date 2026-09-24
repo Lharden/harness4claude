@@ -57,6 +57,36 @@ Tres limites deliberados:
   maquina caem nesse caso, todas de `session_start`).
 - Toda falha de leitura ou escrita do pin degrada para a resolucao por `cwd`.
   `ensure_state_dir` promete nao levantar, e o pin nao pode ser quem quebra isso.
+
+## A validade do pin (incidente 2026-09-21)
+
+O pin acima consertou 2026-09-12 e criou este. Medido no pin real de
+`86459dbf`:
+
+    pinned_at  2026-09-12T08:12:52   science-harness-f34c6792
+    deriva     2026-09-12T16:03:22   slb-mestrado-projeto
+    deriva     2026-09-15T18:59:18   mainframe
+    deriva     2026-09-17T17:35:56   harness4claude
+    atividade  2026-09-21T09:03-15:40, toda em slb-mestrado-projeto
+
+Nove dias e quatro projetos depois, o estado seguia indo para o balde cunhado
+no primeiro dia — 110 tasks em `science-harness` contra 27 em `slb`, e o portao
+que bloqueou a sessao lia a task no banco de um repositorio que ela nao tocou.
+**O balde nao era de outro projeto: era do projeto de nove dias atras.** O pin
+nao tinha validade, e o id da sessao sobrevive ao trecho de trabalho: o host
+retoma a sessao, o `cwd` e outro, e o pin nao tem como saber disso.
+
+A correcao poe validade no pin, e a regua exige as DUAS condicoes: ele so cede
+quando ficou **parado alem do TTL** *e* o projeto corrente e **outro**. Ceder
+so por tempo repinaria uma sessao que voltou ao mesmo lugar; ceder so por
+projeto e exatamente o defeito de 2026-09-12 de volta. `last_seen_at` avanca a
+cada resolucao — inclusive em deriva — porque o que vence e a INATIVIDADE da
+sessao, nao a do projeto: quem alterna entre dois repositorios a tarde inteira
+mantem um balde so.
+
+`HARNESS_PIN_TTL_H` (default 24, `0` desliga) e o botao. O balde anterior fica
+escrito em `repins`, com as datas: trocar de balde em silencio e como perder o
+trabalho guardado no lugar errado.
 """
 
 from __future__ import annotations
@@ -192,34 +222,144 @@ def _adopt(base: Path, session: str) -> str | None:
     return max(found)[1] if found else None
 
 
-def _pinned_slug(base: Path, session: str, slug: str) -> str:
+#: Horas de INATIVIDADE da sessao depois das quais o pin deixa de mandar, se o
+#: projeto corrente for outro. `0` desliga a validade e volta ao pin permanente.
+DEFAULT_PIN_TTL_H = 24.0
+
+#: Segundos de folga antes de reescrever `last_seen_at`. Sem isto o pin seria
+#: regravado a cada hook, varias vezes por prompt, para mover um carimbo em
+#: milissegundos.
+RENOVACAO_MINIMA_S = 60.0
+
+
+def _pin_ttl_horas() -> float:
+    bruto = os.environ.get("HARNESS_PIN_TTL_H", "")
+    if not bruto.strip():
+        return DEFAULT_PIN_TTL_H
+    try:
+        return max(float(bruto), 0.0)
+    except ValueError:
+        return DEFAULT_PIN_TTL_H
+
+
+def _quando(texto: object) -> datetime | None:
+    """A data do pin, ou None se ela nao existe ou nao le."""
+    if not isinstance(texto, str) or not texto:
+        return None
+    try:
+        momento = datetime.fromisoformat(texto)
+    except ValueError:
+        return None
+    return momento if momento.tzinfo else momento.replace(tzinfo=timezone.utc)
+
+
+def _parado_ha(pin: dict, agora: datetime) -> float | None:
+    """Segundos desde a ultima resolucao desta sessao. None se nao da para saber.
+
+    `last_seen_at` nasceu em 2026-09-21; pin anterior a isso so tem `pinned_at`,
+    e para um pin recem-criado os dois valem a mesma coisa.
+    """
+    visto = _quando(pin.get("last_seen_at")) or _quando(pin.get("pinned_at"))
+    if visto is None:
+        return None
+    return (agora - visto).total_seconds()
+
+
+def _pin_venceu(pin: dict, agora: datetime) -> bool:
+    """O pin ficou parado alem do TTL.
+
+    **Data ilegivel NAO vence.** A direcao do erro e a razao: repinar por engano
+    parte o estado da sessao em dois bancos, que e o incidente de 2026-09-12 que
+    o pin existe para impedir. Manter um pin velho demais custa menos, e ainda
+    aparece em `drifts`.
+    """
+    ttl = _pin_ttl_horas()
+    if ttl <= 0:
+        return False
+    parado = _parado_ha(pin, agora)
+    return parado is not None and parado > ttl * 3600
+
+
+def _renovar(pin: dict, agora: datetime) -> bool:
+    parado = _parado_ha(pin, agora)
+    return parado is None or parado > RENOVACAO_MINIMA_S
+
+
+def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True) -> str:
     """O slug que esta sessao usa, fixado na primeira resolucao.
+
+    `grava=False` resolve igual e nao toca o pin: e para quem so LE o estado
+    (o skill-router). Cunhar pin e trabalho dos hooks que escrevem no balde.
 
     Registrar a deriva e o que separa isto de um pin mudo: quem trocou de
     projeto de proposito ve por que o balde nao acompanhou, em vez de descobrir
     depois que o estado ficou onde nao devia.
+
+    Tres saidas, nesta ordem, e a ordem importa:
+
+    1. **sem pin** — cunha, adotando o balde existente mais recente se houver;
+    2. **pin parado alem do TTL e projeto outro** — repina, guardando o
+       anterior em `repins`. Ver a secao "A validade do pin" no topo do modulo;
+    3. **qualquer outro caso** — o pin manda. Deriva vira registro, nunca
+       mudanca de balde, e `last_seen_at` avanca.
+
+    Trocar (2) e (3) de lugar reabre o incidente de 2026-09-12, porque toda
+    deriva viraria repin.
     """
+    agora = datetime.now(timezone.utc)
     path = _pin_file(base, session)
     pin = _read_pin(path)
     if pin is None:
         pinned = _adopt(base, session) or slug
+        if not grava:
+            return pinned
         _write_pin(path, {
             "project_slug": pinned,
-            "pinned_at": datetime.now(timezone.utc).isoformat(),
+            "pinned_at": agora.isoformat(),
+            "last_seen_at": agora.isoformat(),
             "drifts": [],
         })
         return pinned
 
     pinned = pin["project_slug"]
+
+    if slug != pinned and _pin_venceu(pin, agora):
+        if not grava:
+            return slug
+        repins = [r for r in pin.get("repins", []) if isinstance(r, dict)]
+        repins.append({
+            "project_slug": pinned,
+            "pinned_at": pin.get("pinned_at"),
+            "last_seen_at": pin.get("last_seen_at"),
+            "repinned_at": agora.isoformat(),
+            # As derivas sao do pin ANTERIOR e nao querem dizer nada sobre o
+            # novo, entao a lista viva zera. Mas elas sao o unico registro dos
+            # projetos por onde a sessao passou, e apagar isso no repin seria
+            # perder de vez a resposta para "onde mais procurar o estado".
+            "drifts": [d for d in pin.get("drifts", []) if isinstance(d, dict)],
+        })
+        pin["repins"] = repins[-MAX_DRIFTS:]
+        pin["project_slug"] = slug
+        pin["pinned_at"] = agora.isoformat()
+        pin["last_seen_at"] = agora.isoformat()
+        pin["drifts"] = []
+        _write_pin(path, pin)
+        return slug
+
+    if not grava:
+        return pinned
+    escrever = False
     if slug != pinned:
         drifts = [d for d in pin.get("drifts", []) if isinstance(d, dict)]
         if slug not in [d.get("project_slug") for d in drifts]:
-            drifts.append({
-                "project_slug": slug,
-                "seen_at": datetime.now(timezone.utc).isoformat(),
-            })
+            drifts.append({"project_slug": slug, "seen_at": agora.isoformat()})
             pin["drifts"] = drifts[-MAX_DRIFTS:]
-            _write_pin(path, pin)
+            escrever = True
+    if _renovar(pin, agora):
+        pin["last_seen_at"] = agora.isoformat()
+        escrever = True
+    if escrever:
+        _write_pin(path, pin)
     return pinned
 
 
@@ -228,6 +368,7 @@ def state_dir(
     cwd: str | os.PathLike | None = None,
     scope: str | None = None,
     session_id: str | None = None,
+    grava_pin: bool = True,
 ) -> Path:
     """Estado por sessao do host e, quando ela e desconhecida, por worktree.
 
@@ -235,6 +376,9 @@ def state_dir(
     sessao grava o pin. Deixar a escrita so em `ensure_state_dir` faria dois
     chamadores de `state_dir` divergirem antes de qualquer diretorio existir —
     que e exatamente o defeito sendo consertado.
+
+    `grava_pin=False` e para leitor puro: resolve o mesmo balde que um escritor
+    resolveria agora, sem cunhar nem renovar o pin.
     """
     base = Path(root) if root is not None else default_root()
     if is_global_scope(scope):
@@ -244,7 +388,7 @@ def state_dir(
     if not session:
         return base / PROJECTS_SUBDIR / slug
     try:
-        slug = _pinned_slug(base, session, slug)
+        slug = _pinned_slug(base, session, slug, grava=grava_pin)
     except Exception:
         # O pin e correcao, nao dependencia. Qualquer surpresa cai na resolucao
         # por cwd — o comportamento de antes, que e ruim mas nao e quebrado.

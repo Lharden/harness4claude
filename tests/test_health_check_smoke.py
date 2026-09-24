@@ -51,10 +51,11 @@ def plugin_copy(tmp_path_factory):
     return dst
 
 
-def _run_health_check(plugin_dir: Path) -> subprocess.CompletedProcess:
+def _run_health_check(plugin_dir: Path, **env_extra: str) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin_dir)
+    env.update(env_extra)
     return subprocess.run(
         [BASH, str(plugin_dir / "scripts" / "health-check.sh")],
         capture_output=True, text=True, timeout=300, env=env,
@@ -167,14 +168,25 @@ class TestObsidianDistingueQuebraDeIndisponibilidade:
     quem le e deixa o defeito real de pe.
     """
 
-    def test_doutor_quebrado_nao_e_reportado_como_obsidian_fora(self, plugin_copy):
+    def test_doutor_quebrado_nao_e_reportado_como_obsidian_fora(self, plugin_copy, tmp_path):
+        """O ramo do doutor so e alcancado com vault existente e chave exportada.
+
+        Ate 2026-09-24 o teste herdava os dois do ambiente de quem rodava a
+        suite — passava apontando para o vault real, e reprovaria numa maquina
+        sem vault. O conftest agora limpa `VAULT_PATH`; o teste traz os seus.
+        O doutor cai no import (sem `console.py`), antes de ler o vault ou a chave.
+        """
         alvo = plugin_copy / "tools" / "console.py"
         if not alvo.is_file():
             pytest.skip("tools/console.py ausente nesta copia")
+        vault = tmp_path / "vault"
+        vault.mkdir()
         guardado = alvo.read_text(encoding="utf-8")
         alvo.unlink()
         try:
-            secao = _secao_obsidian(_run_health_check(plugin_copy).stdout)
+            secao = _secao_obsidian(_run_health_check(
+                plugin_copy, VAULT_PATH=str(vault), OBSIDIAN_API_KEY="chave-de-teste",
+            ).stdout)
             assert secao, "secao Obsidian ausente do relatorio"
             assert "app fechado" not in secao, (
                 "doutor quebrado reportado como Obsidian fora:\n" + secao

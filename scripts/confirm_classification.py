@@ -116,13 +116,18 @@ def apply_confirmation(
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    """tmp -> flush+fsync -> os.replace, consistente com harness-classify.sh."""
-    tmp = path.parent / f"{path.name}.tmp-{os.getpid()}"
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    """Helper unico (`projecao.gravar_json_atomico`); aqui a falha levanta.
+
+    Este e um CLI chamado pelo modelo: gravar a confirmacao pela metade sem dizer
+    nada seria pior que o erro. O laco proprio que existia aqui nao tinha
+    retentativa contra o replace do Windows (ramo ciclo-de-vida-da-task).
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from projecao import gravar_json_atomico
+
+    erro = gravar_json_atomico(path, data)
+    if erro is not None:
+        raise erro
 
 
 def main() -> int:
@@ -189,7 +194,9 @@ def main() -> int:
                 kind=kind,
                 pipeline=load_pipelines().get(args.final, []),
                 source=args.source,
-                confidence=args.confidence if args.confidence is not None else 1.0,
+                # Ausente fica ausente. Ate 2026-09-23 virava 1,0: 113 de 141
+                # linhas do banco declaravam certeza que ninguem afirmou (HC-00d).
+                confidence=args.confidence,
             )
             state.update({
                 "revision": task["revision"],

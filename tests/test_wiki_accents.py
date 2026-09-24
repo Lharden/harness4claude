@@ -163,6 +163,18 @@ def test_espelhadas_ficam_de_fora_por_padrao(tmp_path: Path) -> None:
     assert alvos == ["x.md"]
 
 
+def test_espelhos_de_decisions_e_branches_ficam_de_fora(tmp_path: Path) -> None:
+    """Mesma lista do vault_maintenance: o vault_sync tambem espelha o CONTEXT.md e as
+    sementes de ramo, e desde 2026-09-24 recusa pagina espelhada que mudou depois."""
+    escrever(tmp_path, "decisions/projeto-x-context.md")
+    escrever(tmp_path, "decisions/decisao-humana.md")
+    escrever(tmp_path, "branches/ramo.seed.md")
+
+    alvos = [p.name for p in target_pages(tmp_path)]
+
+    assert alvos == ["decisao-humana.md"]
+
+
 def test_flag_inclui_espelhadas(tmp_path: Path) -> None:
     escrever(tmp_path, "concepts/x.md")
     escrever(tmp_path, "specs/y.md")

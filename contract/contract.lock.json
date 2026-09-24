@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "files": [
     "behavioral-probes.json",
     "capabilities.json",
@@ -12,5 +12,5 @@
     "schemas/node-result.schema.json",
     "schemas/task-state.schema.json"
   ],
-  "sha256": "bcb8bff10200f3f7dac3bab0ba22e397b16984d0086c3c54bdefff26d419a5e6"
+  "sha256": "d0f8303bf3dd098a186a27b8ef6363ec4006e45bf2d3aedbf6d998cb4cee76fe"
 }

@@ -443,6 +443,34 @@
    "motivo": "Gera o vault-plugins.lock.json. Declarado na tabela do tools/README.md:20 e em README.md:493 com o comando. Roda ao instalar plugin novo no Obsidian, para que uma maquina nova reinstale o mesmo conjunto sem versionar 52 MB de binario."
   },
   {
+   "modulo": "migrar_inbox_rotulado",
+   "nome": "aplicar",
+   "arquivo": "tools/migrar_inbox_rotulado.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Migracao unica das notas diarias legadas de raw/inbox/today-*.md para <repo>--today-*.md, o nome que o vault_sync grava desde 2026-09-24 (fix/vault-sync-fontes). Consumidor: o usuario, uma vez por maquina que roda o harness, depois de instalar o plugin novo; restaurar() e o caminho de volta dessa operacao. Ensaio no AI-Brain real em 2026-09-24: 41 renomes por bytes, 5 por nome unico, 20 sem fonte."
+  },
+  {
+   "modulo": "migrar_inbox_rotulado",
+   "nome": "main",
+   "arquivo": "tools/migrar_inbox_rotulado.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Migracao unica das notas diarias legadas de raw/inbox/today-*.md para <repo>--today-*.md, o nome que o vault_sync grava desde 2026-09-24 (fix/vault-sync-fontes). Consumidor: o usuario, uma vez por maquina que roda o harness, depois de instalar o plugin novo; restaurar() e o caminho de volta dessa operacao. Ensaio no AI-Brain real em 2026-09-24: 41 renomes por bytes, 5 por nome unico, 20 sem fonte."
+  },
+  {
+   "modulo": "migrar_inbox_rotulado",
+   "nome": "planejar",
+   "arquivo": "tools/migrar_inbox_rotulado.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Migracao unica das notas diarias legadas de raw/inbox/today-*.md para <repo>--today-*.md, o nome que o vault_sync grava desde 2026-09-24 (fix/vault-sync-fontes). Consumidor: o usuario, uma vez por maquina que roda o harness, depois de instalar o plugin novo; restaurar() e o caminho de volta dessa operacao. Ensaio no AI-Brain real em 2026-09-24: 41 renomes por bytes, 5 por nome unico, 20 sem fonte."
+  },
+  {
+   "modulo": "migrar_inbox_rotulado",
+   "nome": "restaurar",
+   "arquivo": "tools/migrar_inbox_rotulado.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Migracao unica das notas diarias legadas de raw/inbox/today-*.md para <repo>--today-*.md, o nome que o vault_sync grava desde 2026-09-24 (fix/vault-sync-fontes). Consumidor: o usuario, uma vez por maquina que roda o harness, depois de instalar o plugin novo; restaurar() e o caminho de volta dessa operacao. Ensaio no AI-Brain real em 2026-09-24: 41 renomes por bytes, 5 por nome unico, 20 sem fonte."
+  },
+  {
    "modulo": "vault_maintenance",
    "nome": "accentuate_prose",
    "arquivo": "tools/vault_maintenance.py",

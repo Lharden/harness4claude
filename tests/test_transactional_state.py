@@ -621,7 +621,9 @@ def test_suite_com_pulados_verifica(tmp_path: Path):
     )
 
     assert task["verified"] is True
-    assert task["status"] == "verified"
+    # D1 (2026-09-23): evidencia mexe so na coluna; o status fica onde estava.
+    # Ver tests/test_ciclo_de_vida_da_task.py::TestEvidenciaNaoMexeNoStatus.
+    assert task["status"] == "active"
 
 
 def test_suite_inteira_pulada_nao_verifica(tmp_path: Path):

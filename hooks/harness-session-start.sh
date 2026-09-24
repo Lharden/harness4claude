@@ -335,8 +335,8 @@ export SESSIONS_DIGEST
 # ---------------------------------------------------------------------------
 # Aqui e nao no classify: drenar e SQLite, e `docs/DECISAO-CANAL.md` proibe
 # SQLite no turno comum. O SessionStart roda UMA vez por sessao contra um
-# timeout de 15s, e o hook inteiro ja gasta ~5s — ha folga, e o custo nao se
-# repete a cada prompt.
+# timeout de 60 s (hooks.json, em segundos; medido em 2026-09-23: p50 7,3 s,
+# p99 18,5 s) — ha folga, e o custo nao se repete a cada prompt.
 #
 # **Silencioso quando corre bem, uma linha quando falha.** E o unico jeito de a
 # automacao nao trocar um problema visivel por um invisivel: enquanto o dreno
@@ -467,32 +467,37 @@ fi
 "$PY" -c "
 import json, os, sys
 sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR_PY'])
-from continuation_policy import should_continue
+from continuation_policy import DESCONHECIDA, VIVA, task_viva
 
 parts = []
 
-# 1. Pipeline em andamento (comportamento historico do hook).
-try:
-    with open(r'$STATE_FILE_PY') as f:
-        state = json.load(f)
-    if should_continue(state):
-        tid = state.get('task_id', 'unknown')
-        cls = state.get('classification', 'unknown')
-        step = state.get('current_step') or (state['pipeline'][0] if state['pipeline'] else 'none')
-        pipe = ' -> '.join(state['pipeline'])
-        gate = state.get('pending_gate')
-        instruction = (
-            f'Pending human gate: {gate}. Invoke harness-workflow skill to resolve it.'
-            if gate else
-            'Invoke harness-workflow skill to continue where you left off.'
-        )
-        parts.append(
-            f'HARNESS v3 RESUMING: Scoped pipeline {cls} (task {tid}). '
-            f'Current step: {step}. Pipeline: {pipe}. '
-            f'{instruction}'
-        )
-except Exception:
-    pass
+# 1. Pipeline em andamento. Pergunta ao BANCO, a mesma pergunta do classify
+# (ramo ciclo-de-vida-da-task): ate 2026-09-23 lia a projecao state.json, que
+# fica atras do banco quando o escritor do PostToolUse falha.
+pergunta = task_viva(r'$STATE_DIR_PY')
+if pergunta.resposta == VIVA:
+    task = pergunta.task
+    tid = task['task_id']
+    cls = task['legacy_level']
+    step = task['phase'] or (task['pipeline'][0] if task['pipeline'] else 'none')
+    pipe = ' -> '.join(task['pipeline'])
+    gate = task['pending_gate']
+    instruction = (
+        f'Pending human gate: {gate}. Invoke harness-workflow skill to resolve it.'
+        if gate else
+        'Invoke harness-workflow skill to continue where you left off.'
+    )
+    parts.append(
+        f'HARNESS v3 RESUMING: Scoped pipeline {cls} (task {tid}). '
+        f'Current step: {step}. Pipeline: {pipe}. '
+        f'{instruction}'
+    )
+elif pergunta.resposta == DESCONHECIDA:
+    parts.append(
+        f'HARNESS v3 WARNING: estado ilegivel — o harness.db deste projeto nao '
+        f'respondeu se ha pipeline em andamento ({pergunta.erro}). Nada foi '
+        f'retomado nem encerrado.'
+    )
 
 # 2. Digest do vault AI-Brain, ja calculado acima e valido nos tres caminhos de saida.
 digest = os.environ.get('VAULT_DIGEST', '').strip()

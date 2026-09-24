@@ -84,12 +84,18 @@ def montar_vault(tmp_path: Path) -> Path:
     return raiz
 
 
-def semear_pipeline(tmp_path: Path, cwd: str, *, started_at: str | None) -> None:
+def semear_pipeline(
+    tmp_path: Path, cwd: str, *, started_at: str | None, banco: bool = False
+) -> None:
     """Escreve um pipeline no bucket que o hook vai resolver para este cwd.
 
     O estado passou a ser por projeto (`harness/projects/<bucket>/state.json`); gravar
     na raiz do HARNESS_DIR faria o hook cair no caminho de bucket novo. `started_at`
     controla o TTL: recente => RESUMING, antigo/None => EXPIRED.
+
+    `banco=True` grava a task tambem no `harness.db`. Desde o ramo
+    ciclo-de-vida-da-task (2026-09-23) e o banco que responde se ha pipeline a
+    retomar; a projecao sozinha so descreve o que o escritor tentou gravar.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
     from harness_paths import ensure_state_dir
@@ -102,6 +108,13 @@ def semear_pipeline(tmp_path: Path, cwd: str, *, started_at: str | None) -> None
         "status": "active", "pipeline": ["discuss", "tdd"], "current_step": "discuss",
         "artifacts_so_far": [], "started_at": started_at,
     }), encoding="utf-8")
+    if banco:
+        from transactional_state import HarnessDatabase
+
+        HarnessDatabase(destino).start_task(
+            scope_id=str(destino), legacy_level="L2-feature", tier="L2", kind="feature",
+            pipeline=["discuss", "tdd"], prompt="teste", task_id="t-teste",
+        )
 
 
 def agora_iso() -> str:
@@ -154,7 +167,7 @@ def test_resume_do_pipeline_sobrevive_ao_digest(tmp_path: Path) -> None:
     raiz = montar_vault(tmp_path)
     projeto = str(tmp_path / "projeto")
     Path(projeto).mkdir(exist_ok=True)
-    semear_pipeline(tmp_path, projeto, started_at=agora_iso())
+    semear_pipeline(tmp_path, projeto, started_at=agora_iso(), banco=True)
 
     texto = mensagem(run_hook(tmp_path, cwd=projeto, AI_BRAIN_PATH=str(raiz)))
 

@@ -34,6 +34,7 @@ caso que importa, e nao uma falha de dez minutos. `GRACE_SECONDS` define a folga
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from datetime import datetime
@@ -229,6 +230,54 @@ def run(harness_dir: Path, hooks_json: Path, home: Path, now: float) -> tuple[in
     return (1 if failed else 0), lines
 
 
+def _textos_entregues(caminho: Path) -> list[str]:
+    """O que o host registrou como saida de hook entregue ao modelo.
+
+    Formato medido em 2026-09-23 num transcript real: `additionalContext` vira
+    `attachment.type == "hook_additional_context"` com `content` em lista;
+    stdout cru vira `hook_success` com `content` em string.
+    """
+    textos: list[str] = []
+    try:
+        linhas = caminho.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return textos
+    for linha in linhas:
+        if '"hook_' not in linha:
+            continue
+        try:
+            anexo = json.loads(linha).get("attachment") or {}
+        except (ValueError, AttributeError):
+            continue
+        if not isinstance(anexo, dict):
+            continue
+        conteudo = anexo.get("content")
+        if anexo.get("type") == "hook_additional_context" and isinstance(conteudo, list):
+            textos += [c for c in conteudo if isinstance(c, str)]
+        elif anexo.get("type") == "hook_success" and isinstance(conteudo, str) and conteudo:
+            textos.append(conteudo)
+    return textos
+
+
+def _sha8_entregues(caminho: Path) -> set[str]:
+    """Os `sha8` de todo bloco que pode ter saido de `emit.Emitter` nesta sessao.
+
+    O Emitter junta os blocos com linha em branco e registra um `sha8` por
+    bloco, com o texto ja sem espaco no fim. Um bloco pode ter linha em branco
+    dentro dele, entao nao ha como partir o texto entregue de volta nos blocos:
+    todo trecho contiguo de paragrafos e candidato. Sao poucos paragrafos por
+    entrega, e o quadratico nao pesa.
+    """
+    vistos: set[str] = set()
+    for texto in _textos_entregues(caminho):
+        partes = texto.rstrip().split("\n\n")
+        for i in range(len(partes)):
+            for j in range(i + 1, len(partes) + 1):
+                bloco = "\n\n".join(partes[i:j]).rstrip()
+                vistos.add(hashlib.sha256(bloco.encode("utf-8")).hexdigest()[:8])
+    return vistos
+
+
 def delivery_report(harness_dir: Path, home: Path) -> tuple[int, list[str]]:
     """Cruza o que foi emitido com o que apareceu nos transcripts.
 
@@ -268,25 +317,22 @@ def delivery_report(harness_dir: Path, home: Path) -> tuple[int, list[str]]:
         if sid:
             por_sessao.setdefault(sid, []).append(row)
 
-    # O transcript nao guarda o texto do additionalContext, so o registro do
-    # hook. A prova de entrega possivel aqui e a presenca da sessao com um
-    # hook_success nao vazio no turno correspondente.
+    # Prova por emissao (HC-00f). Ate 2026-09-23 bastava o transcript da sessao
+    # conter a palavra "hook" — e toda sessao tem `hook_success` de algum hook,
+    # entao a prova aprovava qualquer sessao que existisse. O transcript GUARDA
+    # o texto entregue (medido num jsonl real): a emissao conta como entregue
+    # quando o `sha8` do bloco reaparece no que o host registrou na sessao.
+    #
+    # `SubagentStart` entrega no transcript do subagente, em
+    # `<sessao>/subagents/*.jsonl`, com o `session_id` da sessao pai. Lendo so
+    # o principal, `resume` media 0/1263 com o texto entregue do lado.
     raiz = home / ".claude" / "projects"
-    achadas: set[str] = set()
-    for sid in por_sessao:
-        for caminho in raiz.glob(f"*/{sid}.jsonl"):
-            try:
-                if "hook" in caminho.read_text(encoding="utf-8", errors="replace"):
-                    achadas.add(sid)
-            except OSError:
-                pass
-            break
-
     for sid, rows in por_sessao.items():
-        if sid in achadas:
-            for row in rows:
-                if row.get("channel") == "silent":
-                    continue
+        entregues: set[str] = set()
+        for caminho in [*raiz.glob(f"*/{sid}.jsonl"), *raiz.glob(f"*/{sid}/subagents/*.jsonl")]:
+            entregues |= _sha8_entregues(caminho)
+        for row in rows:
+            if row.get("sha8") and row["sha8"] in entregues:
                 por_kind[str(row.get("kind") or "?")]["entregues"] += 1
 
     code = 0

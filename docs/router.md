@@ -48,7 +48,7 @@ não encontra nada.** Ou seja, há **duas categorias de latência**, não um ún
 | DISABLED_MIN / DISABLED_LEAD | 0.60 / 0.08 | bar p/ sugerir skill de plugin desabilitado |
 | MAX_OFFERS_PER_SKILL | 2 | dedupe por sessão |
 | CONNECT_TIMEOUT | 0.15s | pre-check TCP: porta morta falha aqui, sem pagar o teto de leitura |
-| EMBED_TIMEOUT | 3.0s | teto de leitura; acima disso degrada p/ Camada A |
+| EMBED_TIMEOUT | 6.0s | teto de leitura; acima disso degrada p/ Camada A (`hooks/skill_router.py:62`) |
 | HARNESS_OLLAMA_URL (env) | http://127.0.0.1:11434 | override do endpoint — **IP literal, não hostname** |
 | HARNESS_SKILLS_INDEX (env) | ~/.claude/harness/skills-index | override do índice (testes) |
 
@@ -128,7 +128,10 @@ Todos os números abaixo foram medidos e confirmados de forma independente.
   do router (layer_a/layer_b/pick) é sub-milissegundo — o custo é I/O externo, não CPU.
 - **Concorrência:** roda em **paralelo com o harness-classify** (hooks de `UserPromptSubmit`
   disparam concorrentemente; a latência observada é o `max()` das duas, não a soma),
-  respeitando o timeout de 5000ms do hook.
+  respeitando o timeout de 15 s do hook. O `timeout` do `hooks.json` é em **segundos**
+  (code.claude.com/docs/en/hooks); até 2026-09-23 estava escrito `5000`, lido como
+  5000 s — sem limite na prática. 15 s cobre `CONNECT_TIMEOUT` + `EMBED_TIMEOUT` + spawn,
+  travado em `tests/test_hooks_timeout.py`.
 - **Ollama fora do ar:** degradação graciosa — a Camada A (aliases) continua respondendo,
   nenhuma exceção escapa do hook, exit 0 sempre. Desde 2026-08-12 um pre-check TCP
   (`CONNECT_TIMEOUT` 0.15s) separa "porta morta" de "modelo ocupado": porta morta custa

@@ -129,10 +129,28 @@ def run_hook(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def write_state(data: dict) -> None:
-    """Escreve state.json para setup de testes."""
+def write_state(data: dict, *, banco: bool = True) -> None:
+    """Escreve state.json para setup de testes — e a task no banco, quando viva.
+
+    Desde o ramo ciclo-de-vida-da-task (2026-09-23) quem responde "ha pipeline
+    em andamento?" e o `harness.db`, nao a projecao. Um cenario que declara
+    pipeline ativo so na projecao descreve um estado que o hook nao ve mais —
+    e que, no uso real, so existe quando o escritor da projecao falhou.
+    """
     with open(_state_file(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    vivo = data.get("status") in {"active", "awaiting_gate", "verified"} and data.get("pipeline")
+    if banco and vivo and data.get("task_id"):
+        sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+        from transactional_state import HarnessDatabase
+
+        classificacao = str(data.get("classification") or "L1-feature")
+        tier, _, kind = classificacao.partition("-")
+        HarnessDatabase(_state_dir()).start_task(
+            scope_id=_state_dir(), legacy_level=classificacao, tier=tier or "L1",
+            kind=kind or "feature", pipeline=list(data["pipeline"]), prompt="teste",
+            task_id=str(data["task_id"]),
+        )
 
 
 def read_state() -> dict:
@@ -154,7 +172,18 @@ def read_counter() -> dict:
 
 
 def fresh_state() -> None:
-    """Reseta state.json para estado limpo (sem pipeline ativo)."""
+    """Reseta o estado para limpo (sem pipeline ativo): projecao E banco.
+
+    Resetar so a projecao deixava viva, no `harness.db`, a task do teste
+    anterior — e o classify, que agora pergunta ao banco, a continuava.
+    """
+    import gc
+
+    gc.collect()  # conexao sqlite esquecida segura o arquivo no Windows
+    for nome in ("harness.db", "harness.db-wal", "harness.db-shm"):
+        caminho = os.path.join(_state_dir(), nome)
+        if os.path.exists(caminho):
+            os.remove(caminho)
     write_state({"task_id": None, "classification": None, "status": None})
 
 
@@ -1237,7 +1266,11 @@ class TestReclassify(HarnessTestBase):
             "artifacts_so_far": ["docs/specs/x-spec-light.md"],
             "started_at": RECENT_ISO,
         }
-        write_state(original)
+        # So a projecao, de proposito: o que se mede aqui e a politica de
+        # PROMOCAO (`reclassification_policy`), que le a projecao. Com a task no
+        # banco o hook ressincronizaria revisao/fase/escopo a partir dele — o
+        # comportamento certo, e fora do que este teste afirma.
+        write_state(original, banco=False)
         write_counter({"count": 0, "files": [], "task_id": "t-test-act"})
         for f in ["C:/p/q.py", "C:/p/r.py", "C:/p/s.py", "C:/p/t.py"]:
             run_hook(self.HOOK, {"tool_name": "Edit", "tool_input": {"file_path": f}})
@@ -1431,6 +1464,129 @@ class TestPrecompact(HarnessTestBase):
             # trace-current.md deve ter sido recriado (menor)
             size = os.path.getsize(trace_file)
             self.assertLess(size, 51200, "trace-current.md deve ser menor após rotação")
+
+    def _precompact_isolado(self, tmp: str) -> tuple[str, str, str]:
+        """HARNESS_DIR e vault temporarios; devolve (raiz, bucket, vault)."""
+        tmp_harness = os.path.join(tmp, "harness")
+        tmp_vault = os.path.join(tmp, "vault")
+        os.makedirs(tmp_harness)
+        os.makedirs(tmp_vault)
+        sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+        from harness_paths import ensure_state_dir
+        tmp_state = str(ensure_state_dir(tmp_harness, os.getcwd()))
+        return tmp_harness, tmp_state, tmp_vault
+
+    def _rodar_precompact(self, tmp_harness: str, tmp_vault: str) -> int:
+        code, _out, _err = run_hook(self.HOOK, {}, env_extra={
+            "HARNESS_DIR": tmp_harness.replace(os.sep, "/"),
+            "AI_BRAIN_PATH": tmp_vault,
+        }, timeout=60)
+        return code
+
+    # --- Cenario 28b: o erro do vault_sync vai para o log, nao para /dev/null ---
+    def test_28b_erro_do_vault_sync_vai_para_o_log(self):
+        """Ate 2026-09-24 o hook descartava a saida inteira do vault_sync
+        (`>/dev/null 2>&1 || true`): uma falha de escrita ou uma recusa nao
+        deixava rastro nenhum. O destino ocupado por uma pasta forca a falha."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness, tmp_state, tmp_vault = self._precompact_isolado(tmp)
+            os.makedirs(os.path.join(tmp_state, "traces"))
+            with open(os.path.join(tmp_state, "traces", "sessao-x.md"), "w", encoding="utf-8") as f:
+                f.write("# trace\n")
+            os.makedirs(os.path.join(tmp_vault, "wiki", "sessions", "sessao-x.md"))
+
+            self.assertEqual(self._rodar_precompact(tmp_harness, tmp_vault), 0)
+
+            log = os.path.join(tmp_harness, "logs", "vault-sync.log")
+            self.assertTrue(os.path.isfile(log), "o hook deve gravar a saida do vault_sync")
+            with open(log, encoding="utf-8") as f:
+                conteudo = f.read()
+            self.assertIn("falha", conteudo)
+            self.assertIn("sessao-x.md", conteudo)
+
+    # --- Cenario 28c: o manifesto vive na raiz do harness, nao no bucket ---
+    def test_28c_manifesto_do_vault_sync_fica_na_raiz(self):
+        """O bucket e por sessao: um manifesto ali recomecaria vazio a cada sessao,
+        e toda pagina que a fonte mudou seria recusada como se alguem a tivesse editado."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness, tmp_state, tmp_vault = self._precompact_isolado(tmp)
+            os.makedirs(os.path.join(tmp_state, "traces"))
+            with open(os.path.join(tmp_state, "traces", "sessao-y.md"), "w", encoding="utf-8") as f:
+                f.write("# trace\n")
+
+            self.assertEqual(self._rodar_precompact(tmp_harness, tmp_vault), 0)
+
+            self.assertTrue(os.path.isfile(os.path.join(tmp_vault, "wiki", "sessions", "sessao-y.md")))
+            self.assertTrue(os.path.isfile(os.path.join(tmp_harness, "vault-sync-manifest.json")))
+            if os.path.normcase(tmp_state) != os.path.normcase(tmp_harness):
+                self.assertFalse(os.path.exists(os.path.join(tmp_state, "vault-sync-manifest.json")))
+
+    # --- Cenario 28e: sementes de ramo chegam ao vault pelo hook ---
+    def test_28e_semente_de_ramo_chega_ao_vault_pelo_hook(self):
+        """Ate 2026-09-24 o hook passava o balde da SESSAO em `--harness-dir`, e o
+        vault_sync o tratava como a RAIZ ao procurar as sementes: resolvia
+        `<balde>/projects/<slug>/branches`, que nunca existe. Medido: 29 sementes
+        em `~/.claude/harness/projects/*/branches` e 1 pagina em `wiki/branches`.
+
+        O `cwd` do payload difere do `cwd` do processo de proposito: o balde e
+        calculado pelo do payload, e as fontes do sync tem de vir do mesmo lugar.
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness = os.path.join(tmp, "harness")
+            tmp_vault = os.path.join(tmp, "vault")
+            projeto = os.path.join(tmp, "projeto-28e")
+            os.makedirs(tmp_harness)
+            os.makedirs(tmp_vault)
+            os.makedirs(os.path.join(projeto, "docs", "specs"))
+            with open(os.path.join(projeto, "docs", "specs", "so-do-payload-spec.md"), "w",
+                      encoding="utf-8") as f:
+                f.write("# spec do projeto do payload\n")
+            sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+            from harness_paths import state_dir
+            # Onde o escritor de producao (`branch_state.branches_dir`) poe a semente:
+            # `state_dir(cwd)` a partir da raiz, sem sessao.
+            sementes = os.path.join(str(state_dir(root=tmp_harness, cwd=projeto)), "branches")
+            os.makedirs(sementes)
+            with open(os.path.join(sementes, "ramo-28e.seed.md"), "w", encoding="utf-8") as f:
+                f.write("# Ramo 28e\n\ncorpo da semente\n")
+
+            code, _out, _err = run_hook(
+                self.HOOK, {"cwd": projeto, "session_id": "sessao-28e"},
+                env_extra={"HARNESS_DIR": tmp_harness.replace(os.sep, "/"),
+                           "AI_BRAIN_PATH": tmp_vault},
+                timeout=60,
+            )
+
+            self.assertEqual(code, 0)
+            espelho = os.path.join(tmp_vault, "wiki", "branches", "ramo-28e.seed.md")
+            log = os.path.join(tmp_harness, "logs", "vault-sync.log")
+            detalhe = open(log, encoding="utf-8").read() if os.path.isfile(log) else "(sem log)"
+            self.assertTrue(os.path.isfile(espelho), f"semente nao espelhada. Log: {detalhe}")
+            specs = sorted(os.listdir(os.path.join(tmp_vault, "wiki", "specs")))
+            self.assertEqual(specs, ["so-do-payload-spec.md"], "as fontes vem do cwd do payload")
+
+    # --- Cenario 28d: o log do vault_sync nao cresce sem teto ---
+    def test_28d_log_do_vault_sync_rotaciona(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_harness, _tmp_state, tmp_vault = self._precompact_isolado(tmp)
+            logs = os.path.join(tmp_harness, "logs")
+            os.makedirs(logs)
+            log = os.path.join(logs, "vault-sync.log")
+            with open(log, "w", encoding="utf-8") as f:
+                f.write("x" * 600_000)
+
+            self.assertEqual(self._rodar_precompact(tmp_harness, tmp_vault), 0)
+
+            self.assertTrue(os.path.isfile(log + ".1"), "o log grande vira .1")
+            self.assertLess(os.path.getsize(log) if os.path.exists(log) else 0, 600_000)
 
 
 # ===========================================================================

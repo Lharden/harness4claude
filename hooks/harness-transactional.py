@@ -22,6 +22,7 @@ CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
+from projecao import gravar_json_atomico  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
 
 VERIFICATION_PATTERNS = (
@@ -54,6 +55,43 @@ def _command(payload: dict[str, Any]) -> str:
 #: como byte de retorno de carro e quebrou a sintaxe.
 _OPERADORES = frozenset({';', '|', '&', '`', chr(13), chr(10)})
 
+#: O que pode SEGUIR `>&` numa duplicacao de descritor: o numero do descritor
+#: de destino, ou `-` para fecha-lo.
+_ALVOS_DE_FD = frozenset('0123456789-')
+
+
+def _duplicacao_de_fd(command: str, index: int) -> bool:
+    """O `&` em `index` e parte de `2>&1`, e nao um operador.
+
+    `2>&1` nao introduz comando nenhum: aponta um descritor para outro, dentro
+    do MESMO processo. Trata-lo como composicao era o defeito mais caro deste
+    arquivo, porque a varredura e uma so e as quatro isencoes dependem dela —
+    `is_state_management`, `is_trusted_verification`, `is_read_only` e
+    `nao_muda_a_arvore` caiam juntas.
+
+    Medido em 2026-09-21 nos baldes desta maquina: 1 062 recusas de candidato
+    `&` em 649 comandos distintos, 46,3% de todas as 2 292 recusas — a classe
+    mais frequente, e maior que todas as outras somadas menos uma. Na task
+    `t-20260921-090314300233`, 33 de 33 toques sairam com origem
+    `shell-placeholder`, nenhum caminho atribuido, e as 13 linhas de evidence
+    foram invalidadas por um toque <=2s depois de nascerem. Entre os comandos
+    recusados estava, 17 vezes, a receita que a mensagem do portao manda
+    copiar.
+
+    A porta e estreita de proposito, e a estreiteza e o que separa isto de
+    afrouxar o guarda:
+
+    - exige `>` ou `<` COLADO antes, entao `a && b` e `sleep 1 &` continuam
+      compostos: em `&&` o caractere anterior e espaco ou o proprio `&`;
+    - exige digito ou `-` colado depois, entao `a &> saida.txt` continua
+      composto. Aquilo e redirecionamento para ARQUIVO, escrita de verdade, e
+      `shell_write_targets` tem de seguir vendo o alvo.
+    """
+    if index == 0 or command[index - 1] not in {'>', '<'}:
+        return False
+    seguinte = index + 1
+    return seguinte < len(command) and command[seguinte] in _ALVOS_DE_FD
+
 
 def _scan_composition(command: str) -> tuple[int, bool]:
     """Indice do primeiro operador fora de aspas (-1 se nao houver), e se
@@ -80,6 +118,8 @@ def _scan_composition(command: str) -> tuple[int, bool]:
             quote = character
             continue
         if character in _OPERADORES:
+            if character == '&' and _duplicacao_de_fd(command, index):
+                continue
             return index, False
         if character == '$' and index + 1 < len(command) and command[index + 1] == '(':
             return index, False
@@ -130,6 +170,24 @@ def atomic_prefix(command: str) -> str:
 
 #: O aviso do descarte. Curto de proposito: ele aparece no meio do trabalho, e
 #: um paragrafo aqui custa mais atencao do que o erro que ele evita.
+#: A ressalva que acompanha a receita do portao.
+#:
+#: Ate 2026-09-21 a mensagem documentava um caminho e nao dizia a condicao dele.
+#: A receita e isenta do contador SO enquanto a linha nao tem composicao, e um
+#: `cd ... &&` na frente ou um `| tail -1` atras a tiram da isencao em silencio:
+#: o CLI responde `verified: true`, o PostToolUse sobe a revisao logo atras, e o
+#: portao bloqueia de novo lendo `verified=False`. Quem passou por isso nao tinha
+#: como saber por que — o `2>&1` que causava a maior parte dos casos foi
+#: consertado em `_duplicacao_de_fd`, mas as outras formas de composicao seguem
+#: valendo, e agora estao escritas.
+AVISO_LINHA_SOZINHA = (
+    "Copie a linha inteira e rode SOZINHA: sem `cd` antes, sem `&&`, sem `;` e "
+    "sem pipe. Composicao de shell tira o comando da isencao e ele passa a "
+    "invalidar a evidencia que acabou de gravar. Redirecionar descritor "
+    "(`2>&1`) pode."
+)
+
+
 AVISO_COMPOSICAO = (
     "[harness] evidencia de teste NAO gravada: o comando tem composicao de "
     "shell (pipe, `&&`, `;`, nova linha ou substituicao), e um comando composto "
@@ -384,15 +442,36 @@ def _binario(token: str) -> str:
 
 
 def _segmentos(command: str) -> list[list[str]]:
+    """Os comandos da linha, um por segmento.
+
+    A duplicacao de descritor e descartada em vez de partir o segmento. Sem
+    isto, `git status 2>&1` virava `[['git','status','2'], ['1']]`, o segundo
+    segmento comecava por `1`, e `is_read_only` respondia False para um
+    comando que so le — a mesma causa de `_duplicacao_de_fd`, por outra porta.
+    """
+    tokens = _tokenize(command)
     segmento: list[str] = []
     segmentos: list[list[str]] = []
-    for token in _tokenize(command):
+    indice = 0
+    while indice < len(tokens):
+        token = tokens[indice]
+        if (
+            token in {'>', '<'}
+            and indice + 2 < len(tokens)
+            and tokens[indice + 1] == '&'
+            and tokens[indice + 2]
+            and all(c in _ALVOS_DE_FD for c in tokens[indice + 2])
+        ):
+            indice += 3
+            continue
         if token in _OPERADORES_TOKEN:
             if segmento:
                 segmentos.append(segmento)
             segmento = []
+            indice += 1
             continue
         segmento.append(token)
+        indice += 1
     if segmento:
         segmentos.append(segmento)
     return segmentos
@@ -758,9 +837,30 @@ def _sync_projection(bucket: Path, projection: dict[str, Any], task: dict[str, A
             "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
         }
     )
-    temporary = bucket / "state.json.transactional.tmp"
-    temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(bucket / "state.json")
+    # A projecao lida no inicio do hook pode ja ter sido trocada: um prompt de
+    # troca explicita abriu outra task enquanto este PostToolUse rodava.
+    # Regravar o snapshot antigo apontaria a projecao para a task superada, e
+    # todo PostToolUse seguinte (toques, evidencia) iria para ela. Relido aqui,
+    # no ultimo momento; a janela que sobra e a do proprio replace.
+    atual = _projection(bucket).get("task_id")
+    if atual and atual != task["task_id"]:
+        return
+    # Escrita pelo helper unico (`scripts/projecao.py`): tmp de nome unico,
+    # retentativa curta, nunca levanta. Com o tmp fixo e `replace` direto, 56%
+    # das escritas levantavam com 1 escritor concorrente e 86% com 4 (ramo
+    # ciclo-de-vida-da-task). Esgotou, registra — falha engolida sem registro e
+    # o que deixou o incidente 2 sem prova.
+    ultimo = gravar_json_atomico(bucket / "state.json", projection)
+    if ultimo is None:
+        return
+    try:
+        with (bucket / "projection-errors.log").open("a", encoding="utf-8") as log:
+            log.write(
+                f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())} "
+                f"task={task['task_id']} {type(ultimo).__name__}: {ultimo}\n"
+            )
+    except OSError:
+        pass
 
 
 def _database_for_payload(
@@ -1046,7 +1146,8 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
         "HARNESS v3 verification gate: continue o pipeline do harness-workflow e anexe "
         f"evidencia de teste fresca antes da resposta final.\n"
         f"O que o portao leu: {leitura}\n{regua}\n"
-        f"Rodar a suite em primeiro plano ja grava sozinho. Para registrar a mao:\n{comando}"
+        f"Rodar a suite em primeiro plano ja grava sozinho. Para registrar a mao:\n{comando}\n"
+        f"{AVISO_LINHA_SOZINHA}"
     )
 
 

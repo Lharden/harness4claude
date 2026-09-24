@@ -46,6 +46,14 @@ Para L0, NÃO ative — execute direto sem pipeline.
    # UMA CHAMADA POR LINHA, CAMINHO LITERAL. Sem `;`, sem `&&`, sem `$( )`, sem
    # continuacao com barra invertida — nova linha tambem e composicao.
    #
+   # `2>&1` PODE, desde 2026-09-21. Ele nao era composicao e o codigo achava que
+   # era: `_OPERADORES` olhava o `&` sem olhar o `>` colado antes. Foi a maior
+   # classe de dano do harness — 1 062 recusas em 649 comandos distintos, 46,3%
+   # de todas as recusas da maquina, e as quatro isencoes do hook caindo juntas
+   # porque as quatro passam pela mesma varredura. Ver `_duplicacao_de_fd`.
+   # Redirecionar para ARQUIVO (`> saida.txt`, `&> saida.txt`) continua sendo
+   # escrita e continua contando.
+   #
    # A isencao do contador de escrita (hooks/harness-transactional.py:152-173)
    # so vale para comando SEM composicao de shell. Ate 2026-09-17 a receita
    # daqui era composta e derrotava a propria isencao que existe para ela: as
@@ -67,8 +75,10 @@ Para L0, NÃO ative — execute direto sem pipeline.
    python "<PLUGIN_ROOT>/scripts/harness_paths.py" --cwd "<cwd>" --session-id "<session_id>"
    # Passo 3 — substitua <PLUGIN_ROOT> e <STATE_DIR> pelos valores literais.
    #           Esta linha e isenta porque nao tem composicao nenhuma.
-   python "<PLUGIN_ROOT>/scripts/confirm_classification.py" --final "<L1-feature|L2-bug|...>" --expect-task "<task_id>" --harness-dir "<STATE_DIR>"
+   python "<PLUGIN_ROOT>/scripts/confirm_classification.py" --final "<L1-feature|L2-bug|...>" --confidence "<0.0-1.0>" --expect-task "<task_id>" --harness-dir "<STATE_DIR>"
    ```
+
+   - **`--confidence`** é a sua confiança na classificação final, de 0 a 1 — não a do regex. Sem ele o banco grava `NULL` (não declarada). Até 2026-09-23 a falta virava `1.0`, e 113 de 141 linhas afirmavam uma certeza que ninguém tinha declarado.
 
    - **Concorda** → passe `--final` igual ao `suggested`; o script grava `agreed = true`.
    - **Discorda** (ex.: regex marcou L2 por conter "feature", mas é uma adição L1 pequena; ou o oposto) → passe o `--final` correto: o script grava `agreed = false`, corrige `classification` e **troca `pipeline`** sozinho, lendo a arvore de contrato que estiver valendo (`contract/pipelines.json`, ou a canonica do master-harness quando ela estiver alcancavel).
@@ -423,8 +433,14 @@ O script (idempotente por `task_id`):
 3. Acrescenta/atualiza a task em `signals.json` → array `tasks`
 4. Recalcula `aggregates`, incluindo o bloco `classify` (`avg_classify_accuracy`,
    `regex_vs_semantic_agreement`, `human_override_count`) — fechando o loop de feedback
+5. Com `--abandoned`, encerra a task como `abandoned` no `harness.db`
 
-Depois, marque `status: "done"` no `state.json` com `Edit`.
+**Não edite o `state.json` à mão para encerrar.** Desde 2026-09-23 (ramo
+`ciclo-de-vida-da-task`) quem responde "há task viva?" é o `harness.db`, não a
+projeção: `state_cli.py complete` encerra a task concluída, `record_signal.py
+--abandoned` encerra a abandonada, e o `state.json` só acompanha. Uma projeção
+editada para `done` com a task viva no banco é reescrita no prompt seguinte, e a
+task volta como CONTINUING.
 
 ## Artefatos
 

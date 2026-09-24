@@ -92,6 +92,18 @@ fi
 "$PY" -c "
 import json, os, sys
 
+
+def gravar_estado(caminho, dados):
+    # Helper unico (scripts/projecao.py). Ate 2026-09-23 este hook gravava a
+    # projecao com open(caminho, 'w'), que TRUNCA antes de escrever: um leitor
+    # que chegasse no meio lia arquivo vazio (ramo ciclo-de-vida-da-task). O
+    # helper nunca levanta: falha de PROJECAO nao pode ser confundida com falha
+    # do BANCO no try que envolve o touch transacional logo abaixo.
+    sys.path.insert(0, os.environ['HARNESS_SCRIPTS_DIR'])
+    from projecao import gravar_json_atomico
+    return gravar_json_atomico(caminho, dados)
+
+
 harness_dir = r'$HARNESS_DIR_WIN'
 # Bucket do projeto; fallback para a raiz preserva o comportamento antigo se a
 # resolucao falhar. Ver scripts/harness_paths.py.
@@ -172,8 +184,7 @@ if state_task_id:
             'scope_id': transactional['scope_id'],
         })
         state_status = transactional['status']
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(state, f, indent=2)
+        gravar_estado(state_file, state)
     except Exception:
         transaction_db = None
 
@@ -236,8 +247,7 @@ if should_promote(state, counter['count']):
                 'pending_gate': transactional['pending_gate'],
                 'scope_id': transactional['scope_id'],
             })
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(state, f, indent=2)
+        gravar_estado(state_file, state)
     except Exception:
         pass
     print('<harness-reclassification>')

@@ -6,10 +6,14 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 import unicodedata
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from vault_sync import is_mirrored as _vault_sync_is_mirrored
 
 MOJIBAKE_REPLACEMENTS = {
     "â€“": "–",
@@ -174,6 +178,21 @@ PROTECTED_PROSE_PREFIXES = (
     "copilot/",
     "templates/",
 )
+
+AI_BRAIN_PREFIX = "AI-Brain/"
+
+
+def _is_mirrored(relative: str) -> bool:
+    """True se a nota (caminho relativo a raiz do vault, com `/`) e espelho do vault_sync.
+
+    A fonte da verdade dessas paginas esta nos repositorios, e desde 2026-09-24 o sync
+    recusa pagina espelhada que mudou depois da ultima escrita: normalizar ou reescrever
+    link numa delas faria o espelho parar. A lista e do proprio vault_sync.
+    """
+    return relative.startswith(AI_BRAIN_PREFIX) and _vault_sync_is_mirrored(
+        relative[len(AI_BRAIN_PREFIX) :]
+    )
+
 
 VAULT_PATH_RENAMES = {
     "Bem-vindo.md": "AI-Brain/raw/inbox/Bem-vindo ao Obsidian.md",
@@ -627,6 +646,8 @@ def organize_notes(root: Path, path_renames: dict[str, str]) -> dict[str, int]:
 
     updated_link_sources = 0
     for path in iter_markdown_files(root):
+        if _is_mirrored(path.relative_to(root).as_posix()):
+            continue
         original = path.read_text(encoding="utf-8")
         updated = update_wikilinks(original, link_renames)
         if updated != original:
@@ -685,8 +706,12 @@ def audit_vault(root: Path) -> dict[str, object]:
 def apply_text_normalization(root: Path) -> dict[str, int]:
     changed = 0
     accented = 0
+    mirrored = 0
     for path in iter_markdown_files(root):
         relative = path.relative_to(root).as_posix()
+        if _is_mirrored(relative):
+            mirrored += 1
+            continue
         original = path.read_text(encoding="utf-8")
         updated = normalize_markdown(original)
         if not relative.startswith(PROTECTED_PROSE_PREFIXES):
@@ -697,7 +722,7 @@ def apply_text_normalization(root: Path) -> dict[str, int]:
         if updated != original:
             path.write_text(updated, encoding="utf-8", newline="\n")
             changed += 1
-    return {"changed_notes": changed, "accented_notes": accented}
+    return {"changed_notes": changed, "accented_notes": accented, "mirrored_skipped": mirrored}
 
 
 def build_parser() -> argparse.ArgumentParser:
