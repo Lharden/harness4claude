@@ -172,6 +172,7 @@ def test_composed_test_command_cannot_record_evidence(tmp_path: Path):
 def test_stop_blocks_twice_then_opens_escalation_gate(tmp_path: Path):
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / ".git").mkdir()  # o gate do Stop so cobra teste de codigo em repositorio
     _, database, task = _active_task(tmp_path / "harness", cwd)
     payload = _payload("Stop", cwd)
 
@@ -1054,6 +1055,7 @@ def test_gate_do_stop_continua_saindo_cru(tmp_path: Path):
     """O `decision: block` e o unico canal que interrompe — nao pode ir para o emissor."""
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / ".git").mkdir()  # o gate do Stop so cobra teste de codigo em repositorio
     raiz = tmp_path / "harness"
     _, database, task = _active_task(raiz, cwd)
 
@@ -1075,6 +1077,7 @@ def test_gate_do_stop_continua_saindo_cru(tmp_path: Path):
 def test_mensagem_do_gate_cita_o_que_leu(tmp_path: Path):
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / ".git").mkdir()  # o gate do Stop so cobra teste de codigo em repositorio
     bucket, _database, task = _active_task(tmp_path / "harness", cwd)
 
     saida = hook.handle_payload(_payload("Stop", cwd), harness_root=tmp_path / "harness")
@@ -1095,6 +1098,7 @@ def test_mensagem_do_gate_conta_a_evidencia_que_existe(tmp_path: Path):
     """
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / ".git").mkdir()  # o gate do Stop so cobra teste de codigo em repositorio
     _bucket, database, task = _active_task(tmp_path / "harness", cwd)
     database.record_evidence(
         task["task_id"], evidence_type="test", command="python -m pytest -q",
@@ -1117,6 +1121,7 @@ def test_mensagem_do_gate_nomeia_o_que_invalidou(tmp_path: Path):
     """
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / ".git").mkdir()  # o gate do Stop so cobra teste de codigo em repositorio
     _bucket, database, task = _active_task(tmp_path / "harness", cwd)
     database.touch_files(task["task_id"], ["scripts/alvo.py"], origem="shell")
     database.touch_files(task["task_id"], ["shell-command"], origem="shell-placeholder")
@@ -1176,6 +1181,7 @@ def test_comando_que_a_mensagem_imprime_de_fato_roda(tmp_path: Path):
     cli = _load("transactional_hook_cli", "scripts/state_cli.py")
     cwd = tmp_path / "repo"
     cwd.mkdir()
+    (cwd / ".git").mkdir()  # o gate do Stop so cobra teste de codigo em repositorio
     _bucket, _database, task = _active_task(tmp_path / "harness", cwd)
 
     motivo = json.loads(

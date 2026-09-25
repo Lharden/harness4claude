@@ -21,7 +21,7 @@ sys.path.insert(0, str(SCRIPTS))
 CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
-from post_tool_policy import inside_root  # type: ignore[import-not-found]
+from post_tool_policy import fora_de_qualquer_repositorio, inside_root  # type: ignore[import-not-found]
 from projecao import gravar_json_atomico  # type: ignore[import-not-found]
 from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
 
@@ -1021,10 +1021,45 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     if task["status"] != "active" or not task["pipeline"] or task["verified"]:
         return ""
+    if _sem_codigo_sob_teste(payload, database, task):
+        return ""
     task = database.register_stop_continuation(task["task_id"], limit=2)
     _sync_projection(bucket, projection, task)
     reason = _motivo_do_gate(bucket, database, task)
     return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+
+
+def _sem_codigo_sob_teste(payload: dict[str, Any], database, task: dict[str, Any]) -> bool:
+    """Sessao fora de qualquer repositorio, sem nenhum arquivo tocado dentro de um.
+
+    O portao pede evidencia de teste fresca, e teste mede codigo de um
+    repositorio. Medido em 2026-09-25 na sessao "PPEGPS Digital Transformation
+    presentation": cwd sem `.git`, task promovida para L1-feature por tres
+    escritas de roteiro e notas, e o Stop bloqueando toda resposta final com
+    "anexe evidencia de teste fresca" — sem suite nenhuma que pudesse ser
+    rodada. `harness-reclassify.sh` deixou de promover nesse caso; esta funcao
+    solta a task que ja tinha sido promovida antes do conserto e a que o
+    classify marcar como L1 numa pasta assim.
+
+    Continua bloqueando: sessao com cwd num repositorio; sessao sem cwd no
+    payload (fail-closed, como no reclassify); e sessao aberta numa pasta-mae
+    que tocou arquivo dentro de algum repositorio. O placeholder de shell
+    (`shell-command`) nao decide nada: ele diz que um comando rodou, nao onde
+    escreveu. Qualquer erro de leitura mantem o bloqueio.
+    """
+    cwd = str(payload.get("cwd") or "")
+    if not cwd or find_repo_root(cwd):
+        return False
+    try:
+        arquivos = database.files(task["task_id"])
+    except Exception:
+        return False
+    for arquivo in arquivos:
+        if arquivo in {"shell-command", "<shell-command>"}:
+            continue
+        if not fora_de_qualquer_repositorio(arquivo, cwd, find_repo_root):
+            return False
+    return True
 
 
 def _conta_evidencia(database, task_id: str, code_revision: int) -> str:

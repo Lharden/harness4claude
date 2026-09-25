@@ -94,3 +94,42 @@ def counts_as_modified_file(tool_name: str, file_path: str, root: str | None = N
     if root:
         return inside_root(file_path, root)
     return True
+
+
+def fora_de_qualquer_repositorio(file_path: str, cwd: str, raiz_de) -> bool:
+    """A sessao e o arquivo estao, os dois, fora de qualquer repositorio?
+
+    `raiz_de` e `harness_paths.find_repo_root`, injetada para este modulo nao
+    depender do resto do harness.
+
+    Medido em 2026-09-25 na sessao "PPEGPS Digital Transformation
+    presentation": cwd sem `.git` (uma pasta de apresentacao), `find_repo_root`
+    devolve None, e com raiz vazia `counts_as_modified_file` conta TUDO. Tres
+    `Write` de roteiro, notas e script promoviam a task de L0 para L1-feature
+    (`write-spec-light -> tdd -> verify-against-spec`), e o portao de Stop
+    passava a exigir evidencia de teste fresca numa pasta onde nao existe suite
+    nenhuma para rodar. Portao que nao pode ser satisfeito honestamente sera
+    contornado — ou, como ali, bloqueia toda resposta final.
+
+    O criterio segue o de `counts_as_modified_file`: o que conta e mudanca no
+    codigo sob teste. Arquivo fora de qualquer repositorio, escrito por sessao
+    tambem fora de qualquer repositorio, nao esta sob teste nenhum.
+
+    O caso "sem cwd" NAO muda (continua contando tudo, fail-closed; ver
+    `harness-reclassify.sh`): sem cwd devolve False. Tambem devolve False
+    quando o cwd esta num repositorio (a regra de dentro/fora da raiz ja cuida)
+    e quando o arquivo esta num repositorio, mesmo com a sessao aberta numa
+    pasta-mae — editar `projects/x/src/a.py` a partir de `projects/` continua
+    contando. Qualquer erro devolve False: na duvida, conta.
+    """
+    if not str(cwd or "").strip() or not str(file_path or "").strip():
+        return False
+    try:
+        if raiz_de(cwd):
+            return False
+        alvo = file_path.strip()
+        if not os.path.isabs(alvo):
+            alvo = os.path.join(cwd, alvo)
+        return not raiz_de(os.path.dirname(os.path.abspath(alvo)))
+    except Exception:
+        return False
