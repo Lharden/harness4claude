@@ -16,8 +16,10 @@ havia o que sinalizar".
 
 ## A matriz de canais
 
-Estabelecida por observacao direta do que chegou ao modelo, nao por leitura
-de documentacao:
+As linhas de UserPromptSubmit e SessionStart vem de observacao direta de
+transcript. As demais vem da doc oficial,
+https://code.claude.com/docs/en/hooks ("Add context for Claude" e "Decision
+control") — e substituem palpite por leitura onde a observacao tinha errado:
 
 | evento           | canal              | prova                                   |
 |------------------|--------------------|-----------------------------------------|
@@ -25,20 +27,30 @@ de documentacao:
 | UserPromptSubmit | stdout cru         | hook de timestamp chega como `content`  |
 | SessionStart     | additionalContext  | bloco do superpowers chega rotulado     |
 | SessionStart     | stdout cru         | bloco do `remember` chega como `content`|
-| PostToolUse      | stdout cru         | `<harness-reclassification>` chega      |
-| PostToolUse      | additionalContext  | NUNCA observado — nao usar              |
+| PostToolUse      | additionalContext  | doc: nao esta na lista de excecoes que  |
+|                  |                    | recebem stdout cru como contexto        |
 | Stop             | decision/block     | interrompe de verdade; so para gate     |
 | SubagentStart    | additionalContext  | doc oficial, secao SubagentStart        |
 | PostCompact      | nenhum             | doc oficial: "No decision control"      |
 | qualquer         | systemMessage      | MORTO                                   |
 
-As duas linhas marcadas "doc oficial" vem de
-https://code.claude.com/docs/en/hooks ("Add context for Claude" e "Decision
-control"), nao de transcript. O PostCompact nao tem canal para o modelo: o host
-rejeita `hookSpecificOutput` nele ("Hook JSON output validation failed"),
-descarta `systemMessage` e `continue`, e manda stdout cru so para o log de
-debug. A retomada pos-compactacao sai pelo SessionStart, que dispara de novo
-com source "compact".
+Ate 2026-09-24 este arquivo classificava `PostToolUse` como stdout cru,
+"provado" por `<harness-reclassification>` aparecendo em transcript. A doc diz
+o oposto: "For most events, Claude Code writes stdout to the debug log and
+doesn't show it in the transcript. The exceptions are `UserPromptSubmit`,
+`UserPromptExpansion`, `SessionStart`, and `PostModelSwitch`" — `PostToolUse`
+nao esta nessa lista. O que a observacao via no transcript nunca foi contexto
+do modelo; era so a saida do hook exibida na UI, do mesmo jeito que
+`systemMessage` aparecia sem chegar a lugar nenhum. `harness-reclassify.sh`
+imprimia `<harness-reclassification>` cru por esse canal morto, e
+`harness-transactional.py` mandava o aviso de composicao de shell pelo mesmo
+caminho via este emissor.
+
+O PostCompact nao tem canal para o modelo: o host rejeita `hookSpecificOutput`
+nele ("Hook JSON output validation failed"), descarta `systemMessage` e
+`continue`, e manda stdout cru so para o log de debug. A retomada
+pos-compactacao sai pelo SessionStart, que dispara de novo com source
+"compact".
 
 Duas regras seguem dai, e as duas sao de projeto, nao de gosto:
 
@@ -93,15 +105,18 @@ SILENT = "silent"
 # Canal por evento. Ausente do mapa => stdout, o canal conservador que
 # comprovadamente chega. `stop` e silencioso de proposito; ver docstring.
 #
-# `postcompact` e `subagentstart` seguem a doc oficial
+# `posttooluse`, `postcompact` e `subagentstart` seguem a doc oficial
 # (https://code.claude.com/docs/en/hooks), nao transcript: ate 2026-09-24
-# `postcompact` ia para additionalContext "por criterio semantico" e o host
-# rejeitava a saida inteira. Evento sem canal para o modelo e SILENT aqui —
-# stdout nele so enche o log de debug.
+# `posttooluse` ia para stdout cru por um `<harness-reclassification>` visto em
+# transcript, que nunca foi contexto do modelo (a doc so da stdout cru como
+# contexto para UserPromptSubmit, UserPromptExpansion, SessionStart e
+# PostModelSwitch); e `postcompact` ia para additionalContext "por criterio
+# semantico" e o host rejeitava a saida inteira. Evento sem canal para o
+# modelo e SILENT aqui — stdout nele so enche o log de debug.
 CHANNEL_BY_EVENT = {
     "userpromptsubmit": ADDCTX,
     "sessionstart": ADDCTX,
-    "posttooluse": STDOUT,
+    "posttooluse": ADDCTX,  # doc: nao esta entre as excecoes de stdout cru
     "precompact": STDOUT,
     "postcompact": SILENT,  # doc: "No decision control"
     "subagentstart": ADDCTX,  # doc: secao SubagentStart

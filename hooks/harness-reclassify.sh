@@ -84,8 +84,10 @@ export HARNESS_SESSION_ID="$SESSION_ID"
 SCRIPTS_DIR="${HOOK_DIR_REL}/../scripts"
 if command -v cygpath &>/dev/null; then
     export HARNESS_SCRIPTS_DIR="$(cygpath -w "$SCRIPTS_DIR")"
+    export HARNESS_HOOKS_DIR="$(cygpath -w "$HOOK_DIR_REL")"
 else
     export HARNESS_SCRIPTS_DIR="$SCRIPTS_DIR"
+    export HARNESS_HOOKS_DIR="$HOOK_DIR_REL"
 fi
 
 # All logic in single Python call to avoid path issues
@@ -250,12 +252,32 @@ if should_promote(state, counter['count']):
         gravar_estado(state_file, state)
     except Exception:
         pass
-    print('<harness-reclassification>')
-    print('  previous: L0')
-    print('  new: L1')
-    print('  reason: 3+ arquivos modificados na tarefa')
-    print('  pipeline: write-spec-light -> tdd -> verify-against-spec')
-    print('</harness-reclassification>')
+    # PostToolUse nao entrega stdout cru ao modelo (doc:
+    # https://code.claude.com/docs/en/hooks — so UserPromptSubmit,
+    # UserPromptExpansion, SessionStart e PostModelSwitch recebem isso como
+    # contexto). Ate 2026-09-24 este bloco imprimia o aviso cru, e nunca
+    # chegava a lugar nenhum alem do log de debug. Vai por emit.py, que manda
+    # PostToolUse por hookSpecificOutput.additionalContext.
+    texto_reclassificacao = (
+        '<harness-reclassification>\n'
+        '  previous: L0\n'
+        '  new: L1\n'
+        '  reason: 3+ arquivos modificados na tarefa\n'
+        '  pipeline: write-spec-light -> tdd -> verify-against-spec\n'
+        '</harness-reclassification>'
+    )
+    try:
+        sys.path.insert(0, os.environ['HARNESS_HOOKS_DIR'])
+        from emit import Emitter
+        Emitter(
+            'PostToolUse', hook='reclassify',
+            session_id=os.environ.get('HARNESS_SESSION_ID') or '',
+            cwd=os.environ.get('HARNESS_SESSION_CWD') or '',
+        ).add('reclassify', texto_reclassificacao).flush()
+    except Exception:
+        print(json.dumps({'hookSpecificOutput': {
+            'hookEventName': 'PostToolUse', 'additionalContext': texto_reclassificacao,
+        }}))
 " 2>/dev/null
 
 exit 0

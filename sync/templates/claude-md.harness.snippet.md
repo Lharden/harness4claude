@@ -59,10 +59,12 @@
   - **Consequencia**: o sinal deixou de mandar oferecer e passou a pedir julgamento. Falso positivo deve ser ignorado EM SILENCIO. O autocheck e o `/branch` sao os caminhos que valem; o hook virou orcamento, dedupe e parking
   - Tabelas em `~/.claude/harness/calib/`; refazer com `scripts/calibrate_branch_layer_a.py` e `calibrate_branch_floor.py`
 
-## Canais de hook (medido 2026-09-01)
+## Canais de hook (medido 2026-09-01; PostToolUse corrigido 2026-09-24 pela doc oficial)
 - `systemMessage` **nao chega ao modelo** — e canal de UI. Nos 343 transcripts, 100% das linhas com systemMessage no stdout tem `content` vazio. Custo real: 81 `CLASSIFIED` em 47 sessoes, 0 invocacoes de `harness-workflow`
-- Chegam: **stdout cru** (vira `content`, sem marca de proveniencia — so para DADO), **`hookSpecificOutput.additionalContext`** (rotulado — para toda INSTRUCAO), e **`{"decision":"block","reason":...}` no Stop** (interrompe — so para gate)
+- **stdout cru** so chega ao modelo em `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart` e `PostModelSwitch` (vira `content`, sem marca de proveniencia — so para DADO nesses eventos). Em qualquer outro evento, `PostToolUse` incluido, stdout cru vai so para o log de debug — usar **`hookSpecificOutput.additionalContext`** (rotulado — para toda INSTRUCAO)
+- **`{"decision":"block","reason":...}` no Stop** interrompe de verdade — so para gate
 - Todo hook emite via `hooks/emit.py`, que escolhe o canal e registra em `~/.claude/harness/emissions.jsonl`. Auditar com `python scripts/check_hook_liveness.py --delivery`
+- Fonte da divisao por evento: https://code.claude.com/docs/en/hooks ("Add context for Claude" e "Decision control"). Ate 2026-09-24 este bloco tratava PostToolUse como stdout cru, "provado" por um `<harness-reclassification>` visto em transcript — que era so a saida do hook exibida na UI, nunca contexto do modelo
 
 ## Obsidian (vault-bridge)
 - Vault root via `env.VAULT_PATH`; sub-vault de espelhamento = `<VAULT_PATH>/AI-Brain` (ou `AI_BRAIN_PATH`)
