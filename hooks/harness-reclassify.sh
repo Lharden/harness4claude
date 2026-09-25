@@ -122,7 +122,7 @@ file_path = os.environ['HARNESS_FILE_PATH']
 tool_name = os.environ.get('HARNESS_TOOL_NAME') or ''
 if tool_name not in {'Edit', 'Write'}:
     raise SystemExit(0)
-from post_tool_policy import counts_as_modified_file, touch_target
+from post_tool_policy import counts_as_modified_file, fora_de_qualquer_repositorio, touch_target
 target = touch_target(tool_name, file_path)
 if target is None:
     raise SystemExit(0)
@@ -144,8 +144,20 @@ if cwd_sessao:
     try:
         from harness_paths import find_repo_root
         projeto_raiz = find_repo_root(cwd_sessao) or ''
+        fora_de_repo = (
+            not projeto_raiz
+            and fora_de_qualquer_repositorio(file_path, cwd_sessao, find_repo_root)
+        )
     except Exception:
         projeto_raiz = ''
+        fora_de_repo = False
+    # Sessao e arquivo fora de qualquer repositorio: nao ha codigo sob teste,
+    # entao a escrita nao toca a task, nao conta para a promocao L0 para L1 e
+    # nao expira evidencia. Sem isto, tres escritas numa pasta de apresentacao
+    # viravam pipeline de TDD e o Stop passava a bloquear (2026-09-25). Ver
+    # post_tool_policy.fora_de_qualquer_repositorio.
+    if fora_de_repo:
+        raise SystemExit(0)
 if projeto_raiz and not counts_as_modified_file(tool_name, file_path, projeto_raiz):
     raise SystemExit(0)
 
