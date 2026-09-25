@@ -23,7 +23,12 @@ CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from projecao import gravar_json_atomico  # type: ignore[import-not-found]
-from transactional_state import HarnessDatabase, StateTransitionError  # type: ignore[import-not-found]
+from transactional_state import (  # type: ignore[import-not-found]
+    HarnessDatabase,
+    StateTransitionError,
+    cobra_evidencia_nesta_fase,
+    tipo_de_evidencia,
+)
 
 VERIFICATION_PATTERNS = (
     r"^\s*(?:py|python(?:\.exe)?)\s+-m\s+(?:pytest|unittest)\b",
@@ -388,10 +393,26 @@ _OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
 #: nao escreve", e uma afirmacao errada apaga alteracao de codigo do contador —
 #: por isso a lista e curta e nao inclui interpretador (`python`, `awk`) nem
 #: comando que muda de efeito pelo argumento (`find -delete`, `git config`).
+#:
+#: `cd` entrou em 2026-09-25: muda o diretorio do shell e nao escreve arquivo
+#: nenhum, e `cd X && grep ...` e a forma mais comum de leitura. Na task do
+#: incidente dos docs, 20 dos 27 comandos de leitura pura que subiram
+#: `code_revision` comecavam por `cd`. `find` tambem le, mas escreve e executa
+#: pelo argumento — por isso fica fora daqui e tem regra propria em
+#: `_FIND_QUE_ESCREVE`.
 _SOMENTE_LEITURA = frozenset({
     'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'ls', 'pwd', 'echo', 'printf',
     'sort', 'uniq', 'cut', 'nl', 'basename', 'dirname', 'stat', 'diff', 'cmp',
-    'date', 'sed', 'true', 'false',
+    'date', 'sed', 'true', 'false', 'cd',
+})
+
+#: As acoes de `find` que escrevem ou executam, comparadas por token exato —
+#: `-name '*-delete*'` e um padrao de busca, nao uma acao. Sem nenhuma delas,
+#: `find` so lista. Medido no mesmo incidente: 7 comandos `find` de leitura,
+#: nenhum com acao.
+_FIND_QUE_ESCREVE = frozenset({
+    '-delete', '-exec', '-execdir', '-ok', '-okdir',
+    '-fprint', '-fprint0', '-fprintf', '-fls',
 })
 
 #: Subcomandos de git que so leem. `branch`, `remote` e `config` ficam de fora:
@@ -422,7 +443,7 @@ _GIT_NAO_MUDA_ARVORE = frozenset({'add', 'commit'})
 
 def nao_muda_a_arvore(command: str) -> bool:
     """O comando escreve, mas nao no codigo que a suite mede."""
-    if not command or shell_write_targets(command):
+    if not command or shell_write_targets(command) or _redireciona_para_arquivo(command):
         return False
     segmentos = _segmentos(command)
     if not segmentos:
@@ -441,6 +462,29 @@ def _binario(token: str) -> str:
     return nome[:-4] if nome.endswith('.exe') else nome
 
 
+def _redireciona_para_arquivo(command: str) -> bool:
+    """Algum `>`/`>>` da linha aponta para destino que nao e nulo.
+
+    `shell_write_targets` nao basta para esta pergunta: ele recusa como caminho
+    o que nao PODE ser arquivo (`> $OUT`, variavel nao expandida), e a lista sai
+    vazia para uma escrita real. Ate 2026-09-25 `is_read_only("cat x > $OUT")`
+    dava False por acidente — o `$OUT` virava cabeca de segmento em
+    `_segmentos`. Com `_segmentos` consumindo o alvo, a recusa passa a ser esta.
+
+    `>` sem alvo e erro de sintaxe no shell, nao escrita. A duplicacao de
+    descritor (`2>&1`, `>&2`) nao aponta para arquivo e passa.
+    """
+    tokens = _tokenize(command)
+    for indice, token in enumerate(tokens):
+        if token not in {'>', '>>'} or indice + 1 >= len(tokens):
+            continue
+        alvo = tokens[indice + 1]
+        if alvo == '&' or alvo in _DESTINOS_NULOS:
+            continue
+        return True
+    return False
+
+
 def _segmentos(command: str) -> list[list[str]]:
     """Os comandos da linha, um por segmento.
 
@@ -448,6 +492,13 @@ def _segmentos(command: str) -> list[list[str]]:
     isto, `git status 2>&1` virava `[['git','status','2'], ['1']]`, o segundo
     segmento comecava por `1`, e `is_read_only` respondia False para um
     comando que so le — a mesma causa de `_duplicacao_de_fd`, por outra porta.
+
+    O alvo de `>`/`>>` tambem nao abre segmento: ele e argumento do
+    redirecionamento, nao comando. Ate 2026-09-25 `ls x 2>/dev/null | grep y`
+    virava `[['ls','x','2'], ['/dev/null'], ['grep','y']]`, e `null` nao e
+    binario de leitura — 10 dos 27 comandos de leitura pura do incidente dos
+    docs subiram `code_revision` so por isso. Quem decide se o alvo e escrita
+    e `_redireciona_para_arquivo`, chamado antes por quem usa os segmentos.
     """
     tokens = _tokenize(command)
     segmento: list[str] = []
@@ -463,6 +514,9 @@ def _segmentos(command: str) -> list[list[str]]:
             and all(c in _ALVOS_DE_FD for c in tokens[indice + 2])
         ):
             indice += 3
+            continue
+        if token in {'>', '>>'}:
+            indice += 2
             continue
         if token in _OPERADORES_TOKEN:
             if segmento:
@@ -491,7 +545,7 @@ def is_read_only(command: str) -> bool:
     """
     if not command:
         return False
-    if shell_write_targets(command):
+    if shell_write_targets(command) or _redireciona_para_arquivo(command):
         return False
     segmentos = _segmentos(command)
     if not segmentos:
@@ -501,6 +555,10 @@ def is_read_only(command: str) -> bool:
         if binario == 'git':
             resto = [p for p in partes[1:] if not p.startswith('-')]
             if not resto or resto[0] not in _GIT_SOMENTE_LEITURA:
+                return False
+            continue
+        if binario == 'find':
+            if any(p in _FIND_QUE_ESCREVE for p in partes[1:]):
                 return False
             continue
         if binario not in _SOMENTE_LEITURA:
@@ -1021,27 +1079,43 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     if task["status"] != "active" or not task["pipeline"] or task["verified"]:
         return ""
+    # Docs so e cobrado na fase que produz a verificacao (D1). A regra mora em
+    # `transactional_state`, e `register_stop_continuation` le a mesma: hook e
+    # banco nao podem discordar sobre quando ha continuacao a contar.
+    if not cobra_evidencia_nesta_fase(task.get("kind"), task["pipeline"], task["phase"]):
+        return ""
     task = database.register_stop_continuation(task["task_id"], limit=2)
     _sync_projection(bucket, projection, task)
     reason = _motivo_do_gate(bucket, database, task)
     return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
 
 
-def _conta_evidencia(database, task_id: str, code_revision: int) -> str:
-    """Quantas linhas de evidencia esta task tem, e quantas na revisao atual."""
+def _conta_evidencia(database, task_id: str, code_revision: int, tipo: str = "test") -> str:
+    """Quantas linhas do tipo exigido esta task tem, e quantas na revisao atual.
+
+    Conta so o tipo que o portao julga. Numa task de docs, "3 linhas de
+    evidence" que fossem tres pytest diriam que ha prova quando nao ha.
+    """
     try:
         with sqlite3.connect(database.path) as raw:
-            total = raw.execute(
+            qualquer = raw.execute(
                 "SELECT COUNT(*) FROM evidence WHERE task_id = ?", (task_id,)
             ).fetchone()[0]
+            total = raw.execute(
+                "SELECT COUNT(*) FROM evidence WHERE task_id = ? AND evidence_type = ?",
+                (task_id, tipo),
+            ).fetchone()[0]
             desta = raw.execute(
-                "SELECT COUNT(*) FROM evidence WHERE task_id = ? AND code_revision = ?",
-                (task_id, code_revision),
+                "SELECT COUNT(*) FROM evidence WHERE task_id = ? AND evidence_type = ? "
+                "AND code_revision = ?",
+                (task_id, tipo, code_revision),
             ).fetchone()[0]
     except sqlite3.Error:
         return "nao foi possivel ler a tabela `evidence`"
-    if not total:
+    if not qualquer:
         return "a tabela `evidence` desta task esta VAZIA (0 linhas)"
+    if not total:
+        return f"nenhuma linha de evidence do tipo `{tipo}` ({qualquer} de outro tipo, que nao conta)"
     return f"{total} linha(s) de evidence nesta task, {desta} na code_revision atual"
 
 
@@ -1066,7 +1140,7 @@ def _ultimos_toques(database, task_id: str, quantos: int = 3) -> str:
     return f"Ultima(s) invalidacao(oes): {itens}"
 
 
-def comando_de_evidencia(bucket: Path, task_id: str) -> str:
+def comando_de_evidencia(bucket: Path, task_id: str, kind: str | None = None) -> str:
     """A linha que o portao manda copiar para registrar evidencia a mao.
 
     Ela precisa satisfazer `is_state_management`, senao o PostToolUse que vem
@@ -1093,10 +1167,19 @@ def comando_de_evidencia(bucket: Path, task_id: str) -> str:
     `as_posix()` de proposito: barra invertida dentro de aspas duplas e escape
     para `_scan_composition` (`:69`), e um caminho do Windows cru faria a
     varredura comer separador. Barra normal funciona nos dois shells.
+
+    `kind` escolhe o tipo de evidencia (`transactional_state.tipo_de_evidencia`).
+    Em docs, `--command-text` e o caminho do relatorio de verificacao: o CLI
+    recusa se ele nao existir e grava o hash dele (D3). A receita sai sempre com
+    marcadores — `<relatorio>`, `<N>` —, nunca com valor: se ela ligasse
+    `verified` rodada como sai, copiar a mensagem destravaria o portao sem
+    verificar nada.
     """
+    tipo = tipo_de_evidencia(kind)
+    texto = "<relatorio>" if tipo == "docs" else "python -m pytest -q"
     return (
         f'python "{CLI_DE_ESTADO}" --home "{bucket}" evidence '
-        f'--task {task_id} --type test --command-text "python -m pytest -q" '
+        f'--task {task_id} --type {tipo} --command-text "{texto}" '
         "--exit-code 0 --tests-collected <N> --tests-passed <P> --tests-skipped <S>"
     )
 
@@ -1110,8 +1193,14 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     concluiram "a task e fantasma" sobre uma task que existia e que de fato
     nunca tinha recebido evidencia. Um portao que nao mostra a leitura obriga
     quem le a adivinhar a leitura.
+
+    O texto segue o tipo de evidencia que a task exige. Ate 2026-09-25 ele so
+    sabia pedir teste, e mandou uma task de docs, numa pasta sem suite, anexar
+    "evidencia de teste fresca" tres vezes — a sessao acabou escrevendo 127
+    testes sobre o proprio texto.
     """
-    contagem = _conta_evidencia(database, task["task_id"], task["code_revision"])
+    tipo = tipo_de_evidencia(task.get("kind"))
+    contagem = _conta_evidencia(database, task["task_id"], task["code_revision"], tipo)
     pipeline = task["pipeline"] or []
     fase = task["phase"]
     posicao = (
@@ -1130,7 +1219,7 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     # falha que esta mensagem existe para corrigir — instrucao que nao se
     # consegue seguir vale tanto quanto instrucao nenhuma. Pela mesma razao ele
     # tem de ser ATOMICO: ver `comando_de_evidencia`.
-    comando = comando_de_evidencia(bucket, task["task_id"])
+    comando = comando_de_evidencia(bucket, task["task_id"], task.get("kind"))
     regua = (
         "A regua: exit 0, tests_passed > 0, e tests_passed + tests_skipped == "
         "tests_collected. Teste pulado NAO reprova; teste que falhou, sim."
@@ -1141,6 +1230,21 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
             f"continuacoes.\nO que o portao leu: {leitura}\n"
             "Leve ao usuario o bloqueio concreto e esta leitura — nao reformule o "
             "diagnostico sem antes conferir os numeros acima."
+        )
+    if tipo == "docs":
+        return (
+            "HARNESS v3 verification gate (docs): esta e a fase final do pipeline de "
+            "docs; registre a verificacao da doc antes da resposta final.\n"
+            f"O que o portao leu: {leitura}\n"
+            "A regua de docs (skills/documentation, secao Verificacao): "
+            "N = afirmacoes da tabela de fontes conferidas, P = confirmadas na doc, "
+            "S = descartadas com motivo escrito no relatorio; P > 0 e P + S == N. "
+            "Exit 0 so se todo exemplo roda, nenhum [NEEDS CLARIFICATION] ficou e "
+            "nenhum caminho citado sumiu. <relatorio> e o arquivo da verificacao: "
+            "o CLI recusa se ele nao existir e grava o hash dele. Escreva o "
+            "relatorio ANTES; qualquer escrita depois expira a verificacao.\n"
+            f"{comando}\n"
+            f"{AVISO_LINHA_SOZINHA}"
         )
     return (
         "HARNESS v3 verification gate: continue o pipeline do harness-workflow e anexe "

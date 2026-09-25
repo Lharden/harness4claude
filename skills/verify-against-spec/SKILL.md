@@ -29,6 +29,12 @@ Ativar esta skill quando:
 - O pipeline é L0 — verificação completa é overkill para mudanças triviais.
 - Testes ainda falham — ordem correta é: `tdd` → fix até verde → `verify-against-spec`.
 
+**Pipeline de docs (L2-docs).** Esta skill é a fase final, mas o produto é
+texto, não código: não há teste nem REQ implementado a rastrear. O que se
+confere é a tabela de fontes contra a doc, e a evidência que fecha a task é
+`--type docs`, não pytest — ver `skills/documentation/SKILL.md`, "Registrar a
+verificação". O relatório desta skill é o arquivo que essa evidência cita.
+
 ## Objetivo
 
 Ao final desta skill, cada um destes 6 pontos deve estar verificado com evidência:

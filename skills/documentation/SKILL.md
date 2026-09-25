@@ -111,3 +111,34 @@ L2-docs) fecha o ciclo. O que ele deve conseguir confirmar:
    PowerShell, e não apenas em bash.
 3. Nenhum `[NEEDS CLARIFICATION]` sobrou sem decisão.
 4. Nenhum caminho ou identificador citado deixou de existir.
+
+### Registrar a verificação
+
+A verificação de docs é a evidência que fecha um pipeline de docs — **não
+pytest**. Teste mede código, não a afirmação de uma doc; os pipelines de docs
+não têm fase `tdd` (`contract/pipelines.json`). O portão de Stop só a cobra na
+fase final do pipeline, que é a que a produz.
+
+1. Escreva o resultado dos quatro itens num relatório em disco
+   (`docs/specs/{slug}-verification.md` em L2-docs; em L1-docs, um arquivo de
+   verificação ao lado da doc). Cada afirmação descartada leva o motivo ali.
+2. Registre com `state_cli.py evidence --type docs`, apontando
+   `--command-text` para o relatório: o CLI recusa se ele não existir e grava o
+   hash dele. `--tests-collected` = afirmações conferidas, `--tests-passed` =
+   confirmadas na doc, `--tests-skipped` = descartadas com motivo;
+   `--exit-code 0` só se os itens 2 a 4 também valem. A linha exata, com
+   caminho do CLI e balde literais, é a que o portão de Stop imprime na fase
+   final — copie-a e rode-a sozinha.
+3. Não escreva nada depois. Qualquer escrita, inclusive na própria doc, expira
+   a verificação, como editar código expira o teste.
+
+Doc sem nenhuma afirmação conferível (reestilizar, reformatar) não tem o que
+esta régua medir: não é pipeline de docs.
+
+**Mexeu em código além do texto** (lógica, script de exemplo, configuração), a
+task deixou de ser só docs: reclassifique para uma task de código, que é
+verificada por teste. A verificação de docs cobre afirmações, não
+comportamento. Docstring de módulo é texto e fica aqui — com o limite dito: a
+verificação de docs não prova que o arquivo continua importando, então rode a
+suíte antes de registrar. Limite declarado, não imposto pelo portão (decisão
+D2 de `docs/specs/portao-stop-sem-codigo-plano.md`).

@@ -661,8 +661,8 @@ def test_falha_com_pulados_nao_verifica(tmp_path: Path):
 
 
 # --- Achado 5: a regua escrita duas vezes -----------------------------------
-# A condicao existe em `record_evidence` (Python) e em
-# `_has_fresh_test_evidence` (SQL), independentes. E a assinatura que este
+# A condicao existia em `record_evidence` (Python) e em
+# `_has_fresh_test_evidence` (SQL, hoje `_has_fresh_evidence`), independentes. E a assinatura que este
 # portao existe para detectar, dentro dele mesmo: duas leituras do mesmo fato,
 # e nada obriga as duas a concordarem. O teste exercita o PAR — grava e le de
 # volta — porque testar so o lado da escrita e o que deixou as duas divergirem.
@@ -695,7 +695,7 @@ def test_escrita_e_leitura_concordam(tmp_path: Path, exit_code, coletados, passa
     # Lado da escrita.
     assert task["verified"] is aceita
 
-    # Lado da leitura: `complete` consulta `_has_fresh_test_evidence`, em SQL.
+    # Lado da leitura: `complete` consulta `_has_fresh_evidence`, em SQL.
     # As duas pontas tem de dar o mesmo veredito sobre a mesma linha.
     if aceita:
         assert db.complete(task["task_id"], expected_revision=task["revision"])["status"] == "done"
