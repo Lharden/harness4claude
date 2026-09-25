@@ -49,8 +49,8 @@ policy = _load("fora_de_repo_policy", "scripts/post_tool_policy.py")
 hook = _load("fora_de_repo_transactional", "hooks/harness-transactional.py")
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]  # noqa: E402
-from transactional_state import HarnessDatabase  # type: ignore[import-not-found]  # noqa: E402
+from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
+from transactional_state import HarnessDatabase  # type: ignore[import-not-found]
 
 
 def _repo(caminho: Path) -> Path:
