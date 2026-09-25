@@ -45,13 +45,77 @@ ARTIFACT_OBLIGATIONS = {
 # `tests_passed > 0` nao e redundante com a soma. Sem ele uma suite que pula
 # tudo (`0 + 1849 = 1849`) passaria: exit zero, nenhum veredito, e o portao
 # declarando verificado o que ninguem executou.
-REGRA_TESTE_VALIDO = (
-    "evidence_type = 'test' "
-    "AND exit_code = 0 "
+#
+# `tests_skipped >= 0` tambem nao: `3 = 5 + (-2)` fechava a soma. O hook nunca
+# grava negativo, mas o `state_cli` aceita o que for digitado (2026-09-25).
+#
+# A regua nao nomeia o tipo de evidencia: quem a aplica diz qual tipo esta sendo
+# julgado, e o tipo vem de `tipo_de_evidencia`. Os numeros significam o mesmo
+# nas duas pontas — itens conferidos, confirmados, e deixados de fora sem
+# veredito — e so o que e um "item" muda.
+REGRA_EVIDENCIA_VALIDA = (
+    "exit_code = 0 "
     "AND tests_collected > 0 "
     "AND tests_passed > 0 "
+    "AND COALESCE(tests_skipped, 0) >= 0 "
     "AND tests_passed + COALESCE(tests_skipped, 0) = tests_collected"
 )
+
+#: Que evidencia verifica cada `kind` de task. O que nao esta aqui e verificado
+#: por teste.
+#:
+#: Ate 2026-09-25 so `test` ligava `verified`, e os tres consumidores da coluna
+#: (o Stop, `complete` e `continuation_policy.continua`) nao olhavam o tipo do
+#: pipeline. Os pipelines de docs nao tem fase `tdd` em `contract/pipelines.json`:
+#: nenhuma fase deles produz teste, e o que o passo final confere esta em
+#: `skills/documentation/SKILL.md` §Verificacao — afirmacao contra fonte. Na
+#: sessao `146dc03e` (apresentacao, pasta sem suite) o portao pediu pytest tres
+#: vezes, escalou, e a sessao escreveu 127 testes sobre o proprio texto para
+#: passar. Ver `docs/specs/portao-stop-sem-codigo-diagnostico.md`.
+#:
+#: `tests/test_portao_de_docs.py::test_AC10_o_mapa_de_evidencia_cobre_o_contrato`
+#: liga este mapa ao contrato: pipeline sem `tdd` que caia em `test` sem decisao
+#: declarada reprova.
+EVIDENCIA_DO_KIND = {"docs": "docs"}
+
+#: Tipos de evidencia que so existem depois de escritos num relatorio em disco.
+#: A regua deles exige o hash do relatorio (decisao D3 do plano): os numeros sao
+#: declarados por quem verificou, e o arquivo e o que um humano audita.
+EVIDENCIA_COM_RELATORIO = frozenset({"docs"})
+
+#: Tipos de evidencia que so podem existir na ULTIMA fase do pipeline. O Stop
+#: nao os cobra antes dela (decisao D1): na fase 1 de docs nao ha doc para
+#: verificar, e cobrar ali foi o bloqueio do incidente.
+EVIDENCIA_NA_FASE_FINAL = frozenset({"docs"})
+
+
+def tipo_de_evidencia(kind: str | None) -> str:
+    """O `evidence_type` que liga `verified` numa task deste `kind`."""
+    return EVIDENCIA_DO_KIND.get(str(kind or ""), "test")
+
+
+def regra_da_evidencia(tipo: str) -> str:
+    """A regua em SQL para um tipo, sobre colunas de `evidence`.
+
+    `tipo` sai de `tipo_de_evidencia`, nunca de entrada livre: e interpolado.
+    """
+    if tipo not in set(EVIDENCIA_DO_KIND.values()) | {"test"}:
+        raise StateTransitionError(f"tipo de evidencia sem regua: {tipo}")
+    regra = f"evidence_type = '{tipo}' AND {REGRA_EVIDENCIA_VALIDA}"
+    if tipo in EVIDENCIA_COM_RELATORIO:
+        regra += " AND output_hash IS NOT NULL"
+    return regra
+
+
+def cobra_evidencia_nesta_fase(kind: str | None, pipeline: list[str], phase: str | None) -> bool:
+    """O Stop deve cobrar evidencia desta task na fase em que ela esta?
+
+    Codigo: em toda fase, como sempre foi. Docs: so na ultima, que e a que
+    produz a verificacao (D1).
+    """
+    if tipo_de_evidencia(kind) not in EVIDENCIA_NA_FASE_FINAL:
+        return True
+    return bool(pipeline) and phase == pipeline[-1]
 
 
 def utc_now() -> str:
@@ -1114,9 +1178,13 @@ class HarnessDatabase:
                 ),
             )
             # Julga a linha gravada, com o mesmo texto que a leitura vai usar.
-            # Ver REGRA_TESTE_VALIDO: a duplicata era o defeito.
+            # Ver REGRA_EVIDENCIA_VALIDA: a duplicata era o defeito. A regua e a
+            # do tipo que ESTA task exige; evidencia de outro tipo e historico,
+            # e nao mexe em `verified` para nenhum lado — um pytest nao verifica
+            # uma doc, e um pytest vermelho tambem nao a desverifica.
+            exigido = tipo_de_evidencia(row["kind"])
             valid_test = connection.execute(
-                f"SELECT 1 FROM evidence WHERE id = ? AND {REGRA_TESTE_VALIDO}",
+                f"SELECT 1 FROM evidence WHERE id = ? AND {regra_da_evidencia(exigido)}",
                 (cursor.lastrowid,),
             ).fetchone() is not None
             # A evidencia entra sempre — o registro acima e o historico e nao
@@ -1144,7 +1212,7 @@ class HarnessDatabase:
                 novo_status = "active" if row["status"] == "verified" else row["status"]
                 if valid_test:
                     novo_verified = 1
-                elif evidence_type == "test":
+                elif evidence_type == exigido:
                     novo_verified = 0
                 else:
                     novo_verified = int(row["verified"])
@@ -1169,7 +1237,12 @@ class HarnessDatabase:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
             pipeline = json.loads(row["pipeline_json"])
-            if row["status"] != "active" or not pipeline or bool(row["verified"]):
+            if (
+                row["status"] != "active"
+                or not pipeline
+                or bool(row["verified"])
+                or not cobra_evidencia_nesta_fase(row["kind"], pipeline, self._phase(row))
+            ):
                 raise StateTransitionError("task does not require a stop continuation")
             continuations = int(row["stop_continuations"])
             if continuations >= limit:
@@ -1201,7 +1274,7 @@ class HarnessDatabase:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
             self._expect_revision(row, expected_revision)
-            if not bool(row["verified"]) or not self._has_fresh_test_evidence(connection, row):
+            if not bool(row["verified"]) or not self._has_fresh_evidence(connection, row):
                 raise StateTransitionError("task requires fresh verification evidence")
             pipeline = json.loads(row["pipeline_json"])
             if pipeline and int(row["phase_index"]) != len(pipeline) - 1:
@@ -1248,19 +1321,21 @@ class HarnessDatabase:
         ).fetchone() is not None
 
     @staticmethod
-    def _has_fresh_test_evidence(connection: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    def _has_fresh_evidence(connection: sqlite3.Connection, row: sqlite3.Row) -> bool:
+        """A ultima evidencia do tipo que esta task exige, na revisao atual, passa."""
+        exigido = tipo_de_evidencia(row["kind"])
         return connection.execute(
             f"""
             SELECT 1 FROM evidence
             WHERE task_id = ? AND code_revision = ?
-              AND {REGRA_TESTE_VALIDO}
+              AND {regra_da_evidencia(exigido)}
               AND id = (
                   SELECT MAX(id) FROM evidence
-                  WHERE task_id = ? AND code_revision = ? AND evidence_type = 'test'
+                  WHERE task_id = ? AND code_revision = ? AND evidence_type = ?
               )
             LIMIT 1
             """,
-            (row["task_id"], row["code_revision"], row["task_id"], row["code_revision"]),
+            (row["task_id"], row["code_revision"], row["task_id"], row["code_revision"], exigido),
         ).fetchone() is not None
 
     @staticmethod

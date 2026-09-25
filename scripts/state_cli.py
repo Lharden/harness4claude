@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
-from transactional_state import HarnessDatabase, StateTransitionError
+from transactional_state import EVIDENCIA_COM_RELATORIO, HarnessDatabase, StateTransitionError
 
 
 def _pipelines() -> dict[str, list[str]]:
@@ -53,6 +54,23 @@ def _sync(home: Path, task: dict) -> None:
     home.mkdir(parents=True, exist_ok=True)
     temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def _hash_do_relatorio(caminho: str | None) -> str:
+    """sha256 do relatorio que sustenta uma evidencia de docs.
+
+    Os numeros da verificacao de docs sao declarados por quem verificou — nao
+    ha pytest que os meça. O que os torna auditaveis e o relatorio em disco
+    (`docs/specs/<slug>-verification.md`, ou o arquivo de verificacao ao lado da
+    doc), e o hash amarra a linha de `evidence` ao texto que existia quando ela
+    foi gravada. Decisao D3 de `docs/specs/portao-stop-sem-codigo-plano.md`.
+    """
+    if not caminho:
+        raise ValueError("evidencia de docs exige --command-text com o caminho do relatorio de verificacao")
+    alvo = Path(caminho)
+    if not alvo.is_file():
+        raise ValueError(f"relatorio de verificacao nao encontrado: {caminho}")
+    return hashlib.sha256(alvo.read_bytes()).hexdigest()
 
 
 def main(argv=None) -> int:
@@ -127,6 +145,9 @@ def main(argv=None) -> int:
         elif args.command == "transition":
             task = db.transition(args.task, args.to, expected_revision=args.expect_revision)
         elif args.command == "evidence":
+            output_hash = args.output_hash
+            if args.type in EVIDENCIA_COM_RELATORIO:
+                output_hash = _hash_do_relatorio(args.command_text)
             task = db.record_evidence(
                 args.task,
                 evidence_type=args.type,
@@ -135,7 +156,7 @@ def main(argv=None) -> int:
                 tests_collected=args.tests_collected,
                 tests_passed=args.tests_passed,
                 tests_skipped=args.tests_skipped,
-                output_hash=args.output_hash,
+                output_hash=output_hash,
             )
         elif args.command == "touch":
             task = db.touch_file(args.task, args.path, origem="cli")
