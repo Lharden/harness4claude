@@ -411,7 +411,11 @@ def _entrega_substituida(balde: Path, *, por: str) -> tuple[dict, dict]:
         if por == "L2-entregue":
             _ate_a_fase_final(db, b["task_id"])
             b = _evidencia_verde(db, b["task_id"])
-            assert continuation_policy.entregue(b), "premissa: a viva esta entregue"
+            # Premissa conferida campo a campo, sem `continuation_policy.entregue`:
+            # o vermelho deste caso contra o codigo antigo tem de ser o roubo da
+            # projecao, nao a falta da funcao nova.
+            assert (b["phase"], b["verified"], b["pending_gate"]) == (pipeline[-1], True, None), \
+                "premissa: a viva esta entregue"
         projecao_b = _projecao_do_classify(
             b, meta={"suggested": b["legacy_level"], "final": None, "source": "regex",
                      "confidence": None, "agreed": None},
