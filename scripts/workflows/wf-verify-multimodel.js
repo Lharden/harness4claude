@@ -54,25 +54,35 @@ const VERDICT_SCHEMA = {
   },
 }
 
+// agentType por dimensao — regra do CLAUDE.md global ("Fan-out (Workflow):
+// cada agent() com o tipo da tabela"). Sem isto, todo agent() herda modelo e
+// esforco da sessao que chama (Opus no esforco maximo), mesmo para revisao
+// mecanica. `security` vai para juiz-alto-risco porque a tabela poe seguranca
+// no risco alto; as demais dimensoes sao analise complexa de risco baixo.
 const DIMENSIONS = [
   {
     key: 'spec-coverage',
+    agentType: 'analise-complexa',
     prompt: `Voce e um revisor de COBERTURA DE SPEC. ${specLine}\n${scope}\n\nPara cada requisito (REQ), acceptance criterion (AC Given/When/Then) e user story da spec, verifique se ha implementacao e teste correspondentes nos arquivos alterados. Reporte como finding cada item da spec SEM cobertura (severity conforme a prioridade: P1 ausente=critical). Se nao houver spec, retorne findings vazio.`,
   },
   {
     key: 'correctness',
+    agentType: 'analise-complexa',
     prompt: `Voce e um revisor de CORRECAO. ${scope}\n\nLeia os arquivos alterados e procure bugs reais: off-by-one, condicoes invertidas, null/None nao tratado, excecoes engolidas, contratos violados, retornos incorretos. Reporte apenas problemas concretos com evidencia (arquivo:linha). Nao reporte estilo.`,
   },
   {
     key: 'security',
+    agentType: 'juiz-alto-risco',
     prompt: `Voce e um revisor de SEGURANCA. ${scope}\n\nProcure: injection (SQL/command/path), secrets hardcoded, validacao de entrada ausente, deserializacao insegura, authz/authn faltando, exposicao de dados sensiveis em logs. Reporte com severity. Sem achados = findings vazio.`,
   },
   {
     key: 'edge-cases',
+    agentType: 'analise-complexa',
     prompt: `Voce e um revisor de EDGE CASES. ${scope}\n\nIdentifique entradas-limite nao tratadas: vazio, None, listas vazias, unicode, valores negativos/zero, concorrencia, timeouts, paths inexistentes. Reporte casos plausiveis e nao cobertos por teste.`,
   },
   {
     key: 'regressions',
+    agentType: 'analise-complexa',
     prompt: `Voce e um revisor de REGRESSOES. ${scope}\n\nVerifique se as mudancas podem quebrar comportamento existente: assinaturas alteradas, contratos publicos, side-effects, imports removidos, testes existentes que deixariam de passar. Rode os testes se possivel e reporte falhas.`,
   },
 ]
@@ -92,7 +102,12 @@ function censoNos(rotulo, rotulos, obtidos) {
 phase('Review')
 const reviews = await parallel(
   DIMENSIONS.map((d) => () =>
-    agent(d.prompt, { label: `review:${d.key}`, phase: 'Review', schema: FINDINGS_SCHEMA }),
+    agent(d.prompt, {
+      label: `review:${d.key}`,
+      phase: 'Review',
+      schema: FINDINGS_SCHEMA,
+      agentType: d.agentType,
+    }),
   ),
 )
 
@@ -124,6 +139,13 @@ if (findings.length === 0) {
   }
 }
 
+// Adjudicacao so para critico/alto (regra do CLAUDE.md global: "revisao ampla
+// adjudica so achados criticos e altos"). Medium/low nunca abrem agent() de
+// adjudicacao — sairiam do fan-out do mesmo jeito que entraram, sem custo de
+// refutacao adversarial, e vao no retorno com `adjudicado: false`.
+const adjudicaveis = findings.filter((f) => f.severity === 'critical' || f.severity === 'high')
+const naoAdjudicaveis = findings.filter((f) => f.severity !== 'critical' && f.severity !== 'high')
+
 // Aresta descontaminada — o adjudicador recebe a ALEGACAO, nunca o raciocinio de quem
 // a levantou. Este no so vale porque a janela dele e nova: verificacao adversarial
 // funciona por contexto descorrelacionado. Passar `f.rationale` recorrela as duas pontas
@@ -132,24 +154,27 @@ if (findings.length === 0) {
 // humano ler; so nao entra neste prompt.
 phase('Adjudicate')
 const adjudicated = await parallel(
-  findings.map((f) => () =>
+  adjudicaveis.map((f) => () =>
     agent(
       `Tente REFUTAR esta alegacao de review. Se nao conseguir refutar com evidencia, ela e real.\n\n` +
         `Alegacao: ${f.title}\nArquivo: ${f.file}${f.line ? `:${f.line}` : ''}\nSeveridade alegada: ${f.severity}\n\n` +
         `Voce NAO recebe o raciocinio de quem levantou a alegacao — isso e proposital. ` +
         `Leia o codigo real e julgue por ele. Default para is_real=true apenas se a evidencia sustentar.`,
-      { label: `adjudicate:${f.file}`, phase: 'Adjudicate', schema: VERDICT_SCHEMA },
+      { label: `adjudicate:${f.file}`, phase: 'Adjudicate', schema: VERDICT_SCHEMA, agentType: 'juiz-alto-risco' },
     ).then((v) => ({ ...f, verdict: v })),
   ),
 )
 
-const censoAdj = censoNos('Adjudicate', findings.map((f) => f.title), adjudicated)
+const censoAdj = censoNos('Adjudicate', adjudicaveis.map((f) => f.title), adjudicated)
 const confirmed = censoAdj.vivos.filter(
   (f) => f.verdict && f.verdict.is_real && f.verdict.confidence >= 0.5,
 )
 
 const criticals = confirmed.filter((f) => f.severity === 'critical' || f.severity === 'high')
-log(`Adjudicate: ${confirmed.length} confirmados, ${criticals.length} criticos/altos`)
+log(
+  `Adjudicate: ${confirmed.length} confirmados, ${criticals.length} criticos/altos` +
+    (naoAdjudicaveis.length ? `, ${naoAdjudicaveis.length} medium/low nao adjudicados` : ''),
+)
 
 // Finding nao julgado NAO e finding liberado: no morto bloqueia a aprovacao.
 const nosMortos = [...censoReview.mortos, ...censoAdj.mortos]
@@ -158,15 +183,30 @@ return {
   pass: criticals.length === 0 && nosMortos.length === 0,
   critical_count: criticals.length,
   nos_mortos: nosMortos,
-  findings: confirmed.map((f) => ({
-    title: f.title,
-    severity: f.severity,
-    file: f.file,
-    line: f.line ?? null,
-    rationale: f.rationale,
-    confidence: f.verdict.confidence,
-  })),
+  nao_adjudicados: naoAdjudicaveis.length,
+  findings: [
+    ...confirmed.map((f) => ({
+      title: f.title,
+      severity: f.severity,
+      file: f.file,
+      line: f.line ?? null,
+      rationale: f.rationale,
+      confidence: f.verdict.confidence,
+      adjudicado: true,
+    })),
+    ...naoAdjudicaveis.map((f) => ({
+      title: f.title,
+      severity: f.severity,
+      file: f.file,
+      line: f.line ?? null,
+      rationale: f.rationale,
+      confidence: null,
+      adjudicado: false,
+    })),
+  ],
   summary:
-    `${confirmed.length} findings confirmados (${criticals.length} bloqueantes) de ${findings.length} brutos.` +
+    `${confirmed.length} findings confirmados (${criticals.length} bloqueantes) de ${adjudicaveis.length} adjudicaveis` +
+    (naoAdjudicaveis.length ? `, ${naoAdjudicaveis.length} medium/low nao adjudicados` : '') +
+    `.` +
     (nosMortos.length ? ` COBERTURA INCOMPLETA: ${nosMortos.length} no(s) sem retorno — ${nosMortos.join(', ')}.` : ''),
 }
