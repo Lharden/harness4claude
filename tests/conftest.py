@@ -56,6 +56,7 @@ BASH_REQUIRED_CLASSES = {
         "TestClassifyPerguntaAoBanco", "TestSessionStartPerguntaAoBanco", "TestRevisaoReparoGuardaMeta",
     },
     "test_health_check_smoke.py": {"TestSmokeDetectaSabotagem", "TestSmokeNaoTocaEstadoReal"},
+    "test_sim_nao_fecha_entrega.py": {"TestRespostaCurtaContinuaAEntrega"},
     "test_hermeticity_enforcement.py": {"TestVaultNuncaReal"},
     "test_hook_liveness.py": {"TestHooksGravamHeartbeat"},
     "test_host_contract_resilience.py": {"TestGitGuardFailsLoud", "TestCrlfNaoFragmentaBucket"},
