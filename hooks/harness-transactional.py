@@ -20,6 +20,11 @@ sys.path.insert(0, str(SCRIPTS))
 #: e a normal.
 CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 
+from evidencia_em_segundo_plano import (  # type: ignore[import-not-found]
+    capturar_lancamentos,
+    contar_testes,
+    resumo_dos_lancamentos,
+)
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from projecao import gravar_json_atomico  # type: ignore[import-not-found]
@@ -251,11 +256,30 @@ AVISO_SEM_CASOS = (
 #: `tests_collected > 0`) e so enchia `evidence`. Caso real: balde `037312e7`,
 #: suite de ~21 min empurrada para o fundo pelo timeout de 10 min da ferramenta.
 #: Ver `docs/specs/portao-stop-em-voo-diagnostico.md`.
+#:
+#: Desde 2026-09-30 o lancamento fica registrado e a evidencia e capturada
+#: sozinha no termino, na revisao do lancamento
+#: (`docs/specs/evidencia-em-segundo-plano-spec.md`). A receita manual fica como
+#: saida quando a captura nao acontece — e so vale se nada mudou desde entao.
 AVISO_SEGUNDO_PLANO = (
     "[harness] a suite foi para segundo plano (background, job {job}): o "
-    "lancamento NAO e resultado, e nenhuma evidencia foi gravada. Enquanto o job "
-    "roda, o Stop nao cobra continuacao. Quando ele terminar, leia a saida e, se "
-    "nenhum arquivo mudou desde o lancamento, registre a evidencia:\n{comando}"
+    "lancamento NAO e resultado, e nenhuma evidencia foi gravada agora. Enquanto "
+    "o job roda, o Stop nao cobra continuacao. Quando ele terminar, a evidencia "
+    "sera capturada sozinha, na code_revision {revisao} — qualquer escrita antes "
+    "disso a torna historico, e historico nao verifica. Se a captura nao "
+    "acontecer (a mensagem do portao lista o lancamento e o motivo), leia a "
+    "saida e, so se nenhum arquivo mudou desde o lancamento, registre a "
+    "evidencia:\n{comando}"
+)
+
+#: Quando o lancamento NAO fica pendente para a captura — task encerrada,
+#: lancamento que nasceu rejeitado (subagente, sem id, sem transcript) ou banco
+#: que falhou —, o aviso nao pode prometer captura automatica.
+AVISO_SEGUNDO_PLANO_SEM_CAPTURA = (
+    "[harness] a suite foi para segundo plano (background, job {job}): o "
+    "lancamento NAO e resultado, e ele NAO foi registrado para captura "
+    "automatica ({motivo}). Quando o job terminar, leia a saida e, so se nenhum "
+    "arquivo mudou desde o lancamento, registre a evidencia:\n{comando}"
 )
 
 #: As duas formas de texto com que o host anuncia um job em segundo plano: o
@@ -1621,50 +1645,13 @@ def _write_heartbeat(
         pass
 
 
-# Categorias que o pytest imprime na linha de sumario, separadas pelo que elas
-# significam para o portao.
-#
-# Ate 2026-09-16 este parser so via `passed`, `failed` e `errors`, e derivava
-# `tests_collected` como a soma dos tres. O numero gravado no banco nunca foi o
-# `collected N items` do pytest — e a mesma palavra queria dizer duas coisas
-# conforme quem escrevia, o hook ou uma pessoa rodando o `state_cli` a mao. A
-# pessoa que reportava o collected verdadeiro era a unica recusada.
-#
-# `skipped`, `xfailed`, `xpassed` e `deselected` nao produzem veredito que
-# gateie: nenhum deles e falha, e nenhum deles e prova de que algo passou.
-VEREDITO_PASSA = (r"\b(\d+)\s+passed\b",)
-VEREDITO_FALHA = (r"\b(\d+)\s+failed\b", r"\b(\d+)\s+errors?\b")
-SEM_VEREDITO = (
-    r"\b(\d+)\s+skipped\b",
-    r"\b(\d+)\s+xfailed\b",
-    r"\b(\d+)\s+xpassed\b",
-    r"\b(\d+)\s+deselected\b",
-)
-
-
-def _soma_categorias(text: str, padroes: tuple[str, ...]) -> int:
-    # `max` por padrao, e nao soma: o pytest repete a linha de sumario (uma vez
-    # em "short test summary info", outra no rodape) e somar contaria duas vezes.
-    return sum(
-        max((int(v) for v in re.findall(padrao, text, re.IGNORECASE)), default=0)
-        for padrao in padroes
-    )
-
-
 def _test_counts(payload: dict[str, Any]) -> tuple[int | None, int | None, int | None, str | None]:
-    """(coletados, passando, pulados, digest) — coletados = tudo que o pytest contou."""
-    text = _response_text(payload)
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest() if text else None
-    if re.search(r"\b(no tests ran|collected 0 items|0 tests? (?:run|passed|total))\b", text, re.IGNORECASE):
-        return 0, 0, 0, digest
-    passou = _soma_categorias(text, VEREDITO_PASSA)
-    falhou = _soma_categorias(text, VEREDITO_FALHA)
-    sem_veredito = _soma_categorias(text, SEM_VEREDITO)
-    if passou or falhou or sem_veredito:
-        return passou + falhou + sem_veredito, passou, sem_veredito, digest
-    if re.search(r"\btest result:\s*ok\b", text, re.IGNORECASE) or re.search(r"(?m)^ok\s+\S+", text):
-        return 1, 1, 0, digest
-    return None, None, None, digest
+    """(coletados, passando, pulados, digest) da resposta em primeiro plano.
+
+    A contagem mora em `evidencia_em_segundo_plano.contar_testes`, a mesma que
+    conta o arquivo de saida da suite em segundo plano (REQ-F5).
+    """
+    return contar_testes(_response_text(payload))
 
 
 def _projection(bucket: Path) -> dict[str, Any]:
@@ -2130,9 +2117,32 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     aviso = ""
     job = _job_em_segundo_plano(payload) if is_trusted_verification(command) else None
     if job:
-        aviso = AVISO_SEGUNDO_PLANO.format(
-            job=job, comando=comando_de_evidencia(bucket, task["task_id"], task.get("kind"))
-        )
+        # Depois do toque acima: a revisao gravada e a que a suite vai testar.
+        # O termino e capturado no Stop ou no `complete`, lendo o transcript.
+        # Este ramo so imprimia o aviso; agora escreve no banco. Falha aqui nao
+        # pode derrubar o hook e levar junto o aviso de que lancamento nao e
+        # resultado (rodada 3 #12).
+        try:
+            estado = database.registrar_lancamento(
+                task["task_id"],
+                job_id=job,
+                tool_use_id=payload.get("tool_use_id") or payload.get("toolUseId"),
+                command=command,
+                transcript_path=payload.get("transcript_path") or payload.get("transcriptPath"),
+                subagente=bool(payload.get("agent_id")),
+            )
+            motivo = None if estado == "pendente" else (
+                "a task ja esta encerrada" if estado is None else f"o lancamento nasceu {estado}"
+            )
+        except Exception as erro:  # noqa: BLE001 - qualquer falha vira aviso, nunca queda
+            motivo = f"falha ao gravar no banco ({type(erro).__name__}: {erro})"
+        comando = comando_de_evidencia(bucket, task["task_id"], task.get("kind"))
+        # So promete captura quando ha um lancamento pendente que a captura vai
+        # ler (rodada 3 #5): task terminal ou lancamento rejeitado nao sao.
+        if motivo is None:
+            aviso = AVISO_SEGUNDO_PLANO.format(job=job, revisao=task["code_revision"], comando=comando)
+        else:
+            aviso = AVISO_SEGUNDO_PLANO_SEM_CAPTURA.format(job=job, motivo=motivo, comando=comando)
     elif is_trusted_verification(command):
         collected, passed, skipped, output_hash = _test_counts(payload)
         task = database.record_evidence(
@@ -2190,6 +2200,12 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
     if payload.get("stop_hook_active") or payload.get("stopHookActive"):
         return ""
     bucket, database, projection, task = context
+    # Suite em segundo plano que ja terminou vira evidencia ANTES do teste de
+    # `verified`: capturar depois dele deixaria o Stop que disparou a captura
+    # bloquear uma task que acabou de ser verificada. Nunca levanta.
+    if capturar_lancamentos(database, task["task_id"]):
+        task = database.task(task["task_id"])
+        _sync_projection(bucket, projection, task)
     if task["status"] != "active" or not task["pipeline"] or task["verified"]:
         return ""
     # Docs so e cobrado na fase que produz a verificacao (D1); teste, da primeira
@@ -2261,6 +2277,18 @@ def _ultimos_toques(database, task_id: str, quantos: int = 3) -> str:
         f"rev={linha['code_revision']} {linha['path']} ({linha['origem']})" for linha in linhas
     )
     return f"Ultima(s) invalidacao(oes): {itens}"
+
+
+def _lancamentos(database, task_id: str) -> str:
+    """As suites em segundo plano desta task e o destino de cada uma.
+
+    Sem isto, `rejeitado` e `historico` seriam silencio: o modelo nao saberia
+    por que a suite que ele esperou nao verificou, e inventaria um diagnostico.
+    """
+    try:
+        return resumo_dos_lancamentos(database.lancamentos(task_id))
+    except Exception:
+        return ""
 
 
 def comando_de_evidencia(bucket: Path, task_id: str, kind: str | None = None) -> str:
@@ -2347,6 +2375,9 @@ def _motivo_do_gate(
     toques = _ultimos_toques(database, task["task_id"])
     if toques:
         leitura = f"{leitura}\n{toques}"
+    lancamentos = _lancamentos(database, task["task_id"])
+    if lancamentos:
+        leitura = f"{leitura}\n{lancamentos}"
     # `--home` e do parser RAIZ: vai antes do subcomando, nao depois. Escrever
     # na ordem errada aqui entregaria um comando que nao roda, que e a mesma
     # falha que esta mensagem existe para corrigir — instrucao que nao se

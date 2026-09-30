@@ -1,0 +1,70 @@
+........................................................................ [  4%]
+........................................................................ [  8%]
+........................................................................ [ 13%]
+........................................................................ [ 17%]
+........................................................................ [ 22%]
+........................................................................ [ 26%]
+........................................................................ [ 31%]
+........................................................................ [ 35%]
+........s...........F................................................... [ 40%]
+.......................................................................................................................................... [ 48%]
+........................................................................ [ 53%]
+........................................................................ [ 57%]
+........................................................................ [ 62%]
+........................................................................ [ 66%]
+........................................................................ [ 71%]
+........................................................................ [ 75%]
+........................................................................ [ 79%]
+........................................................................ [ 84%]
+........................................................................ [ 88%]
+...........................................F............................ [ 93%]
+........................................................................ [ 97%]
+...................................                                      [100%]
+================================== FAILURES ===================================
+_______ TestOQueRodaEOQueFoiPublicado.test_o_cache_reflete_o_publicado ________
+
+self = <test_deploy_drift.TestOQueRodaEOQueFoiPublicado object at 0x000002C312AF7D90>
+
+    def test_o_cache_reflete_o_publicado(self):
+        alvo, ref = _instalado(), _ref_publicada()
+        divergentes = dtc.drift_publicado(ROOT, alvo, ref)
+>       assert not divergentes, _mensagem(divergentes, alvo, ref)
+E       AssertionError: o que roda diverge de `main` em 5 arquivo(s).
+E         plugin: C:\Users\LHarden2\.claude\plugins\cache\harness4claude\harness4claude\4.0.0
+E           docs\specs\verify-por-tabela-spec-light.md
+E           docs\specs\verify-por-tabela-verification.md
+E           scripts\workflows\wf-verify-multimodel.js
+E           tests\test_verify_por_tabela.py
+E           tests\wf_run_harness.cjs
+E         
+E         causa: deploy velho, ou cache com codigo de um ramo nao mesclado.
+E         de um checkout de `main` (NAO deste worktree), rode:
+E             python scripts/deploy_to_cache.py --apply
+E       assert not [WindowsPath('docs/specs/verify-por-tabela-spec-light.md'), WindowsPath('docs/specs/verify-por-tabela-verification.md'...ows/wf-verify-multimodel.js'), WindowsPath('tests/test_verify_por_tabela.py'), WindowsPath('tests/wf_run_harness.cjs')]
+
+tests\test_deploy_drift.py:165: AssertionError
+______________ test_CONTROLE_codigo_antigo_adjudicava_medium_low ______________
+
+tmp_path = WindowsPath('C:/Users/LHarden2/AppData/Local/Temp/pytest-of-LHarden2/pytest-7421/test_CONTROLE_codigo_antigo_ad0')
+
+    def test_CONTROLE_codigo_antigo_adjudicava_medium_low(tmp_path):
+        """Metade 1: no codigo de `main` (antes desta tarefa), medium/low SEMPRE
+        iam para adjudicacao — prova que o teste acima nao e tautologia."""
+        old_file = tmp_path / "wf-verify-multimodel-old.js"
+        old_file.write_text(_old_wf_source(), encoding="utf-8")
+        out = _run(old_file, SOMENTE_MEDIUM_LOW, tmp_path)
+>       assert len(out["calls"]["adjudicate"]) == 2, (
+            "esperava que o codigo antigo adjudicasse os 2 findings medium/low "
+            "(comportamento que esta tarefa remove)"
+        )
+E       AssertionError: esperava que o codigo antigo adjudicasse os 2 findings medium/low (comportamento que esta tarefa remove)
+E       assert 0 == 2
+E        +  where 0 = len([])
+
+tests\test_verify_por_tabela.py:196: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_deploy_drift.py::TestOQueRodaEOQueFoiPublicado::test_o_cache_reflete_o_publicado
+FAILED tests/test_verify_por_tabela.py::test_CONTROLE_codigo_antigo_adjudicava_medium_low
+2 failed, 1610 passed, 1 skipped, 6 subtests passed in 1248.39s (0:20:48)
+
+[exited with code 1]

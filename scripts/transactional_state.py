@@ -194,6 +194,45 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _instante(texto: Any) -> datetime | None:
+    """ISO 8601 com `Z` ou `+00:00`; sem fuso vira UTC; ilegivel vira None."""
+    if not isinstance(texto, str) or not texto:
+        return None
+    try:
+        valor = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return valor if valor.tzinfo else valor.replace(tzinfo=timezone.utc)
+
+
+def _modulo_de_segundo_plano():
+    """`evidencia_em_segundo_plano`, importado sob demanda, ou `None`.
+
+    O modulo e irmao deste, e quem carrega este arquivo pelo caminho (testes,
+    `importlib`) nao tem `scripts/` no `sys.path`. Import falho nao pode
+    derrubar o `complete`: sem ele, o `complete` decide como antes.
+    """
+    import importlib
+    import sys
+
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    try:
+        return importlib.import_module("evidencia_em_segundo_plano")
+    except Exception:
+        return None
+
+
+def _capturar_lancamentos(database: "HarnessDatabase", task_id: str) -> int:
+    modulo = _modulo_de_segundo_plano()
+    return int(modulo.capturar_lancamentos(database, task_id)) if modulo else 0
+
+
+def _resumo_dos_lancamentos(lancamentos: list[dict[str, Any]]) -> str:
+    modulo = _modulo_de_segundo_plano()
+    return modulo.resumo_dos_lancamentos(lancamentos) if modulo else ""
+
+
 class HarnessDatabase:
     def __init__(self, home: str | Path):
         self.home = Path(home)
@@ -348,6 +387,24 @@ class HarnessDatabase:
                     UNIQUE(task_id, slug),
                     UNIQUE(task_id, topic_hash)
                 );
+                CREATE TABLE IF NOT EXISTS lancamentos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                    job_id TEXT NOT NULL,
+                    tool_use_id TEXT,
+                    command TEXT NOT NULL,
+                    transcript_path TEXT,
+                    code_revision INTEGER NOT NULL,
+                    estado TEXT NOT NULL DEFAULT 'pendente',
+                    motivo TEXT,
+                    lancado_em TEXT NOT NULL,
+                    terminou_em TEXT,
+                    resolvido_em TEXT,
+                    evidence_id INTEGER REFERENCES evidence(id),
+                    UNIQUE(task_id, job_id)
+                );
+                CREATE INDEX IF NOT EXISTS lancamentos_por_estado
+                ON lancamentos(task_id, estado);
                 """
             )
             task_columns = {
@@ -1536,80 +1593,137 @@ class HarnessDatabase:
         tests_passed: int | None,
         output_hash: str | None,
         tests_skipped: int | None = None,
+        code_revision: int | None = None,
     ) -> dict[str, Any]:
+        """Grava evidencia e, se ela vale para o codigo de agora, julga `verified`.
+
+        `code_revision` e a revisao que a evidencia de fato testou. Omitida, e
+        a corrente — o caminho de sempre, o do hook em primeiro plano e o do
+        `state_cli`. Diferente da corrente, a linha e HISTORICO: a suite em
+        segundo plano testou N' e o codigo ja esta em N'+k. Entra no banco com
+        a revisao certa e nao mexe em `verified`, `status` nem
+        `stop_continuations`, para nenhum lado (REQ-F6). O `state_cli` nao
+        expoe este parametro: escolher a revisao e privilegio de quem leu o
+        lancamento, nao de quem digita numeros.
+        """
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
-            cursor = connection.execute(
-                """
-                INSERT INTO evidence(
-                    task_id, code_revision, evidence_type, command, exit_code,
-                    tests_collected, tests_passed, tests_skipped, output_hash, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task_id,
-                    row["code_revision"],
-                    evidence_type,
-                    command,
-                    exit_code,
-                    tests_collected,
-                    tests_passed,
-                    tests_skipped,
-                    output_hash,
-                    utc_now(),
-                ),
-            )
-            # Julga a linha gravada, com o mesmo texto que a leitura vai usar.
-            # Ver REGRA_EVIDENCIA_VALIDA: a duplicata era o defeito. A regua e a
-            # do tipo que ESTA task exige; evidencia de outro tipo e historico,
-            # e nao mexe em `verified` para nenhum lado — um pytest nao verifica
-            # uma doc, e um pytest vermelho tambem nao a desverifica.
-            exigido = tipo_de_evidencia(row["kind"])
-            valid_test = connection.execute(
-                f"SELECT 1 FROM evidence WHERE id = ? AND {regra_da_evidencia(exigido)}",
-                (cursor.lastrowid,),
-            ).fetchone() is not None
-            # A evidencia entra sempre — o registro acima e o historico e nao
-            # depende do estado da task. O que segue e o ciclo de vida, e ele
-            # para em status terminal: a validacao final roda DEPOIS do
-            # `complete`, entao deixar a evidencia mexer no status faria toda
-            # entrega bem-feita ser desfeita pelo proprio ato de conferi-la.
-            # 'verified' ainda esta dentro de `one_active_task_per_scope`, entao
-            # com uma task nova ja aberta a ressurreicao nem falhava em silencio:
-            # estourava IntegrityError e derrubava o hook.
-            #
-            # "Tem evidencia fresca" vive SO na coluna `verified` (D1, 2026-09-23).
-            # Ate aqui a evidencia valida tambem punha `status='verified'`, e o
-            # mesmo fato ocupava dois lugares — um deles o eixo de ciclo de vida.
-            # O classify nao contava 'verified' como continuavel e o banco contava
-            # como vivo: a task era viva o bastante para ser MORTA pelo prompt
-            # seguinte e nao o bastante para ser CONTINUADA por ele (HC-00h,
-            # t-20260923-133144961992, fase 2 de 11). O status fica onde estava;
-            # 'verified' gravado por hook antigo volta ao status que os portoes dizem.
-            terminal = row["status"] in TERMINAL_STATUSES
-            novo_status = self._status_derivado(connection, task_id, row["status"])
-            if terminal:
-                novo_verified = int(row["verified"])
-            else:
-                if valid_test:
-                    novo_verified = 1
-                elif evidence_type == exigido:
-                    novo_verified = 0
-                else:
-                    novo_verified = int(row["verified"])
-            connection.execute(
-                "UPDATE tasks SET verified = ?, status = ?, "
-                "stop_continuations = CASE WHEN ? THEN 0 ELSE stop_continuations END, "
-                "revision = revision + 1, updated_at = ? WHERE task_id = ?",
-                (
-                    novo_verified,
-                    novo_status,
-                    1 if (valid_test and not terminal) else 0,
-                    utc_now(),
-                    task_id,
-                ),
+            self._gravar_evidencia(
+                connection,
+                row,
+                evidence_type=evidence_type,
+                command=command,
+                exit_code=exit_code,
+                tests_collected=tests_collected,
+                tests_passed=tests_passed,
+                tests_skipped=tests_skipped,
+                output_hash=output_hash,
+                code_revision=code_revision,
             )
         return self.task(task_id)
+
+    def _gravar_evidencia(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        evidence_type: str,
+        command: str | None,
+        exit_code: int | None,
+        tests_collected: int | None,
+        tests_passed: int | None,
+        tests_skipped: int | None,
+        output_hash: str | None,
+        code_revision: int | None,
+    ) -> int:
+        """O corpo de `record_evidence`, dentro de uma transacao que ja existe.
+
+        Existe separado porque a captura de um lancamento grava evidencia,
+        estado do lancamento e evento numa transacao so. Devolve o id da linha.
+        """
+        task_id = row["task_id"]
+        revisao = row["code_revision"] if code_revision is None else code_revision
+        cursor = connection.execute(
+            """
+            INSERT INTO evidence(
+                task_id, code_revision, evidence_type, command, exit_code,
+                tests_collected, tests_passed, tests_skipped, output_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_id,
+                revisao,
+                evidence_type,
+                command,
+                exit_code,
+                tests_collected,
+                tests_passed,
+                tests_skipped,
+                output_hash,
+                utc_now(),
+            ),
+        )
+        evidence_id = int(cursor.lastrowid or 0)
+        if revisao != row["code_revision"]:
+            # Historico: a suite testou outra revisao. A linha fica, e nada do
+            # ciclo de vida se move. `revision` sobe porque houve escrita no
+            # banco da task, e quem usa CAS precisa enxergar.
+            connection.execute(
+                "UPDATE tasks SET revision = revision + 1, updated_at = ? WHERE task_id = ?",
+                (utc_now(), task_id),
+            )
+            return evidence_id
+        # Julga a linha gravada, com o mesmo texto que a leitura vai usar.
+        # Ver REGRA_EVIDENCIA_VALIDA: a duplicata era o defeito. A regua e a
+        # do tipo que ESTA task exige; evidencia de outro tipo e historico,
+        # e nao mexe em `verified` para nenhum lado — um pytest nao verifica
+        # uma doc, e um pytest vermelho tambem nao a desverifica.
+        exigido = tipo_de_evidencia(row["kind"])
+        valid_test = connection.execute(
+            f"SELECT 1 FROM evidence WHERE id = ? AND {regra_da_evidencia(exigido)}",
+            (evidence_id,),
+        ).fetchone() is not None
+        # A evidencia entra sempre — o registro acima e o historico e nao
+        # depende do estado da task. O que segue e o ciclo de vida, e ele
+        # para em status terminal: a validacao final roda DEPOIS do
+        # `complete`, entao deixar a evidencia mexer no status faria toda
+        # entrega bem-feita ser desfeita pelo proprio ato de conferi-la.
+        # 'verified' ainda esta dentro de `one_active_task_per_scope`, entao
+        # com uma task nova ja aberta a ressurreicao nem falhava em silencio:
+        # estourava IntegrityError e derrubava o hook.
+        #
+        # "Tem evidencia fresca" vive SO na coluna `verified` (D1, 2026-09-23).
+        # Ate aqui a evidencia valida tambem punha `status='verified'`, e o
+        # mesmo fato ocupava dois lugares — um deles o eixo de ciclo de vida.
+        # O classify nao contava 'verified' como continuavel e o banco contava
+        # como vivo: a task era viva o bastante para ser MORTA pelo prompt
+        # seguinte e nao o bastante para ser CONTINUADA por ele (HC-00h,
+        # t-20260923-133144961992, fase 2 de 11). O status fica onde estava;
+        # 'verified' gravado por hook antigo volta ao status que os portoes dizem.
+        terminal = row["status"] in TERMINAL_STATUSES
+        novo_status = self._status_derivado(connection, task_id, row["status"])
+        if terminal:
+            novo_verified = int(row["verified"])
+        else:
+            if valid_test:
+                novo_verified = 1
+            elif evidence_type == exigido:
+                novo_verified = 0
+            else:
+                novo_verified = int(row["verified"])
+        connection.execute(
+            "UPDATE tasks SET verified = ?, status = ?, "
+            "stop_continuations = CASE WHEN ? THEN 0 ELSE stop_continuations END, "
+            "revision = revision + 1, updated_at = ? WHERE task_id = ?",
+            (
+                novo_verified,
+                novo_status,
+                1 if (valid_test and not terminal) else 0,
+                utc_now(),
+                task_id,
+            ),
+        )
+        return evidence_id
 
     def register_stop_continuation(
         self, task_id: str, *, limit: int = 2, em_voo=()
@@ -1702,13 +1816,252 @@ class HarnessDatabase:
                 ).fetchone()[0]
             )
 
+    # --- Lancamentos em segundo plano ------------------------------------------
+    #
+    # Suite que vai para segundo plano so termina depois do PostToolUse que a
+    # lancou. O lancamento fica aqui ate o termino aparecer no transcript; a
+    # captura (`evidencia_em_segundo_plano.capturar_lancamentos`) roda nos dois
+    # leitores que decidem `verified` — o Stop e `complete` (L-09). Ver
+    # `docs/specs/evidencia-em-segundo-plano-design.md`.
+
+    def registrar_lancamento(
+        self,
+        task_id: str,
+        *,
+        job_id: str,
+        tool_use_id: str | None,
+        command: str,
+        transcript_path: str | None,
+        subagente: bool = False,
+    ) -> str | None:
+        """Um lancamento por (task, job); a revisao e lida sob o mesmo lock.
+
+        `subagente`: o termino de job lancado por subagente chega ao subagente
+        (`isSidechain`), que a captura recusa por procedencia — o lancamento
+        nasce rejeitado em vez de prometer uma captura que nao vem.
+
+        Devolve o estado da linha deste job (`pendente`, `rejeitado`, ...) ou
+        `None` se nada foi gravado (task terminal): e o que o aviso do hook
+        consulta para nao prometer captura que nao vai acontecer (rodada 3 #5).
+
+        Chamado DEPOIS do toque do proprio comando, entao `code_revision` e a
+        revisao que a suite vai testar (N'). Repetido — hook registrado duas
+        vezes, PostToolUse e PostToolUseFailure da mesma chamada — nao duplica.
+        """
+        with self._write() as connection:
+            row = self._locked_task(connection, task_id)
+            if row["status"] in TERMINAL_STATUSES:
+                return None
+            # Sem o id da chamada ou sem o transcript, nenhuma notificacao casa:
+            # o lancamento nasce resolvido, com o motivo, em vez de ficar
+            # pendente para sempre e parecer mudanca de formato do host (verify
+            # #9, #14).
+            if subagente:
+                motivo = "subagente"
+            elif not tool_use_id:
+                motivo = "sem-tool-use-id"
+            elif not transcript_path:
+                motivo = "sem-transcript"
+            else:
+                motivo = None
+            agora = utc_now()
+            inseriu = connection.execute(
+                "INSERT OR IGNORE INTO lancamentos(task_id, job_id, tool_use_id, command, "
+                "transcript_path, code_revision, lancado_em, estado, motivo, resolvido_em) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    task_id, job_id, tool_use_id, command, transcript_path, row["code_revision"], agora,
+                    "rejeitado" if motivo else "pendente", motivo, agora if motivo else None,
+                ),
+            ).rowcount
+            if motivo and inseriu:
+                connection.execute(
+                    "INSERT OR IGNORE INTO scopes(scope_id, created_at) VALUES (?, ?)", (row["scope_id"], agora)
+                )
+                connection.execute(
+                    "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                    "VALUES (?, ?, 'lancamento_resolvido', ?, ?)",
+                    (
+                        task_id,
+                        row["scope_id"],
+                        json.dumps(
+                            {"job": job_id, "estado": "rejeitado", "motivo": motivo,
+                             "code_revision": int(row["code_revision"]), "evidence_id": None},
+                            sort_keys=True,
+                        ),
+                        agora,
+                    ),
+                )
+            linha = connection.execute(
+                "SELECT estado FROM lancamentos WHERE task_id = ? AND job_id = ?", (task_id, job_id)
+            ).fetchone()
+            return str(linha["estado"]) if linha else None
+
+    def lancamentos(self, task_id: str, *, estado: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            if estado is None:
+                linhas = connection.execute(
+                    "SELECT * FROM lancamentos WHERE task_id = ? ORDER BY id", (task_id,)
+                ).fetchall()
+            else:
+                linhas = connection.execute(
+                    "SELECT * FROM lancamentos WHERE task_id = ? AND estado = ? ORDER BY id",
+                    (task_id, estado),
+                ).fetchall()
+        return [dict(linha) for linha in linhas]
+
+    def resolver_lancamento(self, task_id: str, job_id: str, veredito: Any) -> str | None:
+        """Aplica o veredito de `julgar` numa transacao: evidencia, estado, evento.
+
+        Devolve o estado final, ou `None` se o lancamento ja nao estava
+        pendente (outra captura chegou antes: nada e gravado duas vezes).
+
+        Quem decide entre `capturado`, `historico` e `superado` e este metodo,
+        e nao o julgamento, porque a decisao depende da revisao corrente e das
+        evidencias ja gravadas — e as duas so sao confiaveis sob o lock.
+        """
+        with self._write() as connection:
+            row = self._locked_task(connection, task_id)
+            lancamento = connection.execute(
+                "SELECT * FROM lancamentos WHERE task_id = ? AND job_id = ? AND estado = 'pendente'",
+                (task_id, job_id),
+            ).fetchone()
+            if lancamento is None:
+                return None
+            evidence_id = None
+            if veredito.estado == "rejeitado":
+                estado, motivo = "rejeitado", veredito.motivo
+            else:
+                mais_nova = self._evidencia_mais_nova(
+                    connection, task_id, int(lancamento["code_revision"]), veredito.terminou_em
+                )
+                if mais_nova is not None:
+                    # Na mesma revisao, decide a execucao que TERMINOU por
+                    # ultimo (grill #4). Uma captura atrasada ganharia o maior
+                    # `id` e cobriria um vermelho mais novo com um verde velho.
+                    estado, motivo = "superado", f"por-evidence-{mais_nova}"
+                else:
+                    evidence_id = self._gravar_evidencia(
+                        connection,
+                        row,
+                        evidence_type="test",
+                        command=lancamento["command"],
+                        exit_code=veredito.exit_code,
+                        tests_collected=veredito.tests_collected,
+                        tests_passed=veredito.tests_passed,
+                        tests_skipped=veredito.tests_skipped,
+                        output_hash=veredito.output_hash,
+                        code_revision=int(lancamento["code_revision"]),
+                    )
+                    estado = "capturado" if int(lancamento["code_revision"]) == int(row["code_revision"]) else "historico"
+                    motivo = None
+            agora = utc_now()
+            atualizou = connection.execute(
+                "UPDATE lancamentos SET estado = ?, motivo = ?, terminou_em = ?, resolvido_em = ?, "
+                "evidence_id = ? WHERE id = ? AND estado = 'pendente'",
+                (estado, motivo, veredito.terminou_em, agora, evidence_id, lancamento["id"]),
+            ).rowcount
+            if atualizou != 1:
+                raise StateTransitionError(f"lancamento {job_id} resolvido por outra captura")
+            connection.execute(
+                "INSERT OR IGNORE INTO scopes(scope_id, created_at) VALUES (?, ?)", (row["scope_id"], agora)
+            )
+            connection.execute(
+                "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                "VALUES (?, ?, 'lancamento_resolvido', ?, ?)",
+                (
+                    task_id,
+                    row["scope_id"],
+                    json.dumps(
+                        {
+                            "job": job_id,
+                            "estado": estado,
+                            "motivo": motivo,
+                            "code_revision": int(lancamento["code_revision"]),
+                            "evidence_id": evidence_id,
+                        },
+                        sort_keys=True,
+                    ),
+                    agora,
+                ),
+            )
+        return estado
+
+    @staticmethod
+    def _evidencia_mais_nova(
+        connection: sqlite3.Connection, task_id: str, revisao: int, terminou_em: str | None
+    ) -> int | None:
+        """Id de uma evidencia `test` desta revisao cuja execucao terminou DEPOIS.
+
+        O fim de cada execucao: para evidencia gravada pelo hook ou pelo
+        `state_cli`, o `created_at` (grava logo depois do comando); para
+        evidencia CAPTURADA, o `terminou_em` do lancamento que a gerou — o
+        `created_at` dela e a hora da captura, que pode vir depois do termino
+        de outro job. Medido no teste do AC-4.3: com `created_at`, o job que
+        terminou por ultimo saia `superado` pelo que terminou antes. Sem
+        carimbo legivel nao da para ordenar, e na duvida a captura nao passa
+        por cima de nada.
+        """
+        termino = _instante(terminou_em)
+        linhas = connection.execute(
+            "SELECT e.id AS id, COALESCE(l.terminou_em, e.created_at) AS fim FROM evidence e "
+            "LEFT JOIN lancamentos l ON l.evidence_id = e.id "
+            "WHERE e.task_id = ? AND e.code_revision = ? AND e.evidence_type = 'test' "
+            "ORDER BY e.id DESC",
+            (task_id, revisao),
+        ).fetchall()
+        for linha in linhas:
+            gravada = _instante(linha["fim"])
+            if termino is None or gravada is None or gravada > termino:
+                return int(linha["id"])
+        return None
+
     def complete(self, task_id: str, *, expected_revision: int) -> dict[str, Any]:
+        """Fecha a task; antes, captura suite em segundo plano que ja terminou.
+
+        O modelo acorda com o job terminado e fecha no mesmo turno, sem Stop no
+        meio (AC-1.3). A captura sobe `revision` uma vez por evidencia gravada,
+        e o `expected_revision` que ele passou foi lido antes dela: o CAS aceita
+        exatamente esse acrescimo e mais nenhum. CAS errado recusa ANTES de
+        qualquer escrita.
+        """
+        # A ordem das recusas e a do `complete` sob o lock: desfecho antes da
+        # revisao (`test_desfecho_terminal`: "revision mismatch" mandaria reler e
+        # tentar de novo uma task que nao fecha mais), depois fase e portao.
+        #
+        # A fase se confere ANTES da captura: `complete` que recusa por fase nao
+        # pode ter gravado nada (re-verify #9) — quem repetia com a mesma revisao
+        # levava `revision mismatch` por uma escrita do proprio `complete`.
+        # Pelo INDICE, como a checagem sob o lock: pelo nome, um pipeline com fase
+        # repetida passava aqui, capturava e so entao recusava (rodada 3 #3).
+        #
+        # Desfecho registrado e portao pendente tambem se conferem aqui, so
+        # lendo: as duas recusas entraram em `main` depois da captura existir,
+        # e sob o lock elas vinham DEPOIS dela — um `complete` recusado por elas
+        # ja tinha gravado. Continuam sob o lock tambem, contra corrida.
+        with self._connect() as connection:
+            antes = self._locked_task(connection, task_id)
+            self._exige_task_viva(connection, antes, "complete")
+            self._expect_revision(antes, expected_revision)
+            pipeline = json.loads(antes["pipeline_json"])
+            if pipeline and int(antes["phase_index"]) != len(pipeline) - 1:
+                raise StateTransitionError(f"task is not at final phase: {self._phase(antes)}")
+            pendentes = connection.execute(
+                "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
+                "AND gate_type <> ? ORDER BY id DESC",
+                (task_id, PORTAO_QUE_SOBREVIVE_A_DONA),
+            ).fetchall()
+            if pendentes:
+                raise StateTransitionError(
+                    self._recusa_por_portao(connection, antes, pendentes, operacao="complete")
+                )
+        gravadas = _capturar_lancamentos(self, task_id)
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
             # `superseded` inclusive (D1): ele ja registra a entrega verificada,
             # e `done` por cima apagava o fato de que ela foi substituida.
             self._exige_task_viva(connection, row, "complete")
-            self._expect_revision(row, expected_revision)
+            self._expect_revision(row, expected_revision + gravadas)
             # Fechar por cima de decisao humana em aberto e o que `transition`
             # ja recusa; ate 2026-09-30 `complete` nao lia `gates`, e 3 tasks
             # reais ficaram `done` com `escalation` pendente para sempre.
@@ -1722,7 +2075,20 @@ class HarnessDatabase:
                     self._recusa_por_portao(connection, row, pendentes, operacao="complete")
                 )
             if not bool(row["verified"]) or not self._has_fresh_evidence(connection, row):
-                raise StateTransitionError("task requires fresh verification evidence")
+                partes = ["task requires fresh verification evidence"]
+                resumo = _resumo_dos_lancamentos(self.lancamentos(task_id))
+                if resumo:
+                    partes.append(resumo)
+                if gravadas:
+                    # A captura desta chamada gravou evidencia (vermelha, ou de
+                    # outra revisao) e subiu a revisao. Sem dizer isso, quem
+                    # repetia com a revisao lida antes levava `revision mismatch`
+                    # por uma escrita do proprio `complete` (rodada 3 #8).
+                    partes.append(
+                        f"Esta chamada capturou {gravadas} evidencia(s) em segundo plano: "
+                        f"revision={row['revision']}"
+                    )
+                raise StateTransitionError(". ".join(partes))
             pipeline = json.loads(row["pipeline_json"])
             if pipeline and int(row["phase_index"]) != len(pipeline) - 1:
                 raise StateTransitionError(f"task is not at final phase: {self._phase(row)}")

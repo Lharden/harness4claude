@@ -221,3 +221,89 @@ teste-certificando-produção.
 **ASK**
 - Se a allowlist inicial precisar passar de 67 linhas para a suíte passar — significa
   que a medição errou e o número tem de ser refeito antes do guarda.
+
+---
+
+# CONTEXT — evidência automática de suíte em segundo plano
+
+> Acrescentado, não substituído (ver o aviso do bloco "guarda de órfão").
+
+**Task:** `t-20260930-135548871810` · **Ramo:** `claude/zen-antonelli-368403` (worktree `vibrant-montalcini-9868a6`) · **Base:** `18ec682`
+**Fase:** `discuss` · **Decidido em:** 2026-09-30
+**Origem:** decisão D4 de `docs/specs/portao-stop-em-voo-diagnostico.md` (ramo
+`claude/magical-shamir-b49924`): a captura automática da evidência em segundo
+plano é ramo próprio.
+
+## O problema, em uma frase
+
+`_handle_post_tool` só grava evidência de verificação confiável em PRIMEIRO
+plano. Suíte que vai para segundo plano — pedida (`run_in_background`) ou
+empurrada pelo host após o timeout do Bash (`backgroundTaskId` +
+`timedOutAfterMs` em `tool_response`) — não produz evidência; o modelo lê a
+saída e registra à mão pela receita de `comando_de_evidencia`. A suíte do
+harness4claude leva ~21 min e por isso nunca se autoverifica.
+
+## Locked — decidido pelo usuário, não relitigar
+
+- **L-01 · Consumidor nomeado:** a suíte completa do harness4claude (~21 min,
+  empurrada para o fundo pelo timeout de 10 min do Bash).
+- **L-02 · O lançamento é registrado no `harness.db`:** id do job
+  (`tool_response.backgroundTaskId`), comando, e a `code_revision` logo DEPOIS
+  do toque do próprio lançamento.
+- **L-03 · O sinal de término vem do transcript** (`transcript_path` do
+  payload): blocos `<task-notification>` com `<task-id>`, `<status>`,
+  `<output-file>` e o resumo com o código de saída. As formas terminais medidas
+  em `jobs_em_voo` (TaskStop sem notificação, Monitor expirado, resumo órfão na
+  retomada, entradas `queue-operation`) são o ponto de partida.
+- **L-04 · Evidência na `code_revision` do LANÇAMENTO.** Se a revisão mudou
+  desde o lançamento, a linha é histórico, não verificação. Hoje
+  `record_evidence` grava sempre na revisão corrente; isso muda.
+- **L-05 · Contagens saem do arquivo de saída pela lógica de produção de
+  `_test_counts`; o código de saída sai da notificação.** Nada de
+  reimplementação do parser.
+- **L-06 · Retenção do arquivo de saída é medida,** não suposta: o arquivo
+  existe quando o hook o lê?
+- **L-07 · Falsificação nas duas metades:** suíte verde em segundo plano com a
+  revisão inalterada verifica; com a revisão alterada, não verifica.
+- **L-08 · Sequência de ramos (decidido 2026-09-30):** spec, grill-me, design e
+  validate-plan agora, lendo o código NÃO commitado da `magical-shamir` como
+  base. O `tdd` só começa depois que `magical-shamir` entrar em `main` e `main`
+  for trazido para cá. Nada é copiado de lá antes disso. **Cumprido em
+  2026-09-30:** `magical-shamir` entrou em `main` como `d3fc851`; este ramo
+  avançou por fast-forward. Regras de coordenação recebidas da sessão "Plano e
+  implementação System One Models": só testes afetados, um processo por vez;
+  suíte completa só no merge; nenhum deploy sem OK do usuário; não mexer no
+  caminho do classificador; este ramo é o 7º na ordem de merge sugerida.
+- **L-09 · A captura roda nos leitores que DECIDEM sobre `verified`
+  (brainstorming, 2026-09-30):** uma função só, que precisa apenas do banco (a
+  linha do lançamento guarda `transcript_path`), chamada no Stop antes do
+  portão e no `complete` antes de recusar. `continuation_policy.task_viva` fica
+  de fora: é sonda somente-leitura por contrato ("nunca escreve no banco"), e
+  todo turno termina num Stop antes do prompt seguinte.
+
+## Deferred — fora do escopo
+
+| item | por quê |
+|---|---|
+| Monitor, Workflow e Agent assíncrono como evidência | não produzem saída de teste; só Bash/PowerShell passam por `is_trusted_verification` |
+| Job em segundo plano que escreve na árvore depois da evidência, sem toque | lacuna anterior (grill #52 da `magical-shamir`), do mesmo tipo que `shell-placeholder` |
+| Digesto de árvore para `shell-placeholder` | `portao-mede-atividade` §3 |
+| Editar `contract/schemas/` | R4 do bloco "Mãe por ramo": a árvore validada é a do `master-harness` |
+
+## Discretion — Claude decide
+
+- Nome e forma da tabela de lançamentos; migração no padrão de `_ensure_schema`.
+- Como a notificação é autenticada como do host, e a régua de aceitação do
+  arquivo de saída.
+- Texto dos avisos.
+
+## Constraints técnicas
+
+- Função de produção, nunca reimplementação, para contar (`_test_counts`) e
+  para ler o transcript (módulo `trabalho_em_voo`).
+- Hook que falha não pode derrubar o Stop: toda leitura de transcript e de
+  arquivo degrada para "sem captura" — o comportamento de hoje.
+- Erro de captura tem direção obrigatória: na dúvida, NÃO verifica.
+- Leitura do transcript com pré-filtro por substring (timeout do Stop: 15 s;
+  maior transcript medido: 129 MB).
+- Comando atômico para `state_cli` (isenção do contador).
