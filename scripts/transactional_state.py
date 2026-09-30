@@ -1029,25 +1029,64 @@ class HarnessDatabase:
             ).fetchone()
             if pending is None:
                 raise StateTransitionError(f"pending gate not found: {gate_type}")
-            pipeline = json.loads(row["pipeline_json"])
-            current_index = int(row["phase_index"])
-            if pipeline[current_index] != gate_type or current_index + 1 >= len(pipeline):
-                raise StateTransitionError(f"gate is not at an advanceable phase: {gate_type}")
-            next_phase = pipeline[current_index + 1]
-            new_revision = int(row["revision"]) + 1
-            connection.execute(
-                "UPDATE gates SET status = 'resolved', decision = ?, resolved_at = ? WHERE id = ?",
-                (decision, utc_now(), pending["id"]),
-            )
-            connection.execute(
-                "UPDATE tasks SET phase_index = ?, status = 'active', revision = ?, updated_at = ? WHERE task_id = ?",
-                (current_index + 1, new_revision, utc_now(), task_id),
-            )
-            connection.execute(
-                "INSERT INTO transitions(task_id, from_phase, to_phase, revision, created_at) VALUES (?, ?, ?, ?, ?)",
-                (task_id, gate_type, next_phase, new_revision, utc_now()),
-            )
+            if gate_type == "escalation":
+                self._resolve_escalation(connection, row, pending["id"], decision)
+            else:
+                pipeline = json.loads(row["pipeline_json"])
+                current_index = int(row["phase_index"])
+                if pipeline[current_index] != gate_type or current_index + 1 >= len(pipeline):
+                    raise StateTransitionError(f"gate is not at an advanceable phase: {gate_type}")
+                next_phase = pipeline[current_index + 1]
+                new_revision = int(row["revision"]) + 1
+                connection.execute(
+                    "UPDATE gates SET status = 'resolved', decision = ?, resolved_at = ? WHERE id = ?",
+                    (decision, utc_now(), pending["id"]),
+                )
+                connection.execute(
+                    "UPDATE tasks SET phase_index = ?, status = 'active', revision = ?, updated_at = ? WHERE task_id = ?",
+                    (current_index + 1, new_revision, utc_now(), task_id),
+                )
+                connection.execute(
+                    "INSERT INTO transitions(task_id, from_phase, to_phase, revision, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (task_id, gate_type, next_phase, new_revision, utc_now()),
+                )
         return self.task(task_id)
+
+    @staticmethod
+    def _resolve_escalation(
+        connection: sqlite3.Connection, row: sqlite3.Row, gate_id: int, decision: str
+    ) -> None:
+        """Fecha o `escalation` sem tocar em fase.
+
+        `escalation` nao e fase: nasce de `register_stop_continuation`, em
+        qualquer fase. Ate 2026-09-29 ele caia na checagem de fase de
+        `resolve_gate` e nunca passava — a task ficava em `awaiting_gate` sem
+        saida (`docs/specs/portao-escalation-inaprovavel-diagnostico.md`).
+
+        Mesmo molde de `resolve_branch_decision`: resolve a linha do portao, nao
+        grava transicao, e so volta a `active` se nao sobrou outro pendente.
+        Aprovar e "continue": `stop_continuations` zera e o Stop ganha de novo as
+        duas continuacoes antes de escalar outra vez.
+        """
+        now = utc_now()
+        connection.execute(
+            "UPDATE gates SET status = 'resolved', decision = ?, resolved_at = ? WHERE id = ?",
+            (decision, now, gate_id),
+        )
+        still_pending = connection.execute(
+            "SELECT 1 FROM gates WHERE task_id = ? AND status = 'pending' LIMIT 1",
+            (row["task_id"],),
+        ).fetchone()
+        connection.execute(
+            "UPDATE tasks SET status = ?, stop_continuations = 0, revision = ?, "
+            "updated_at = ? WHERE task_id = ?",
+            (
+                "awaiting_gate" if still_pending else "active",
+                int(row["revision"]) + 1,
+                now,
+                row["task_id"],
+            ),
+        )
 
     def touch_file(self, task_id: str, path: str, *, origem: str = "desconhecida") -> dict[str, Any]:
         return self.touch_files(task_id, [path], origem=origem)
