@@ -438,9 +438,14 @@ _FIND_QUE_ESCREVE = frozenset({
 
 #: Subcomandos de git que so leem. `branch`, `remote` e `config` ficam de fora:
 #: os tres escrevem dependendo da flag.
+#:
+#: `ls-tree`, `merge-base` e `rev-list` entraram em 2026-09-30: apareciam entre
+#: os toques de leitura pura da sessao `44b0dfb5`. Nenhum tem flag que escreva.
+#: `merge` e `merge-file` continuam fora — a lista compara o nome inteiro.
 _GIT_SOMENTE_LEITURA = frozenset({
     'status', 'log', 'diff', 'show', 'ls-files', 'rev-parse', 'blame',
     'shortlog', 'describe', 'cat-file', 'grep',
+    'ls-tree', 'merge-base', 'rev-list',
 })
 
 

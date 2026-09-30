@@ -1001,6 +1001,38 @@ def test_is_read_only_recusa_quando_um_segmento_escreve():
     assert not hook.is_read_only("cat x.py | tee y.py")
 
 
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "git ls-tree --name-only HEAD -- scripts",
+        "git ls-tree -r HEAD",
+        "git merge-base HEAD main",
+        "git merge-base --is-ancestor HEAD main",
+        "git rev-list --count main..HEAD",
+        "git rev-list --left-right --count main...HEAD",
+    ],
+)
+def test_ls_tree_merge_base_rev_list_so_leem(comando: str):
+    """Sessao 44b0dfb5, 2026-09-30: os tres apareceram entre os toques
+    `shell-placeholder` de leitura pura. Nenhum tem flag que escreva: listam
+    arvore, calculam ancestral comum, listam commits.
+    """
+    assert hook.is_read_only(comando) is True, comando
+    assert hook.nao_muda_a_arvore(comando) is True, comando
+
+
+def test_CONTROLE_vizinhos_que_escrevem_continuam_fora():
+    """Metade que prova que a lista cresceu por nome, nao por prefixo."""
+    for comando in (
+        "git merge main",
+        "git merge-file a b c",
+        "git ls-tree HEAD > arvore.txt",
+        "git rev-list HEAD && git reset --hard HEAD~1",
+    ):
+        assert not hook.is_read_only(comando), comando
+        assert not hook.nao_muda_a_arvore(comando), comando
+
+
 def test_comando_de_inspecao_nao_invalida_evidencia(tmp_path: Path):
     """O custo real: conferir o estado do repositorio nao pode custar a suite."""
     cwd = tmp_path / "repo"
