@@ -81,7 +81,9 @@ acquire_state_lock() {
   _state_lock_tick
   local deadline_ms=$(( _STATE_LOCK_NOW_MS + STATE_LOCK_TIMEOUT_SECS * 1000 ))
   local next_stale_check_ms=0
-  local poll_secs="0.${STATE_LOCK_POLL_MS}"
+  # ms -> segundos decimais. "0.${MS}" lia 50 como 0.50 s e 5 como 0.5 s.
+  local poll_secs
+  printf -v poll_secs '%d.%03d' $(( STATE_LOCK_POLL_MS / 1000 )) $(( STATE_LOCK_POLL_MS % 1000 ))
 
   while true; do
     if mkdir "$STATE_LOCK_DIR" 2>/dev/null; then
