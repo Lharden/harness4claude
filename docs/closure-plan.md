@@ -79,6 +79,19 @@
   controle por SHA e da mutação estão descritos, com números, em
   `docs/specs/evidencia-em-segundo-plano-verification.md`.
 
+## Rodada 3 (pedida pelo usuário; `wf_2c3bbdfb-161`: `pass: true`, 0 críticos, 15 médio/baixo)
+
+- [x] F1 (#7): só o campo da notificação é lido — `cwd`/`gitBranch` forjados não valem. M22.
+- [x] F2 (#9): bloco do primeiro `<task-notification>` ao último fechamento;
+      resumo até o último `</summary>`. Substitui "um bloco por texto". M12, M23.
+- [x] F3 (#8): recusa do `complete` depois de captura diz a revisão nova. M25.
+- [x] F4 (#12): falha ao registrar não derruba o hook. M26.
+- [x] F5 (#5): aviso só promete captura com lançamento pendente. M27.
+- [x] F6 (#3): fase pelo índice antes da captura. M24.
+- [x] F7 (#15): referência tardia a `trabalho_em_voo`. M28.
+- [x] Guardas #1 (isolamento entre tasks, M29) e #2 (revisões diferentes).
+- Resultado: 83 testes; mutação **29 de 29**.
+
 ## Declarados como limite, sem conserto (com motivo)
 - #16/#22 janela de CAS do `complete` com Stop concorrente: erra recusando
   (fail-closed), nunca aceitando.

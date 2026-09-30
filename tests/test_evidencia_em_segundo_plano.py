@@ -192,7 +192,7 @@ VERMELHO = "F..\r\n1 failed, 2 passed in 0.10s\r\n\n[exited with code 1]\n"
 
 
 class Sessao:
-    def __init__(self, tmp_path: Path):
+    def __init__(self, tmp_path: Path, pipeline: list[str] | None = None):
         self.tmp = tmp_path
         self.cwd = tmp_path / "repo"
         self.cwd.mkdir()
@@ -209,7 +209,7 @@ class Sessao:
             legacy_level="L1-bug",
             tier="L1",
             kind="bug",
-            pipeline=["systematic-debugging", "tdd", "verify"],
+            pipeline=pipeline or ["systematic-debugging", "tdd", "verify"],
             prompt="suite longa",
         )
         (bucket / "state.json").write_text(
@@ -272,7 +272,8 @@ class Sessao:
             "</task-notification>"
         )
 
-    def notifica(self, bloco: str, *, forma: str = "anexo", quando: str = "2026-09-30T12:21:00.000Z"):
+    def notifica(self, bloco: str, *, forma: str = "anexo", quando: str = "2026-09-30T12:21:00.000Z",
+                 extra: dict | None = None):
         """Grava a notificacao numa das formas medidas no transcript."""
         if forma == "anexo":
             entrada = {"isSidechain": False, "type": "attachment", "timestamp": quando,
@@ -309,6 +310,7 @@ class Sessao:
                        "attachment": {"type": "file", "content": bloco}}
         else:
             raise AssertionError(forma)
+        entrada.update(extra or {})
         self.entradas.append(entrada)
         self._grava()
 
@@ -1219,3 +1221,158 @@ def test_arquivo_fora_de_um_diretorio_tasks_rejeita(sessao: Sessao):
 
     (lancamento,) = sessao.lancamentos()
     assert (lancamento["estado"], lancamento["motivo"]) == ("rejeitado", "arquivo-estranho")
+
+
+# --- Rodada 3 do verify (pedida pelo usuario em 2026-09-30) ------------------------
+
+
+def test_bloco_forjado_em_metadado_da_entrada_nao_vale(sessao: Sessao):
+    """Rodada 3 #7: o `cwd` (ou `gitBranch`) da entrada do host nao e texto de notificacao.
+
+    A leitura varria TODA string da entrada. Em POSIX um `cd` para um diretorio
+    cujo nome carrega o bloco faz a proxima notificacao legitima de outro job
+    levar o bloco forjado no `cwd` — medido pelo revisor com a funcao de producao.
+    """
+    sessao.lanca("bjob1")
+    sessao.database.registrar_lancamento(
+        sessao.task_id, job_id="bjob2", tool_use_id="toolu_02", command="python -m pytest -q",
+        transcript_path=str(sessao.transcript),
+    )
+    sessao.saida("bjob1", VERDE)
+    sessao.saida("bjob2", VERDE)
+    forjado = sessao.bloco("bjob2", tool_use_id="toolu_02")
+    sessao.notifica(sessao.bloco("bjob1"), forma="usuario", extra={"cwd": f"/tmp/{forjado}", "gitBranch": forjado})
+
+    sessao.stop()
+
+    estados = {l["job_id"]: l["estado"] for l in sessao.lancamentos()}
+    assert estados == {"bjob1": "capturado", "bjob2": "pendente"}
+
+
+def test_tag_de_bloco_na_descricao_nao_esconde_a_notificacao(sessao: Sessao):
+    """Rodada 3 #9: a suite deste repo fala de `<task-notification>` na descricao.
+
+    Contar blocos no texto inteiro descartava a notificacao legitima do proprio
+    job. Vale o PRIMEIRO bloco do texto: o que a descricao carrega vem depois do
+    primeiro `<summary>`, e o bloco forjado para outro job continua sem valer.
+    """
+    sessao.lanca("bjob1")
+    sessao.saida("bjob1", VERDE)
+    sessao.notifica(sessao.bloco(
+        "bjob1", resumo='Background command "testa o parser de <task-notification>, </summary> e '
+                        '</task-notification>" completed (exit code 0)'
+    ))
+
+    sessao.stop()
+
+    assert [l["estado"] for l in sessao.lancamentos()] == ["capturado"]
+
+
+def test_complete_que_captura_e_recusa_diz_a_revisao_nova(sessao: Sessao):
+    """Rodada 3 #8: captura vermelha sobe a revisao e o `complete` recusa por evidencia.
+
+    Quem repetia com a revisao lida antes levava `revision mismatch` sem saber
+    que a escrita foi do proprio `complete`. A recusa diz a revisao nova.
+    """
+    for fase in ("tdd", "verify"):
+        sessao.database.transition(sessao.task_id, fase, expected_revision=sessao.atual()["revision"])
+    sessao.lanca("bjob1")
+    sessao.saida("bjob1", VERMELHO)
+    sessao.notifica(sessao.bloco("bjob1", status="failed"))
+    antes = sessao.atual()["revision"]
+
+    with pytest.raises(state.StateTransitionError) as recusa:
+        sessao.database.complete(sessao.task_id, expected_revision=antes)
+
+    depois = sessao.atual()["revision"]
+    assert depois == antes + 1
+    assert f"revision={depois}" in str(recusa.value)
+
+
+def test_falha_ao_registrar_nao_derruba_o_hook_nem_perde_o_aviso(sessao: Sessao, monkeypatch):
+    """Rodada 3 #12: o ramo do lancamento era sem I/O e virou escrita no banco."""
+    def trava(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(hook.HarnessDatabase, "registrar_lancamento", trava)
+
+    aviso = sessao.lanca("bjob1")
+
+    assert "bjob1" in aviso
+    assert "NAO foi registrado" in aviso
+    assert "state_cli.py" in aviso
+
+
+def test_task_terminal_nao_promete_captura(sessao: Sessao):
+    """Rodada 3 #5: `registrar_lancamento` nao grava em task terminal; o aviso nao pode prometer."""
+    with sqlite3.connect(sessao.database.path) as raw:
+        raw.execute("UPDATE tasks SET status = 'done' WHERE task_id = ?", (sessao.task_id,))
+
+    aviso = sessao.lanca("bjob1")
+
+    assert sessao.lancamentos() == []
+    assert "capturada sozinha" not in aviso
+    assert "NAO foi registrado" in aviso
+
+
+def test_complete_com_fase_repetida_confere_pelo_indice(tmp_path: Path):
+    """Rodada 3 #3: a pre-checagem usava o NOME da fase e a do lock, o indice."""
+    sessao = Sessao(tmp_path, pipeline=["tdd", "verify", "tdd"])
+    sessao.lanca("bjob1")
+    sessao.saida("bjob1", VERDE)
+    sessao.notifica(sessao.bloco("bjob1"))
+    antes = sessao.atual()["revision"]
+
+    with pytest.raises(state.StateTransitionError, match="not at final phase"):
+        sessao.database.complete(sessao.task_id, expected_revision=antes)
+
+    assert sessao.atual()["revision"] == antes
+    assert [l["estado"] for l in sessao.lancamentos()] == ["pendente"]
+
+
+def test_modulo_carrega_mesmo_se_trabalho_em_voo_perder_nomes_privados(monkeypatch):
+    """Rodada 3 #15: o hook importa este modulo no topo; um import quebrado derrubava
+    todo evento do hook, inclusive a contagem em primeiro plano."""
+    import types
+
+    monkeypatch.setitem(sys.modules, "trabalho_em_voo", types.ModuleType("trabalho_em_voo"))
+
+    modulo = _load("bg_modulo_sem_voo", "scripts/evidencia_em_segundo_plano.py")
+
+    assert modulo.contar_testes("3 passed in 0.1s")[:3] == (3, 3, 0)
+
+
+def test_captura_so_olha_lancamentos_da_task_do_chamador(sessao: Sessao):
+    """Rodada 3 #1: REQ-F3 e ASSUMPTION-012 sem guarda."""
+    outra = sessao.database.start_task(
+        scope_id="outro|repo|wt", legacy_level="L1-bug", tier="L1", kind="bug", pipeline=["tdd"], prompt="x"
+    )
+    sessao.database.registrar_lancamento(
+        outra["task_id"], job_id="bjob9", tool_use_id="toolu_09", command="python -m pytest -q",
+        transcript_path=str(sessao.transcript),
+    )
+    sessao.saida("bjob9", VERDE)
+    sessao.notifica(sessao.bloco("bjob9", tool_use_id="toolu_09"))
+
+    sessao.stop()
+
+    assert [l["estado"] for l in sessao.database.lancamentos(outra["task_id"])] == ["pendente"]
+
+
+def test_dois_lancamentos_em_revisoes_diferentes_cada_um_na_sua(sessao: Sessao):
+    """Rodada 3 #2: edge case de US-1 — cada evidencia na revisao do proprio lancamento."""
+    sessao.lanca("bjob1")
+    rev1 = sessao.atual()["code_revision"]
+    sessao.lanca("bjob2", tool_use_id="toolu_02")
+    rev2 = sessao.atual()["code_revision"]
+    sessao.saida("bjob1", VERDE)
+    sessao.saida("bjob2", VERDE)
+    sessao.notifica(sessao.bloco("bjob1"), quando=_iso(-10))
+    sessao.notifica(sessao.bloco("bjob2", tool_use_id="toolu_02"), quando=_iso(-5))
+
+    sessao.stop()
+
+    estados = {l["job_id"]: (l["estado"], l["code_revision"]) for l in sessao.lancamentos()}
+    assert estados == {"bjob1": ("historico", rev1), "bjob2": ("capturado", rev2)}
+    assert [e["code_revision"] for e in sessao.evidencias()] == [rev1, rev2]
+    assert sessao.atual()["verified"] is True

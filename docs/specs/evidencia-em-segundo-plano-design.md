@@ -242,9 +242,15 @@ Ordem fixa; a primeira regra que decide encerra:
    `rejeitado:codigo-diverge` (trailer obrigatório desde o verify #15).
 8. Senão → `aceito` com `contar_testes(cauda)` e `sha256(cauda)`.
 
-Antes da regra 1, em `notificacoes_de`: texto com mais de um
-`<task-notification>` não vale para ninguém (verify #11; 2471/2471 textos
-legítimos têm um só). O código do resumo é casado no FIM do summary (verify
+Antes da regra 1, em `notificacoes_de` (`_textos_da_notificacao` +
+`_bloco_do_host`): só o campo da notificação é lido (`attachment.prompt`,
+`message.content`), nunca metadados como `cwd` (rodada 3 #7); o bloco vai do
+primeiro `<task-notification>` ao último `</task-notification>`, os campos do
+host saem de antes do primeiro `<summary>` e o resumo vai até o último
+`</summary>` — bloco forjado pela descrição (verify #11) e tag literal na
+descrição (rodada 3 #9) ficam dentro do resumo do job verdadeiro. A versão da
+iteração 1 ("um bloco por texto", 2471/2471 legítimos) descartava a notificação
+legítima no segundo caso. O código do resumo é casado no FIM do summary (verify
 #10, #12), porque o começo é a `description` do modelo. Na regra 2, o conjunto
 de divergência inclui o `<output-file>` (verify #13).
 

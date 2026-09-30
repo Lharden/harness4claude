@@ -228,7 +228,7 @@ teste-certificando-produção.
 
 > Acrescentado, não substituído (ver o aviso do bloco "guarda de órfão").
 
-**Task:** `t-20260930-135548871810` · **Ramo:** `claude/vibrant-montalcini-9868a6` · **Base:** `18ec682`
+**Task:** `t-20260930-135548871810` · **Ramo:** `claude/zen-antonelli-368403` (worktree `vibrant-montalcini-9868a6`) · **Base:** `18ec682`
 **Fase:** `discuss` · **Decidido em:** 2026-09-30
 **Origem:** decisão D4 de `docs/specs/portao-stop-em-voo-diagnostico.md` (ramo
 `claude/magical-shamir-b49924`): a captura automática da evidência em segundo

@@ -3,7 +3,7 @@
 **Status**: Grilled (rodada 1) — aguardando `approve-spec`
 **Created**: 2026-09-30
 **Updated**: 2026-09-30
-**Branch**: `claude/vibrant-montalcini-9868a6` (base `main` em `d3fc851`)
+**Branch**: `claude/zen-antonelli-368403`, no worktree `vibrant-montalcini-9868a6` (base `main` em `d3fc851`)
 **Task**: `t-20260930-135548871810` (L2-feature)
 **Author**: AI-generated, reviewed by Leonardo
 **Constrangida por**: `docs/CONTEXT.md`, bloco "evidência automática de suíte em segundo plano" (L-01..L-09)
@@ -250,6 +250,17 @@ lançamento fica no estado indicado, e o Stop decide como hoje:
   → `rejeitado:sem-contagem`; um verde anterior continua verde.
 - **AC-3.19**: `complete` fora da fase final → recusa sem capturar (revisão
   intacta, lançamento pendente).
+- **AC-3.20**: `description` com `<task-notification>`, `</summary>` e
+  `</task-notification>` literais → a notificação do próprio job vale.
+- **AC-3.21**: bloco forjado no `cwd`/`gitBranch` da entrada → não vale.
+- **AC-3.22**: `complete` que captura e ainda recusa → a mensagem traz a
+  `revision=` nova.
+- **AC-3.23**: fase conferida pelo índice (pipeline com fase repetida).
+- **AC-3.24**: falha ao registrar o lançamento → hook não cai; aviso diz que
+  NÃO foi registrado e traz a receita.
+- **AC-3.25**: task terminal → aviso não promete captura.
+- **AC-3.26**: `trabalho_em_voo` sem os nomes privados → o módulo ainda carrega
+  e a contagem de primeiro plano funciona.
 - **AC-3.9**: saída sem contagem reconhecível (ex.: `no tests ran`) →
   evidência em N' com `tests_collected` 0 ou `NULL`, `verified=0`, `capturado`.
 - **AC-3.10**: transcript ausente ou ilegível, arquivo existente mas sem
@@ -388,9 +399,15 @@ Stop --> jobs_em_voo(transcript) --> register_stop_continuation(em_voo) --> bloq
   2026-09-30 (verify #19): rejeitava 65 de 654 términos reais (sessão
   retomada); ver ASSUMPTION-015. Lê no máximo a cauda (64 KiB) — o sumário do
   pytest e o trailer estão no fim. [traces: US-3]
-- [ ] **REQ-F11**: Texto de entrada com mais de um `<task-notification>` não
-  vale para nenhum job (verify #11: bloco forjado pela `description`).
-  ASSUMPTION-013. [traces: US-3]
+- [ ] **REQ-F11**: De cada entrada do host só se lê o campo da notificação
+  (`attachment.prompt`, `message.content`), nunca os metadados (`cwd`,
+  `gitBranch`). Nesse texto vale um bloco só: do primeiro `<task-notification>`
+  ao último `</task-notification>`, com os campos do host antes do primeiro
+  `<summary>` e o resumo até o último `</summary>`. Tudo o que a `description`
+  carrega — bloco forjado para outro job, tags literais — fica dentro do
+  resumo do job verdadeiro. ~~Texto com mais de um `<task-notification>` não
+  vale~~ — trocado na rodada 3 do verify (#7, #9): descartava a notificação
+  legítima quando a descrição citava a tag. ASSUMPTION-013. [traces: US-3]
 - [ ] **REQ-F10**: Ordem de término. Vários pendentes com notificação aceita são
   processados em ordem crescente de término. Uma captura cujo término é
   anterior ao `created_at` de alguma evidência do mesmo tipo já gravada na

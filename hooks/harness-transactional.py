@@ -272,6 +272,16 @@ AVISO_SEGUNDO_PLANO = (
     "evidencia:\n{comando}"
 )
 
+#: Quando o lancamento NAO fica pendente para a captura — task encerrada,
+#: lancamento que nasceu rejeitado (subagente, sem id, sem transcript) ou banco
+#: que falhou —, o aviso nao pode prometer captura automatica.
+AVISO_SEGUNDO_PLANO_SEM_CAPTURA = (
+    "[harness] a suite foi para segundo plano (background, job {job}): o "
+    "lancamento NAO e resultado, e ele NAO foi registrado para captura "
+    "automatica ({motivo}). Quando o job terminar, leia a saida e, so se nenhum "
+    "arquivo mudou desde o lancamento, registre a evidencia:\n{comando}"
+)
+
 #: As duas formas de texto com que o host anuncia um job em segundo plano: o
 #: pedido (`run_in_background`) e o empurrado pelo timeout da ferramenta.
 _ANUNCIO_DE_SEGUNDO_PLANO = re.compile(
@@ -2109,19 +2119,30 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     if job:
         # Depois do toque acima: a revisao gravada e a que a suite vai testar.
         # O termino e capturado no Stop ou no `complete`, lendo o transcript.
-        database.registrar_lancamento(
-            task["task_id"],
-            job_id=job,
-            tool_use_id=payload.get("tool_use_id") or payload.get("toolUseId"),
-            command=command,
-            transcript_path=payload.get("transcript_path") or payload.get("transcriptPath"),
-            subagente=bool(payload.get("agent_id")),
-        )
-        aviso = AVISO_SEGUNDO_PLANO.format(
-            job=job,
-            revisao=task["code_revision"],
-            comando=comando_de_evidencia(bucket, task["task_id"], task.get("kind")),
-        )
+        # Este ramo so imprimia o aviso; agora escreve no banco. Falha aqui nao
+        # pode derrubar o hook e levar junto o aviso de que lancamento nao e
+        # resultado (rodada 3 #12).
+        try:
+            estado = database.registrar_lancamento(
+                task["task_id"],
+                job_id=job,
+                tool_use_id=payload.get("tool_use_id") or payload.get("toolUseId"),
+                command=command,
+                transcript_path=payload.get("transcript_path") or payload.get("transcriptPath"),
+                subagente=bool(payload.get("agent_id")),
+            )
+            motivo = None if estado == "pendente" else (
+                "a task ja esta encerrada" if estado is None else f"o lancamento nasceu {estado}"
+            )
+        except Exception as erro:  # noqa: BLE001 - qualquer falha vira aviso, nunca queda
+            motivo = f"falha ao gravar no banco ({type(erro).__name__}: {erro})"
+        comando = comando_de_evidencia(bucket, task["task_id"], task.get("kind"))
+        # So promete captura quando ha um lancamento pendente que a captura vai
+        # ler (rodada 3 #5): task terminal ou lancamento rejeitado nao sao.
+        if motivo is None:
+            aviso = AVISO_SEGUNDO_PLANO.format(job=job, revisao=task["code_revision"], comando=comando)
+        else:
+            aviso = AVISO_SEGUNDO_PLANO_SEM_CAPTURA.format(job=job, motivo=motivo, comando=comando)
     elif is_trusted_verification(command):
         collected, passed, skipped, output_hash = _test_counts(payload)
         task = database.record_evidence(

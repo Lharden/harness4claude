@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from trabalho_em_voo import _BLOCO, _TASK_ID, _instante, _textos  # type: ignore[import-not-found]
+# Referencia tardia (`_voo.X` na hora da chamada), e nao `from ... import X`: o
+# hook importa este modulo no topo, e um nome privado renomeado em
+# `trabalho_em_voo` derrubava o hook inteiro — contagem em primeiro plano
+# inclusive — em vez de so a captura, que ja degrada sozinha (rodada 3 #15).
+try:
+    import trabalho_em_voo as _voo  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - sem o modulo, a captura nao roda
+    _voo = None
 
 # Categorias que o pytest imprime na linha de sumario, separadas pelo que elas
 # significam para o portao.
@@ -152,7 +159,51 @@ def _tag(nome: str, bloco: str) -> str | None:
 
 
 def _ordem(texto: str | None):
-    return _instante(texto) or _instante(_FIM_DOS_TEMPOS)
+    return _voo._instante(texto) or _voo._instante(_FIM_DOS_TEMPOS)
+
+
+def _textos_da_notificacao(entrada: dict[str, Any]) -> list[str]:
+    """So o campo que carrega o texto da notificacao, nunca os metadados da entrada.
+
+    A primeira versao varria toda string da entrada (`_textos`), e com ela o
+    `cwd` e o `gitBranch`: em POSIX, um `cd` para um diretorio cujo nome
+    carrega um bloco fazia a notificacao legitima de outro job levar o bloco
+    forjado — medido pelo revisor com a funcao de producao (rodada 3 #7).
+    """
+    if entrada.get("type") == "attachment":
+        prompt = (entrada.get("attachment") or {}).get("prompt")
+        return [prompt] if isinstance(prompt, str) else []
+    conteudo = (entrada.get("message") or {}).get("content")
+    if isinstance(conteudo, str):
+        return [conteudo]
+    if isinstance(conteudo, list):
+        return [p["text"] for p in conteudo if isinstance(p, dict) and isinstance(p.get("text"), str)]
+    return []
+
+
+def _bloco_do_host(texto: str) -> tuple[str, str] | None:
+    """(cabeca, resumo) da notificacao do host neste texto, ou None.
+
+    O bloco vai do PRIMEIRO `<task-notification>` ao ULTIMO
+    `</task-notification>`; a cabeca (task-id, tool-use-id, output-file,
+    status) e o que vem antes do primeiro `<summary>`, e o resumo vai ate o
+    ULTIMO `</summary>`. A `description` do modelo mora dentro do resumo: um
+    bloco forjado para outro job (verify #11) ou uma tag literal de bloco na
+    descricao (rodada 3 #9, provavel neste repositorio) ficam dentro do resumo
+    do job verdadeiro e nao valem para ninguem. A primeira versao exigia um
+    bloco so por texto e descartava a notificacao legitima nesse segundo caso.
+    """
+    inicio = texto.find("<task-notification>")
+    if inicio < 0:
+        return None
+    fim = texto.rfind("</task-notification>")
+    bloco = texto[inicio + len("<task-notification>"): fim if fim > inicio else len(texto)]
+    abre = bloco.find("<summary>")
+    if abre < 0:
+        return bloco, ""
+    fecha = bloco.rfind("</summary>")
+    resumo = bloco[abre + len("<summary>"): fecha if fecha > abre else len(bloco)]
+    return bloco[:abre], resumo.strip()
 
 
 def notificacoes_de(
@@ -176,44 +227,35 @@ def notificacoes_de(
             if not isinstance(entrada, dict) or not _forma_do_host(entrada):
                 continue
             quando = entrada.get("timestamp") if isinstance(entrada.get("timestamp"), str) else None
-            for texto in _textos(entrada):
-                # Um bloco so por texto. A `description` do modelo vai dentro do
-                # `<summary>`, e com ela um bloco inteiro pode ser forjado para
-                # outro job (verify #11). Medido: 2471 de 2471 textos do host
-                # com notificacao tem exatamente um bloco. Com um so, tudo o que
-                # vem antes do summary — task-id, tool-use-id, output-file,
-                # status — e escrito pelo host.
-                if texto.count("<task-notification>") != 1:
+            for texto in _textos_da_notificacao(entrada):
+                partes = _bloco_do_host(texto)
+                if partes is None:
                     continue
-                for bloco in _BLOCO.findall(texto):
-                    # Os campos do host vem ANTES do `<summary>`; dali em diante
-                    # e a `description` do modelo. Ler o bloco inteiro deixava
-                    # uma tag na descricao esconder a notificacao legitima
-                    # (re-verify #4).
-                    cabeca = bloco.split("<summary>", 1)[0]
-                    status = _tag("status", cabeca)
-                    ids = _TASK_ID.findall(cabeca)
-                    if not status or len(ids) != 1 or ids[0] not in esperados:
-                        continue
-                    job = ids[0]
-                    tool_use_id = _tag("tool-use-id", cabeca)
-                    if esperados[job] is None or tool_use_id != esperados[job]:
-                        continue
-                    nova = Notificacao(
-                        job=job,
-                        tool_use_id=tool_use_id,
-                        status=status,
-                        resumo=_tag("summary", bloco) or "",
-                        arquivo=_tag("output-file", cabeca),
-                        terminou_em=quando,
-                    )
-                    # A mesma notificacao chega em copias (prompt e texto
-                    # renderizado do anexo; anexo e `user`). Uma por conteudo, a
-                    # de carimbo mais cedo.
-                    chave = (nova.status, nova.resumo, nova.arquivo)
-                    anterior = achadas[job].get(chave)
-                    if anterior is None or _ordem(nova.terminou_em) < _ordem(anterior.terminou_em):
-                        achadas[job][chave] = nova
+                # Os campos do host vem ANTES do `<summary>`; dali em diante e a
+                # `description` do modelo (re-verify #4).
+                cabeca, resumo = partes
+                status = _tag("status", cabeca)
+                ids = _voo._TASK_ID.findall(cabeca)
+                if not status or len(ids) != 1 or ids[0] not in esperados:
+                    continue
+                job = ids[0]
+                tool_use_id = _tag("tool-use-id", cabeca)
+                if esperados[job] is None or tool_use_id != esperados[job]:
+                    continue
+                nova = Notificacao(
+                    job=job,
+                    tool_use_id=tool_use_id,
+                    status=status,
+                    resumo=resumo,
+                    arquivo=_tag("output-file", cabeca),
+                    terminou_em=quando,
+                )
+                # A mesma notificacao chega em copias (anexo e `user`). Uma por
+                # conteudo, a de carimbo mais cedo.
+                chave = (nova.status, nova.resumo, nova.arquivo)
+                anterior = achadas[job].get(chave)
+                if anterior is None or _ordem(nova.terminou_em) < _ordem(anterior.terminou_em):
+                    achadas[job][chave] = nova
     return {job: list(por_conteudo.values()) for job, por_conteudo in achadas.items()}
 
 

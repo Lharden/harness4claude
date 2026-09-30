@@ -1833,12 +1833,16 @@ class HarnessDatabase:
         command: str,
         transcript_path: str | None,
         subagente: bool = False,
-    ) -> None:
+    ) -> str | None:
         """Um lancamento por (task, job); a revisao e lida sob o mesmo lock.
 
         `subagente`: o termino de job lancado por subagente chega ao subagente
         (`isSidechain`), que a captura recusa por procedencia — o lancamento
         nasce rejeitado em vez de prometer uma captura que nao vem.
+
+        Devolve o estado da linha deste job (`pendente`, `rejeitado`, ...) ou
+        `None` se nada foi gravado (task terminal): e o que o aviso do hook
+        consulta para nao prometer captura que nao vai acontecer (rodada 3 #5).
 
         Chamado DEPOIS do toque do proprio comando, entao `code_revision` e a
         revisao que a suite vai testar (N'). Repetido — hook registrado duas
@@ -1847,7 +1851,7 @@ class HarnessDatabase:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
             if row["status"] in TERMINAL_STATUSES:
-                return
+                return None
             # Sem o id da chamada ou sem o transcript, nenhuma notificacao casa:
             # o lancamento nasce resolvido, com o motivo, em vez de ficar
             # pendente para sempre e parecer mudanca de formato do host (verify
@@ -1888,6 +1892,10 @@ class HarnessDatabase:
                         agora,
                     ),
                 )
+            linha = connection.execute(
+                "SELECT estado FROM lancamentos WHERE task_id = ? AND job_id = ?", (task_id, job_id)
+            ).fetchone()
+            return str(linha["estado"]) if linha else None
 
     def lancamentos(self, task_id: str, *, estado: str | None = None) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -2025,9 +2033,13 @@ class HarnessDatabase:
         # A fase se confere ANTES da captura: `complete` que recusa por fase nao
         # pode ter gravado nada (re-verify #9) — quem repetia com a mesma revisao
         # levava `revision mismatch` por uma escrita do proprio `complete`.
-        pipeline = atual["pipeline"] or []
-        if pipeline and atual["phase"] != pipeline[-1]:
-            raise StateTransitionError(f"task is not at final phase: {atual['phase']}")
+        # Pelo INDICE, como a checagem sob o lock: pelo nome, um pipeline com fase
+        # repetida passava aqui, capturava e so entao recusava (rodada 3 #3).
+        with self._connect() as connection:
+            antes = self._locked_task(connection, task_id)
+        pipeline = json.loads(antes["pipeline_json"])
+        if pipeline and int(antes["phase_index"]) != len(pipeline) - 1:
+            raise StateTransitionError(f"task is not at final phase: {self._phase(antes)}")
         gravadas = _capturar_lancamentos(self, task_id)
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
@@ -2048,9 +2060,20 @@ class HarnessDatabase:
                     self._recusa_por_portao(connection, row, pendentes, operacao="complete")
                 )
             if not bool(row["verified"]) or not self._has_fresh_evidence(connection, row):
-                mensagem = "task requires fresh verification evidence"
+                partes = ["task requires fresh verification evidence"]
                 resumo = _resumo_dos_lancamentos(self.lancamentos(task_id))
-                raise StateTransitionError(f"{mensagem}. {resumo}" if resumo else mensagem)
+                if resumo:
+                    partes.append(resumo)
+                if gravadas:
+                    # A captura desta chamada gravou evidencia (vermelha, ou de
+                    # outra revisao) e subiu a revisao. Sem dizer isso, quem
+                    # repetia com a revisao lida antes levava `revision mismatch`
+                    # por uma escrita do proprio `complete` (rodada 3 #8).
+                    partes.append(
+                        f"Esta chamada capturou {gravadas} evidencia(s) em segundo plano: "
+                        f"revision={row['revision']}"
+                    )
+                raise StateTransitionError(". ".join(partes))
             pipeline = json.loads(row["pipeline_json"])
             if pipeline and int(row["phase_index"]) != len(pipeline) - 1:
                 raise StateTransitionError(f"task is not at final phase: {self._phase(row)}")
