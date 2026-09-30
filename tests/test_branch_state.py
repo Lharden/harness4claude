@@ -22,6 +22,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -936,6 +938,422 @@ class TestLockNaoDerrubaOLockAlheio:
         assert "a hipotese morreu" in bs.parked_block(cwd=str(tmp_path))
         registro = bs.get(cwd=str(tmp_path), slug=b["slug"])
         assert not registro.get("conclusion_delivered"), "marcou apesar do lock ocupado"
+
+
+# ---------------------------------------------------------------------------
+# Corrida de verificar-e-remover na quebra de lock stale
+# ---------------------------------------------------------------------------
+#
+# A janela de tests/test_state_lock.py::TestCorridaDaQuebraDeStale, agora no
+# `_Lock`. A idade e a remocao nao sao uma operacao so: entre as duas, o
+# lockdir velho pode ter sido quebrado por outro waiter e pego por um terceiro,
+# e quem remove pelo NOME, com a decisao tomada sobre o lockdir anterior, apaga
+# o lock do terceiro.
+#
+# Os testes abrem a janela por construcao, sem relogio. Cada participante e uma
+# thread, e as chamadas de `os` sobre o lockdir passam por shims que so agem na
+# thread marcada; nas outras, e fora do lockdir, passam direto. Os shims ficam
+# no proprio modulo `os`, e nao em `branch_state.os`, para pegar tambem uma
+# implementacao que chegue ao disco por `pathlib` ou `shutil`. Eles param a
+# primeira chamada destrutiva (`rmdir`, `remove`, `unlink`, `rename` ou
+# `replace`, o que a implementacao usar), a volta do primeiro `mkdir` que deu
+# certo ou a resposta do primeiro `stat`, e fotografam o lockdir logo depois de
+# cada chamada destrutiva. Toda espera e por condicao; o prazo so guarda contra
+# deadlock.
+
+_PRAZO = 60.0
+_DESTRUTIVAS = ("rmdir", "remove", "unlink", "rename", "replace")
+
+
+class _Palco:
+    """Shims de `os` e marcas de sincronizacao de um teste de corrida."""
+
+    def __init__(self, monkeypatch, lockdir: Path):
+        self.lockdir = lockdir
+        self._lockdir = os.path.normcase(os.path.abspath(lockdir))
+        self.cv = threading.Condition()
+        self.marcas: set[str] = set()
+        self.pontos: dict[threading.Thread, _Pontos] = {}
+        self.threads: list[threading.Thread] = []
+        self.erros: list[str] = []
+        self.ao_entrar: dict[str, list[str] | None] = {}
+        for nome in _DESTRUTIVAS + ("mkdir", "stat"):
+            monkeypatch.setattr(os, nome, self._shim(nome, getattr(os, nome)))
+
+    def _shim(self, nome, real):
+        def shim(*args, **kwargs):
+            pontos = self.pontos.get(threading.current_thread())
+            if pontos is None or not args:
+                return real(*args, **kwargs)
+            alvo = self._no_lockdir(args[0])
+            if alvo is None:
+                return real(*args, **kwargs)
+            return pontos.chamada(nome, real, alvo, args, kwargs)
+        return shim
+
+    def _no_lockdir(self, caminho) -> str | None:
+        """'' para o proprio lockdir, o nome para uma entrada dele, None fora dele."""
+        try:
+            bruto = os.fspath(caminho)
+        except TypeError:
+            return None
+        if not isinstance(bruto, str):
+            return None
+        normal = os.path.normcase(os.path.abspath(bruto))
+        if normal == self._lockdir:
+            return ""
+        if os.path.dirname(normal) == self._lockdir:
+            return os.path.basename(bruto)
+        return None
+
+    def foto(self) -> list[str] | None:
+        """Entradas do lockdir agora; None se ele nao existe."""
+        try:
+            return sorted(os.listdir(self.lockdir))
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            return [f"<listagem falhou: {exc!r}>"]
+
+    def marca(self, nome: str) -> None:
+        with self.cv:
+            self.marcas.add(nome)
+            self.cv.notify_all()
+
+    def espera(self, cond, o_que: str) -> None:
+        with self.cv:
+            assert self.cv.wait_for(cond, timeout=_PRAZO), f"nunca aconteceu: {o_que}"
+
+    def espera_marca(self, nome: str) -> None:
+        """Espera a marca; `fim` solta toda espera de participante."""
+        self.espera(lambda: nome in self.marcas or "fim" in self.marcas, nome)
+
+    def participante(self, nome: str, corpo, pontos: _Pontos | None = None) -> None:
+        def roda():
+            try:
+                corpo()
+            except BaseException as exc:
+                self.erros.append(f"{nome}: {exc!r}")
+            finally:
+                self.marca(f"{nome}_saiu")
+
+        thread = threading.Thread(target=roda, name=nome, daemon=True)
+        if pontos is not None:
+            self.pontos[thread] = pontos
+        self.threads.append(thread)
+        thread.start()
+
+    def encerra(self) -> None:
+        """Solta toda espera e colhe os participantes."""
+        self.marca("fim")
+        for thread in self.threads:
+            thread.join(_PRAZO)
+
+    def confere(self) -> None:
+        vivos = [t.name for t in self.threads if t.is_alive()]
+        assert not vivos, f"participantes que nao sairam em {_PRAZO:.0f} s: {vivos}"
+        assert not self.erros, f"participantes falharam: {self.erros}"
+
+
+class _Pontos:
+    """Pontos de sincronizacao de UMA thread participante, no lockdir.
+
+    - `pausa_destrutiva`: a primeira chamada destrutiva feita com `armada`
+      marca `<nome>_pausado` e espera `<nome>_segue` antes de executar.
+    - `pausa_mkdir`: o primeiro `mkdir` do lockdir que deu certo marca
+      `<nome>_criou` e espera `<nome>_segue_mkdir` antes de voltar: o lockdir
+      existe e o dono ainda nao gravou nada nele.
+    - `pausa_stat`: o primeiro `stat` do lockdir marca `<nome>_leu_idade` e
+      espera `<nome>_segue_stat` antes de devolver a resposta: quem chamou fica
+      com a idade na mao e ainda nao agiu.
+
+    `eventos` guarda, em ordem, cada `mkdir` do lockdir (se deu certo), cada
+    chamada destrutiva com a foto do lockdir logo depois dela, e a volta de
+    cada pausa.
+    """
+
+    def __init__(self, palco: _Palco, nome: str, *, pausa_destrutiva: bool = False,
+                 pausa_mkdir: bool = False, pausa_stat: bool = False, armada: bool = True):
+        self.palco = palco
+        self.nome = nome
+        self.pausa_destrutiva = pausa_destrutiva
+        self.pausa_mkdir = pausa_mkdir
+        self.pausa_stat = pausa_stat
+        self.armada = armada
+        self.eventos: list[tuple] = []
+        self._pausas: set[str] = set()
+
+    def _registra(self, evento: tuple) -> None:
+        with self.palco.cv:
+            self.eventos.append(evento)
+            self.palco.cv.notify_all()
+
+    def _pausa(self, qual: str, avisa: str, espera: str) -> None:
+        self._pausas.add(qual)
+        self.palco.marca(f"{self.nome}_{avisa}")
+        self.palco.espera_marca(f"{self.nome}_{espera}")
+        self._registra(("retomou", qual))
+
+    def chamada(self, nome, real, alvo, args, kwargs):
+        if nome == "stat":
+            resposta = real(*args, **kwargs)
+            if alvo == "" and self.pausa_stat and "stat" not in self._pausas:
+                self._pausa("stat", "leu_idade", "segue_stat")
+            return resposta
+        if nome == "mkdir":
+            if alvo != "":
+                return real(*args, **kwargs)
+            try:
+                resposta = real(*args, **kwargs)
+            except OSError:
+                self._registra(("mkdir", False))
+                raise
+            self._registra(("mkdir", True))
+            if self.pausa_mkdir and "mkdir" not in self._pausas:
+                self._pausa("mkdir", "criou", "segue_mkdir")
+            return resposta
+        chamada = f"{nome}({alvo or 'lockdir'})"
+        if self.pausa_destrutiva and self.armada and "destrutiva" not in self._pausas:
+            self._pausa("destrutiva", "pausado", "segue")
+        try:
+            return real(*args, **kwargs)
+        finally:
+            self._registra(("destrutiva", chamada, self.palco.foto()))
+
+    def _depois_da_pausa(self) -> list[tuple]:
+        with self.palco.cv:
+            eventos = list(self.eventos)
+        for i, evento in enumerate(eventos):
+            if evento[0] == "retomou":
+                return eventos[i + 1:]
+        return []
+
+    def destrutivas_depois_da_pausa(self) -> list[tuple[str, list[str] | None]]:
+        return [(ev[1], ev[2]) for ev in self._depois_da_pausa() if ev[0] == "destrutiva"]
+
+    def mkdir_depois_da_pausa(self) -> bool | None:
+        """Se o primeiro `mkdir` do lockdir tentado depois da pausa deu certo; None se nao houve."""
+        return next((ev[1] for ev in self._depois_da_pausa() if ev[0] == "mkdir"), None)
+
+
+class TestCorridaDaQuebraDeStale:
+    """Quem quebra um lock stale so remove o lock que julgou stale.
+
+    O lockdir do `_Lock` era sempre vazio, porque o dono nao gravava nada nele,
+    e a quebra lia a idade e depois fazia `os.rmdir` pelo NOME: removia qualquer
+    instancia dele. Dois waiters diante do mesmo lockdir velho concluem os dois
+    "stale"; o primeiro quebra e o lock passa para um terceiro; o segundo, com a
+    decisao tomada sobre o lockdir anterior, remove o lockdir do terceiro e
+    entra com ele ainda dentro. Os dois escrevem `branches.json`, e `save()`
+    reescreve o documento inteiro (o dano esta em `TestLockNaoDerrubaOLockAlheio`).
+
+    LOCK_STALE_S=300 com o dono morto ha uma hora: o lock velho e stale, e um
+    lock novo so ficaria stale depois de cinco minutos, muito alem da duracao
+    do teste sob qualquer carga. O timeout so guarda contra deadlock.
+    """
+
+    @staticmethod
+    def _alvo(bs, tmp_path, monkeypatch) -> str:
+        monkeypatch.setattr(bs, "LOCK_STALE_S", 300)
+        monkeypatch.setattr(bs, "LOCK_TIMEOUT_S", _PRAZO)
+        return bs.branches_path(str(tmp_path))
+
+    @staticmethod
+    def _dono_morto(bs, alvo: str) -> Path:
+        """Lockdir de um dono que pegou o lock e morreu sem soltar, ha uma hora.
+
+        O dono e o proprio `_Lock`, que entra e nunca sai, entao o lockdir fica
+        no formato que a implementacao grava, qualquer que seja ele.
+        """
+        bs._Lock(alvo, required=True).__enter__()
+        lockdir = Path(alvo + ".lockdir")
+        assert lockdir.is_dir(), "o dono morto nao deixou o lockdir"
+        velho = time.time() - 3600
+        os.utime(lockdir, (velho, velho))
+        return lockdir
+
+    @staticmethod
+    def _entra(palco: _Palco, bs, alvo: str, nome: str):
+        """Participante no molde de `add`: adquire, marca que entrou e solta."""
+        def corpo():
+            with bs._Lock(alvo, required=True):
+                palco.ao_entrar[nome] = palco.foto()
+                palco.marca(f"{nome}_entrou")
+        return corpo
+
+    @staticmethod
+    def _segura(palco: _Palco, bs, alvo: str, nome: str, pontos: _Pontos | None = None):
+        """Participante que adquire, avisa e so solta quando o teste mandar."""
+        def corpo():
+            with bs._Lock(alvo, required=True):
+                palco.marca(f"{nome}_segura")
+                palco.espera_marca(f"{nome}_solta")
+                if pontos is not None:
+                    pontos.armada = True
+        return corpo
+
+    @staticmethod
+    def _lock_intacto(quem: str, pontos: _Pontos, dono: str, do_dono: list[str] | None) -> None:
+        """Nenhuma chamada destrutiva de `quem` depois da pausa mexeu no lock de `dono`."""
+        assert do_dono is not None, f"{dono} avisou que segura o lock e o lockdir nao existe"
+        for chamada, foto in pontos.destrutivas_depois_da_pausa():
+            assert foto is not None and set(do_dono) <= set(foto), (
+                f"o lock de {dono} sumiu: {chamada} de {quem} deixou o lockdir "
+                f"{'ausente' if foto is None else foto}; {dono} tinha {do_dono}"
+            )
+
+    def test_waiter_atrasado_nao_remove_o_lock_que_um_terceiro_pegou(self, bs, tmp_path, monkeypatch):
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        lockdir = self._dono_morto(bs, alvo)
+        palco = _Palco(monkeypatch, lockdir)
+        w2 = _Pontos(palco, "w2", pausa_destrutiva=True)
+        try:
+            palco.participante("w2", self._entra(palco, bs, alvo, "w2"), w2)
+            # W2 julgou o lockdir velho stale e parou antes de remover.
+            palco.espera_marca("w2_pausado")
+            # W1 tambem julga stale, quebra o lock velho, entra e sai.
+            with bs._Lock(alvo, required=True):
+                pass
+            # Um terceiro pega o lock e fica com ele.
+            palco.participante("w3", self._segura(palco, bs, alvo, "w3"))
+            palco.espera_marca("w3_segura")
+            do_w3 = palco.foto()
+            # W2 segue com a remocao que decidiu antes.
+            palco.marca("w2_segue")
+            palco.espera(lambda: w2.mkdir_depois_da_pausa() is not None, "W2 tentar o lock de novo")
+
+            self._lock_intacto("W2", w2, "W3", do_w3)
+            assert w2.mkdir_depois_da_pausa() is False, "W2 pegou o lock com W3 ainda dentro"
+        finally:
+            palco.encerra()
+        palco.confere()
+
+    def test_waiter_parado_depois_de_ler_a_idade_nao_remove_o_lock_novo(self, bs, tmp_path, monkeypatch):
+        """A troca acontece entre a leitura da idade e o resto da quebra.
+
+        Quem le a idade e so DEPOIS lista o lockdir junta a idade do lock velho
+        com o dono do novo, e remove o dono do novo pelo nome certo.
+        """
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        lockdir = self._dono_morto(bs, alvo)
+        palco = _Palco(monkeypatch, lockdir)
+        w2 = _Pontos(palco, "w2", pausa_stat=True)
+        try:
+            palco.participante("w2", self._entra(palco, bs, alvo, "w2"), w2)
+            # W2 leu a idade do lockdir velho e parou antes de agir.
+            palco.espera_marca("w2_leu_idade")
+            with bs._Lock(alvo, required=True):
+                pass
+            palco.participante("w3", self._segura(palco, bs, alvo, "w3"))
+            palco.espera_marca("w3_segura")
+            do_w3 = palco.foto()
+            palco.marca("w2_segue_stat")
+            palco.espera(lambda: w2.mkdir_depois_da_pausa() is not None, "W2 tentar o lock de novo")
+
+            self._lock_intacto("W2", w2, "W3", do_w3)
+            assert w2.mkdir_depois_da_pausa() is False, "W2 pegou o lock com W3 ainda dentro"
+        finally:
+            palco.encerra()
+        palco.confere()
+
+    def test_lock_que_nasce_durante_a_quebra_nao_fica_com_dois_donos(self, bs, tmp_path, monkeypatch):
+        """A criou o lockdir e ainda nao gravou o dono quando a remocao atrasada chega."""
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        lockdir = self._dono_morto(bs, alvo)
+        palco = _Palco(monkeypatch, lockdir)
+        w2 = _Pontos(palco, "w2", pausa_destrutiva=True)
+        a = _Pontos(palco, "a", pausa_mkdir=True)
+        try:
+            palco.participante("w2", self._entra(palco, bs, alvo, "w2"), w2)
+            palco.espera_marca("w2_pausado")
+            with bs._Lock(alvo, required=True):
+                pass
+            # A cria o lockdir e para antes de gravar o dono.
+            palco.participante("a", self._entra(palco, bs, alvo, "a"), a)
+            palco.espera_marca("a_criou")
+            # A remocao atrasada de W2 chega no lockdir recem-nascido de A.
+            palco.marca("w2_segue")
+            palco.espera(lambda: w2.destrutivas_depois_da_pausa(), "a remocao atrasada de W2")
+            # B pega o lock e fica com ele.
+            palco.participante("b", self._segura(palco, bs, alvo, "b"))
+            palco.espera_marca("b_segura")
+            # A volta e grava o dono: no lockdir de B.
+            palco.marca("a_segue_mkdir")
+            palco.espera(
+                lambda: "a_entrou" in palco.marcas or a.mkdir_depois_da_pausa() is not None,
+                "A entrar ou tentar o lock de novo",
+            )
+
+            assert "a_entrou" not in palco.marcas, "A e B ficaram os dois com o lock"
+            assert a.mkdir_depois_da_pausa() is False, "A pegou o lock com B ainda dentro"
+        finally:
+            palco.encerra()
+        palco.confere()
+
+    def test_quem_perde_o_lockdir_antes_de_gravar_o_dono_nao_entra_sem_lock(self, bs, tmp_path, monkeypatch):
+        """O lockdir recem-criado saiu antes de o dono gravar nada nele, e ninguem pegou outro.
+
+        Lockdir vazio nao tem dono: a quebra atrasada de um waiter o remove, e
+        isso e legitimo. Quem o criou nao pode entrar com o lockdir fora do
+        disco, porque qualquer outro pegaria o lock com ele dentro.
+        """
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        lockdir = Path(alvo + ".lockdir")
+        palco = _Palco(monkeypatch, lockdir)
+        a = _Pontos(palco, "a", pausa_mkdir=True)
+        try:
+            palco.participante("a", self._entra(palco, bs, alvo, "a"), a)
+            palco.espera_marca("a_criou")
+            # A remocao atrasada de um waiter (lockdir vazio sai) chega no lockdir de A.
+            os.rmdir(lockdir)
+            palco.marca("a_segue_mkdir")
+            palco.espera(lambda: {"a_entrou", "a_saiu"} & palco.marcas, "A entrar ou desistir")
+
+            assert "a_entrou" in palco.marcas, f"A nao entrou: {palco.erros}"
+            assert palco.ao_entrar["a"] is not None, "A entrou com o lockdir fora do disco"
+        finally:
+            palco.encerra()
+        palco.confere()
+
+    def test_dono_que_perdeu_o_lock_por_prazo_nao_remove_o_do_sucessor(self, bs, tmp_path, monkeypatch):
+        """O dono passou do prazo e outro quebrou o lock; o release atrasado do primeiro nao apaga o do segundo."""
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        lockdir = Path(alvo + ".lockdir")
+        palco = _Palco(monkeypatch, lockdir)
+        h = _Pontos(palco, "h", pausa_destrutiva=True, armada=False)
+        try:
+            palco.participante("h", self._segura(palco, bs, alvo, "h", h), h)
+            palco.espera_marca("h_segura")
+            # H passou do prazo: o lock dele agora e stale para quem espera.
+            velho = time.time() - 3600
+            os.utime(lockdir, (velho, velho))
+            # H comeca a soltar e para antes de remover.
+            palco.marca("h_solta")
+            palco.espera_marca("h_pausado")
+            # W quebra o lock vencido de H e fica com ele.
+            palco.participante("w", self._segura(palco, bs, alvo, "w"))
+            palco.espera_marca("w_segura")
+            do_w = palco.foto()
+            palco.marca("h_segue")
+            palco.espera_marca("h_saiu")
+
+            self._lock_intacto("H", h, "W", do_w)
+        finally:
+            palco.encerra()
+        palco.confere()
+
+    def test_lockdir_abandonado_pela_versao_anterior_e_quebrado(self, bs, tmp_path, monkeypatch):
+        """Lockdir stale no formato anterior (vazio, sem dono): trocar de versao nao trava o lock."""
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        monkeypatch.setattr(bs, "LOCK_TIMEOUT_S", 10)
+        lockdir = Path(alvo + ".lockdir")
+        lockdir.parent.mkdir(parents=True, exist_ok=True)
+        lockdir.mkdir()
+        velho = time.time() - 3600
+        os.utime(lockdir, (velho, velho))
+
+        with bs._Lock(alvo, required=True) as lock:
+            assert lock.owned
 
 
 class TestParkingComDuasMaes:
