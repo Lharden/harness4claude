@@ -405,7 +405,7 @@ def test_ponta_a_ponta_chip_registrado_pela_mae_e_achado_para_a_filha_com_prefix
     assert sha in ctx
     ok = _saida(_rodar(env, _ups(_msg_mae(par, sha), "mae-7"), "UserPromptSubmit"))
     ctx_mae = ok["hookSpecificOutput"]["additionalContext"]
-    assert "[roteamento-ok]" in ctx_mae and "[roteamento-recusado" not in ctx_mae
+    assert "Pedido conferido" in ctx_mae and "set_session_model" in ctx_mae  # o ok menciona recusado so para aprovacao negada
     # corpo diferente por uma palavra: a mae recusa
     outra = _como_a_filha_recebe(CHIP.replace("Implemente", "Implementei"))
     no = _saida(_rodar(env, _ups(_msg_mae(par, rt.prompt_sha(outra)), "mae-7"), "UserPromptSubmit"))
