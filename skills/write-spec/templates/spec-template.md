@@ -190,7 +190,7 @@ Como saberemos que a feature está completa e funcionando:
 - [ ] Todos os AC (P1) passando em testes automatizados
 - [ ] Cobertura de testes >= 80% para novos código
 - [ ] Zero findings críticos em `verify-against-spec`
-- [ ] Zero findings críticos em `wf-verify-multimodel` (L2; 5 dimensões + adjudicação)
+- [ ] `wf-verify-multimodel` com `pass: true`, ou `checar_triagem.py` saindo 0 sobre todas as rodadas da task (L2; todo achado não adjudicado com destino escrito, e nenhum bloqueio na última rodada)
 - [ ] Performance dentro de REQ-NF1
 - [ ] Documentação atualizada (README, CLAUDE.md se aplicável)
 - [ ] Todos os `[NEEDS CLARIFICATION]` resolvidos

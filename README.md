@@ -37,8 +37,11 @@ human gates and revision-bound evidence.
 L1 pipelines end with `verify-against-spec`, which checks coverage item by item
 against the spec. L2 pipelines end with the `wf-verify-multimodel` Workflow:
 five review dimensions in parallel, then an adversarial adjudication pass that
-tries to refute each finding. Neither ships without evidence; L2 simply pays for
-a wider net, because the cost of being wrong there is higher.
+tries to refute each critical or high finding. Medium and low findings are not
+adjudicated, and they still block: the Workflow only passes with no open finding,
+and the task only closes once every non-adjudicated finding has a written
+outcome that `scripts/checar_triagem.py` accepts. Neither ships without evidence;
+L2 simply pays for a wider net, because the cost of being wrong there is higher.
 
 ---
 
