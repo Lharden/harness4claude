@@ -92,6 +92,33 @@ EVIDENCIA_COM_RELATORIO = frozenset({"docs"})
 #: verificar, e cobrar ali foi o bloqueio do incidente.
 EVIDENCIA_NA_FASE_FINAL = frozenset({"docs"})
 
+#: As fases que produzem teste. Para o tipo `test`, o Stop cobra a partir da
+#: primeira delas na pipeline da task, e em todas as seguintes.
+#:
+#: Ate 2026-09-30 o tipo `test` era cobrado em toda fase, e as fases de
+#: planejamento das pipelines de codigo (`discuss` a `approve-plan`,
+#: `write-spec-light`) pediam pytest onde nao ha codigo. Sessao `e0209356`,
+#: `L2-architecture` num repositorio sem codigo: bloqueio em `discuss` (1 de 11)
+#: com `evidence` vazia, e a unica saida verde seria fabricar teste. Ver
+#: `docs/specs/portao-stop-pre-implementacao-diagnostico.md`.
+#:
+#: `systematic-debugging` entra porque parte de codigo que existe e fecha num
+#: teste de reproducao. Nome por token exato; o contrato nao carrega esse
+#: atributo, e `tests/test_portao_pre_implementacao.py::test_AC10_*` amarra o
+#: conjunto a `contract/pipelines.json`: nome que o contrato nao tem reprova, e
+#: pipeline de tipo `test` sem nenhuma destas fases reprova ate ser declarada.
+#: Hoje so `review` esta declarada, e cobra em toda fase (D-G2).
+FASES_DE_IMPLEMENTACAO = frozenset({"tdd", "systematic-debugging"})
+
+#: O evento que `transition` e `resolve_gate` gravam quando a task sai de uma
+#: fase de implementacao ou entra nela (D-G3, D-G4). Reclassificar volta a
+#: pipeline ao indice 0; sem a marca, uma task com codigo escrito no `tdd`
+#: sairia do portao so por ter sido reclassificada. `confirm_classification`
+#: NAO grava: `systematic-debugging` e a fase 1 de toda pipeline de bug, e a
+#: correcao de um L1-bug do regex para L2-feature, antes de qualquer trabalho,
+#: nao e avanco.
+EVENTO_IMPLEMENTACAO = "passou-pela-implementacao"
+
 
 def tipo_de_evidencia(kind: str | None) -> str:
     """O `evidence_type` que liga `verified` numa task deste `kind`."""
@@ -111,15 +138,30 @@ def regra_da_evidencia(tipo: str) -> str:
     return regra
 
 
-def cobra_evidencia_nesta_fase(kind: str | None, pipeline: list[str], phase: str | None) -> bool:
+def cobra_evidencia_nesta_fase(
+    kind: str | None,
+    pipeline: list[str],
+    phase: str | None,
+    *,
+    passou_pela_implementacao: bool = False,
+) -> bool:
     """O Stop deve cobrar evidencia desta task na fase em que ela esta?
 
-    Codigo: em toda fase, como sempre foi. Docs: so na ultima, que e a que
-    produz a verificacao (D1).
+    Docs: so na ultima, que e a que produz a verificacao (D1). Teste: da
+    primeira fase de `FASES_DE_IMPLEMENTACAO` da pipeline em diante, ou em
+    qualquer fase se a task ja avancou por uma delas (`EVENTO_IMPLEMENTACAO`).
+
+    Falha fechada: pipeline de teste sem fase de implementacao (`review`) cobra
+    em toda fase, e fase que nao esta na pipeline cobra.
     """
-    if tipo_de_evidencia(kind) not in EVIDENCIA_NA_FASE_FINAL:
+    if tipo_de_evidencia(kind) in EVIDENCIA_NA_FASE_FINAL:
+        return bool(pipeline) and phase == pipeline[-1]
+    if passou_pela_implementacao or phase not in pipeline:
         return True
-    return bool(pipeline) and phase == pipeline[-1]
+    inicio = next(
+        (indice for indice, fase in enumerate(pipeline) if fase in FASES_DE_IMPLEMENTACAO), 0
+    )
+    return pipeline.index(phase) >= inicio
 
 
 def utc_now() -> str:
@@ -532,7 +574,11 @@ class HarnessDatabase:
             )
         ]
         pending_gate = cls._nome_do_portao(gate) if gate else None
-        return cls._render_task(row, pending_gate, artifacts)
+        renderizada = cls._render_task(row, pending_gate, artifacts)
+        # Lido aqui para o hook de Stop decidir com o mesmo fato que
+        # `register_stop_continuation` le do banco.
+        renderizada["passou_pela_implementacao"] = cls._passou_pela_implementacao(connection, task_id)
+        return renderizada
 
     def current_task(self, scope_id: str) -> dict[str, Any] | None:
         placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
@@ -1020,6 +1066,7 @@ class HarnessDatabase:
                     "INSERT INTO gates(task_id, gate_type, status, created_at) VALUES (?, ?, 'pending', ?)",
                     (task_id, to_phase, utc_now()),
                 )
+            self._marcar_implementacao(connection, row, current_phase, to_phase)
         return self.task(task_id)
 
     def resolve_gate(
@@ -1063,7 +1110,35 @@ class HarnessDatabase:
                     "INSERT INTO transitions(task_id, from_phase, to_phase, revision, created_at) VALUES (?, ?, ?, ?, ?)",
                     (task_id, gate_type, next_phase, new_revision, utc_now()),
                 )
+                self._marcar_implementacao(connection, row, gate_type, next_phase)
         return self.task(task_id)
+
+    @staticmethod
+    def _marcar_implementacao(
+        connection: sqlite3.Connection, row: sqlite3.Row, de: str | None, para: str | None
+    ) -> None:
+        """Grava `EVENTO_IMPLEMENTACAO` quando o AVANCO sai de uma fase de
+        implementacao ou entra nela. So `transition` e `resolve_gate` chamam."""
+        if de not in FASES_DE_IMPLEMENTACAO and para not in FASES_DE_IMPLEMENTACAO:
+            return
+        connection.execute(
+            "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                row["task_id"],
+                row["scope_id"],
+                EVENTO_IMPLEMENTACAO,
+                json.dumps({"de": de, "para": para}, sort_keys=True),
+                utc_now(),
+            ),
+        )
+
+    @staticmethod
+    def _passou_pela_implementacao(connection: sqlite3.Connection, task_id: str) -> bool:
+        return connection.execute(
+            "SELECT 1 FROM events WHERE task_id = ? AND event_type = ? LIMIT 1",
+            (task_id, EVENTO_IMPLEMENTACAO),
+        ).fetchone() is not None
 
     @staticmethod
     def _resolve_escalation(
@@ -1399,7 +1474,10 @@ class HarnessDatabase:
                 row["status"] != "active"
                 or not pipeline
                 or bool(row["verified"])
-                or not cobra_evidencia_nesta_fase(row["kind"], pipeline, self._phase(row))
+                or not cobra_evidencia_nesta_fase(
+                    row["kind"], pipeline, self._phase(row),
+                    passou_pela_implementacao=self._passou_pela_implementacao(connection, task_id),
+                )
             ):
                 raise StateTransitionError("task does not require a stop continuation")
             continuations = int(row["stop_continuations"])

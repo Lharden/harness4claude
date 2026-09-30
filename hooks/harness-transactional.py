@@ -1481,10 +1481,14 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
     bucket, database, projection, task = context
     if task["status"] != "active" or not task["pipeline"] or task["verified"]:
         return ""
-    # Docs so e cobrado na fase que produz a verificacao (D1). A regra mora em
+    # Docs so e cobrado na fase que produz a verificacao (D1); teste, da primeira
+    # fase de implementacao em diante, ou se a task ja passou por uma. A regra mora em
     # `transactional_state`, e `register_stop_continuation` le a mesma: hook e
     # banco nao podem discordar sobre quando ha continuacao a contar.
-    if not cobra_evidencia_nesta_fase(task.get("kind"), task["pipeline"], task["phase"]):
+    if not cobra_evidencia_nesta_fase(
+        task.get("kind"), task["pipeline"], task["phase"],
+        passou_pela_implementacao=bool(task.get("passou_pela_implementacao")),
+    ):
         return ""
     # Com job desta task em voo o fim de turno e espera, nao tentativa de
     # encerrar: o Stop bloqueia igual, mas nao conta para a escalada. Quem
