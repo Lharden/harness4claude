@@ -198,7 +198,10 @@ def main() -> int:
                 # linhas do banco declaravam certeza que ninguem afirmou (HC-00d).
                 confidence=args.confidence,
             )
+            # `status` vem do banco, como em `state_cli._sync`: `apply_confirmation`
+            # decide so pelo nivel e nao ve portao pendente em `gates`.
             state.update({
+                "status": task["status"],
                 "revision": task["revision"],
                 "code_revision": task["code_revision"],
                 "owner_epoch": task["owner_epoch"],

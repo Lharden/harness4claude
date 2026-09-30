@@ -21,6 +21,11 @@ ACTIVE_STATUSES = ("suggested", "active", "awaiting_gate", "verified")
 # fora do alcance de qualquer evidencia que chegue depois.
 TERMINAL_STATUSES = frozenset({"done", "abandoned", "superseded"})
 HUMAN_GATES = {"approve-spec", "approve-plan", "answer-clarifications", "escalation", "branch-open"}
+#: Portoes que nao sao fase: nascem em qualquer uma e resolvem em qualquer uma.
+#: Os outros de HUMAN_GATES so resolvem na propria fase (`_resolve_gate_aceita`),
+#: entao uma reclassificacao que zera `phase_index` os cancela — preserva-los
+#: travava a entrada na fase que os resolveria. Estes sobrevivem a ela.
+PORTOES_SEM_FASE = frozenset({"escalation", "branch-open"})
 #: Onde moram os CLIs que a recusa de `transition` manda rodar. Derivado deste
 #: arquivo, como `CLI_DE_ESTADO` no hook: e o CLI que acompanha o banco que
 #: recusou, nao o que um marcador externo aponta.
@@ -389,6 +394,66 @@ class HarnessDatabase:
                     "VALUES (?, ?, 'migracao-verified', '{}', ?)",
                     [(str(v[0]), str(v[1]), agora) for v in velhas],
                 )
+            self._migrar_status_derivado(connection)
+
+    @classmethod
+    def _migrar_status_derivado(cls, connection: sqlite3.Connection) -> None:
+        """Repara o que os escritores antigos de `status` deixaram gravado.
+
+        Medido em 2026-09-30 nos 200 `harness.db` da maquina: 15 portoes
+        pendentes em tasks `done` com pipeline (`complete` e confirmacao para L0
+        sem ler `gates`; `transition` antigo pulando fase-portao) e uma task L0
+        `active` com `pipeline=[]` (ramo decidido numa conversa L0). Tres
+        reparos, na ordem em que um depende do outro, um evento por task:
+
+        1. portao pendente de task terminal com pipeline -> `cancelled`
+           (`terminal-migration`): a decisao ja nao tem task viva a segurar;
+        2. task viva sem pipeline -> `done`, o status com que toda L0 nasce;
+        3. task viva cujo `status` discorda de `gates` -> o derivado.
+
+        Task L0 `done` com `branch-open` pendente e estado valido (o ramo
+        oferecido numa conversa L0) e fica. SELECT antes, como a migracao de
+        `verified`: so linha a reparar pede UPDATE. Idempotente.
+        """
+        vivos = ",".join(f"'{s}'" for s in ACTIVE_STATUSES)
+        terminais = ",".join(f"'{s}'" for s in sorted(TERMINAL_STATUSES))
+        agora = utc_now()
+        eventos: list[tuple[str, str, str]] = []
+
+        portoes_terminais = connection.execute(
+            f"SELECT DISTINCT t.task_id, t.scope_id FROM tasks t JOIN gates g ON g.task_id = t.task_id "
+            f"WHERE g.status = 'pending' AND t.status IN ({terminais}) AND t.pipeline_json != '[]'"
+        ).fetchall()
+        for task in portoes_terminais:
+            connection.execute(
+                "UPDATE gates SET status = 'cancelled', decision = 'terminal-migration', resolved_at = ? "
+                "WHERE task_id = ? AND status = 'pending'",
+                (agora, task["task_id"]),
+            )
+            eventos.append((task["task_id"], task["scope_id"], "migracao-portao-terminal"))
+
+        l0_vivas = connection.execute(
+            f"SELECT task_id, scope_id FROM tasks WHERE status IN ({vivos}) AND pipeline_json = '[]'"
+        ).fetchall()
+        for task in l0_vivas:
+            connection.execute("UPDATE tasks SET status = 'done' WHERE task_id = ?", (task["task_id"],))
+            eventos.append((task["task_id"], task["scope_id"], "migracao-l0-viva"))
+
+        for task in connection.execute(
+            f"SELECT task_id, scope_id, status FROM tasks WHERE status IN ({vivos})"
+        ).fetchall():
+            derivado = cls._status_derivado(connection, task["task_id"], task["status"])
+            if derivado != task["status"]:
+                connection.execute(
+                    "UPDATE tasks SET status = ? WHERE task_id = ?", (derivado, task["task_id"])
+                )
+                eventos.append((task["task_id"], task["scope_id"], "migracao-status-derivado"))
+
+        connection.executemany(
+            "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+            "VALUES (?, ?, ?, '{}', ?)",
+            [(task_id, scope_id, tipo, agora) for task_id, scope_id, tipo in eventos],
+        )
 
     def start_task(
         self,
@@ -403,8 +468,10 @@ class HarnessDatabase:
     ) -> dict[str, Any]:
         now = utc_now()
         task_id = task_id or f"t-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
-        status = "active" if pipeline else "done"
         with self._write() as connection:
+            # Task nova nao tem portao: da o mesmo que o ciclo, mas passa pelo
+            # mesmo lugar que todo escritor de `status`.
+            status = self._status_derivado(connection, task_id, "active" if pipeline else "done")
             connection.execute("INSERT OR IGNORE INTO scopes(scope_id, created_at) VALUES (?, ?)", (scope_id, now))
             connection.execute(
                 "UPDATE gates SET status = 'cancelled', decision = 'task-switch', resolved_at = ? "
@@ -491,6 +558,7 @@ class HarnessDatabase:
         final = f"{tier}-{kind}"
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            self._reclassificar_portoes(connection, row, pipeline)
             decision = connection.execute(
                 "SELECT suggested FROM classifications WHERE task_id = ?", (task_id,)
             ).fetchone()
@@ -518,7 +586,7 @@ class HarnessDatabase:
                     kind,
                     json.dumps(pipeline),
                     0 if pipeline else -1,
-                    "active" if pipeline else "done",
+                    self._status_derivado(connection, task_id, "active" if pipeline else "done"),
                     utc_now(),
                     task_id,
                 ),
@@ -832,9 +900,11 @@ class HarnessDatabase:
                 "VALUES (?, 'branch-open', ?, 'pending', ?)",
                 (task_id, branch_id, now),
             )
+            # Task L0 e `done` desde o nascimento, e o ramo oferecido numa
+            # conversa L0 e o caminho normal: o portao fica nela sem reabri-la.
             connection.execute(
-                "UPDATE tasks SET status = 'awaiting_gate', revision = revision + 1, updated_at = ? WHERE task_id = ?",
-                (now, task_id),
+                "UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ? WHERE task_id = ?",
+                (self._status_derivado(connection, task_id, task["status"]), now, task_id),
             )
         return self.branch(branch_id)
 
@@ -874,10 +944,11 @@ class HarnessDatabase:
                     "VALUES (?, 'branch-open', ?, 'pending', ?)",
                     (branch["task_id"], branch_id, now),
                 )
+                dona = self._locked_task(connection, branch["task_id"])
                 connection.execute(
-                    "UPDATE tasks SET status = 'awaiting_gate', revision = revision + 1, "
+                    "UPDATE tasks SET status = ?, revision = revision + 1, "
                     "updated_at = ? WHERE task_id = ?",
-                    (now, branch["task_id"]),
+                    (self._status_derivado(connection, dona["task_id"], dona["status"]), now, dona["task_id"]),
                 )
         return self.branch(branch_id)
 
@@ -911,13 +982,13 @@ class HarnessDatabase:
                     "updated_at = ? WHERE branch_id = ?",
                     (now, branch_id),
                 )
-            still_pending = connection.execute(
-                "SELECT 1 FROM gates WHERE task_id = ? AND status = 'pending' LIMIT 1",
-                (branch["task_id"],),
-            ).fetchone()
+            # A dona pode ser terminal: task L0, ou task concluida antes do
+            # `complete` recusar portao pendente. Reabri-la estourava o indice
+            # de task unica quando outra ja vivia no escopo.
+            dona = self._locked_task(connection, branch["task_id"])
             connection.execute(
                 "UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ? WHERE task_id = ?",
-                ("awaiting_gate" if still_pending else "active", now, branch["task_id"]),
+                (self._status_derivado(connection, dona["task_id"], dona["status"]), now, dona["task_id"]),
             )
         return self.branch(branch_id)
 
@@ -973,7 +1044,8 @@ class HarnessDatabase:
         pipeline: list[str],
     ) -> dict[str, Any]:
         with self._write() as connection:
-            self._locked_task(connection, task_id)
+            row = self._locked_task(connection, task_id)
+            self._reclassificar_portoes(connection, row, pipeline)
             connection.execute(
                 """
                 UPDATE tasks
@@ -988,16 +1060,47 @@ class HarnessDatabase:
                     kind,
                     json.dumps(pipeline),
                     0 if pipeline else -1,
-                    "active" if pipeline else "done",
+                    self._status_derivado(connection, task_id, "active" if pipeline else "done"),
                     utc_now(),
                     task_id,
                 ),
             )
         return self.task(task_id)
 
+    def _reclassificar_portoes(
+        self, connection: sqlite3.Connection, row: sqlite3.Row, pipeline: list[str]
+    ) -> None:
+        """O que uma reclassificacao faz com os portoes pendentes (D1 e D2).
+
+        Ela troca o pipeline e zera `phase_index`. Portao de fase preservado
+        ficaria orfao: `_resolve_gate_aceita` so o aceita na propria fase, e
+        `transition` recusa entrar nela com ele pendente — deadlock medido.
+        Cancelado, o pipeline novo o reabre ao chegar na fase. Os de
+        `PORTOES_SEM_FASE` sao decisao humana que nao depende de fase e ficam.
+
+        Para L0 (pipeline vazio) a task fecha, e fechar por cima de decisao
+        humana em aberto e o que `complete` tambem recusa: recusa antes de
+        qualquer escrita, com a linha que resolve.
+        """
+        pendentes = connection.execute(
+            "SELECT id, gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
+            "ORDER BY id DESC",
+            (row["task_id"],),
+        ).fetchall()
+        sem_fase = [gate for gate in pendentes if gate["gate_type"] in PORTOES_SEM_FASE]
+        if not pipeline and sem_fase:
+            raise StateTransitionError(
+                self._recusa_por_portao(connection, row, sem_fase, operacao="reclassificacao para L0")
+            )
+        de_fase = [gate["id"] for gate in pendentes if gate["gate_type"] not in PORTOES_SEM_FASE]
+        connection.executemany(
+            "UPDATE gates SET status = 'cancelled', decision = 'reclassified', resolved_at = ? WHERE id = ?",
+            [(utc_now(), gate_id) for gate_id in de_fase],
+        )
+
     def open_gate(self, task_id: str, gate_type: str) -> dict[str, Any]:
         with self._write() as connection:
-            self._locked_task(connection, task_id)
+            row = self._locked_task(connection, task_id)
             pending = connection.execute(
                 "SELECT 1 FROM gates WHERE task_id = ? AND gate_type = ? AND status = 'pending'",
                 (task_id, gate_type),
@@ -1008,8 +1111,8 @@ class HarnessDatabase:
                     (task_id, gate_type, utc_now()),
                 )
             connection.execute(
-                "UPDATE tasks SET status = 'awaiting_gate', revision = revision + 1, updated_at = ? WHERE task_id = ?",
-                (utc_now(), task_id),
+                "UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ? WHERE task_id = ?",
+                (self._status_derivado(connection, task_id, row["status"]), utc_now(), task_id),
             )
         return self.task(task_id)
 
@@ -1052,20 +1155,25 @@ class HarnessDatabase:
             if obligation and not self._has_artifact(connection, task_id, obligation):
                 raise StateTransitionError(f"phase {current_phase} requires artifact {obligation}")
             new_revision = int(row["revision"]) + 1
-            status = "awaiting_gate" if to_phase in HUMAN_GATES else "active"
-            connection.execute(
-                "UPDATE tasks SET phase_index = ?, status = ?, revision = ?, updated_at = ? WHERE task_id = ?",
-                (next_index, status, new_revision, utc_now(), task_id),
-            )
-            connection.execute(
-                "INSERT INTO transitions(task_id, from_phase, to_phase, revision, created_at) VALUES (?, ?, ?, ?, ?)",
-                (task_id, current_phase, to_phase, new_revision, utc_now()),
-            )
             if to_phase in HUMAN_GATES:
                 connection.execute(
                     "INSERT INTO gates(task_id, gate_type, status, created_at) VALUES (?, ?, 'pending', ?)",
                     (task_id, to_phase, utc_now()),
                 )
+            connection.execute(
+                "UPDATE tasks SET phase_index = ?, status = ?, revision = ?, updated_at = ? WHERE task_id = ?",
+                (
+                    next_index,
+                    self._status_derivado(connection, task_id, row["status"]),
+                    new_revision,
+                    utc_now(),
+                    task_id,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO transitions(task_id, from_phase, to_phase, revision, created_at) VALUES (?, ?, ?, ?, ?)",
+                (task_id, current_phase, to_phase, new_revision, utc_now()),
+            )
             self._marcar_implementacao(connection, row, current_phase, to_phase)
         return self.task(task_id)
 
@@ -1102,9 +1210,18 @@ class HarnessDatabase:
                     "UPDATE gates SET status = 'resolved', decision = ?, resolved_at = ? WHERE id = ?",
                     (decision, utc_now(), pending["id"]),
                 )
+                # Aprovar a fase-portao e decisao explicita e avanca; outro
+                # portao pendente (um ramo oferecido) e independente e segura a
+                # proxima `transition` — nao a aprovacao.
                 connection.execute(
-                    "UPDATE tasks SET phase_index = ?, status = 'active', revision = ?, updated_at = ? WHERE task_id = ?",
-                    (current_index + 1, new_revision, utc_now(), task_id),
+                    "UPDATE tasks SET phase_index = ?, status = ?, revision = ?, updated_at = ? WHERE task_id = ?",
+                    (
+                        current_index + 1,
+                        self._status_derivado(connection, task_id, row["status"]),
+                        new_revision,
+                        utc_now(),
+                        task_id,
+                    ),
                 )
                 connection.execute(
                     "INSERT INTO transitions(task_id, from_phase, to_phase, revision, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -1154,22 +1271,19 @@ class HarnessDatabase:
         Mesmo molde de `resolve_branch_decision`: resolve a linha do portao, nao
         grava transicao, e so volta a `active` se nao sobrou outro pendente.
         Aprovar e "continue": `stop_continuations` zera e o Stop ganha de novo as
-        duas continuacoes antes de escalar outra vez.
+        duas continuacoes antes de escalar outra vez. Task terminal (escalation
+        legado de task ja `done`) tem o portao fechado e continua terminal.
         """
         now = utc_now()
         connection.execute(
             "UPDATE gates SET status = 'resolved', decision = ?, resolved_at = ? WHERE id = ?",
             (decision, now, gate_id),
         )
-        still_pending = connection.execute(
-            "SELECT 1 FROM gates WHERE task_id = ? AND status = 'pending' LIMIT 1",
-            (row["task_id"],),
-        ).fetchone()
         connection.execute(
             "UPDATE tasks SET status = ?, stop_continuations = 0, revision = ?, "
             "updated_at = ? WHERE task_id = ?",
             (
-                "awaiting_gate" if still_pending else "active",
+                HarnessDatabase._status_derivado(connection, row["task_id"], row["status"]),
                 int(row["revision"]) + 1,
                 now,
                 row["task_id"],
@@ -1197,9 +1311,18 @@ class HarnessDatabase:
         return 0 <= index < len(pipeline) - 1 and pipeline[index] == gate_type
 
     def _recusa_por_portao(
-        self, connection: sqlite3.Connection, row: sqlite3.Row, pendentes: list[sqlite3.Row]
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        pendentes: list[sqlite3.Row],
+        *,
+        operacao: str = "transition",
     ) -> str:
-        """A recusa de `transition`, com a linha que resolve o portao.
+        """A recusa por portao pendente, com a linha que resolve o portao.
+
+        Serve a `transition`, a `complete` e a reclassificacao para L0: as tres
+        passariam por cima de uma decisao humana em aberto. `operacao` so muda
+        o nome no cabecalho e o que repetir depois.
 
         Nomeia todos os pendentes e imprime o comando de UM: o mais recente,
         que e o que `pending_gate` mostra. Cada resolucao sobe a revisao, entao
@@ -1212,7 +1335,7 @@ class HarnessDatabase:
         """
         nomes = ", ".join(self._nome_do_portao(gate) for gate in pendentes)
         linhas = [
-            f"transition recusada: portao humano pendente ({nomes}). "
+            f"{operacao} recusada: portao humano pendente ({nomes}). "
             f"task={row['task_id']} fase={self._phase(row)} revision={row['revision']}"
         ]
         alvo = pendentes[0]
@@ -1222,7 +1345,8 @@ class HarnessDatabase:
             ramo = connection.execute(
                 "SELECT slug FROM branches WHERE branch_id = ?", (alvo["subject_id"],)
             ).fetchone()
-        depois = "Depois dela, rode a transicao de novo."
+        repetir = {"transition": "a transicao", "complete": "o complete"}.get(operacao, "a confirmacao")
+        depois = f"Depois dela, rode {repetir} de novo."
         if ramo is not None:
             # Sem `--cwd`: o banco conhece o balde, nao a pasta do projeto, e
             # `branch_state.py` resolve o registro a partir do diretorio corrente.
@@ -1324,9 +1448,8 @@ class HarnessDatabase:
             )
             connection.execute(
                 "UPDATE tasks SET code_revision = ?, revision = revision + 1, verified = 0, "
-                "status = CASE WHEN status = 'verified' THEN 'active' ELSE status END, "
-                "updated_at = ? WHERE task_id = ?",
-                (next_code_revision, agora, task_id),
+                "status = ?, updated_at = ? WHERE task_id = ?",
+                (next_code_revision, self._status_derivado(connection, task_id, row["status"]), agora, task_id),
             )
         return self.task(task_id)
 
@@ -1422,13 +1545,12 @@ class HarnessDatabase:
             # como vivo: a task era viva o bastante para ser MORTA pelo prompt
             # seguinte e nao o bastante para ser CONTINUADA por ele (HC-00h,
             # t-20260923-133144961992, fase 2 de 11). O status fica onde estava;
-            # 'verified' gravado por hook antigo volta para 'active'.
+            # 'verified' gravado por hook antigo volta ao status que os portoes dizem.
             terminal = row["status"] in TERMINAL_STATUSES
+            novo_status = self._status_derivado(connection, task_id, row["status"])
             if terminal:
                 novo_verified = int(row["verified"])
-                novo_status = row["status"]
             else:
-                novo_status = "active" if row["status"] == "verified" else row["status"]
                 if valid_test:
                     novo_verified = 1
                 elif evidence_type == exigido:
@@ -1513,9 +1635,9 @@ class HarnessDatabase:
                         (task_id, now),
                     )
                 connection.execute(
-                    "UPDATE tasks SET status = 'awaiting_gate', revision = revision + 1, "
+                    "UPDATE tasks SET status = ?, revision = revision + 1, "
                     "updated_at = ? WHERE task_id = ?",
-                    (now, task_id),
+                    (self._status_derivado(connection, task_id, row["status"]), now, task_id),
                 )
             else:
                 connection.execute(
@@ -1544,6 +1666,18 @@ class HarnessDatabase:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
             self._expect_revision(row, expected_revision)
+            # Fechar por cima de decisao humana em aberto e o que `transition`
+            # ja recusa; ate 2026-09-30 `complete` nao lia `gates`, e 3 tasks
+            # reais ficaram `done` com `escalation` pendente para sempre.
+            pendentes = connection.execute(
+                "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
+                "ORDER BY id DESC",
+                (task_id,),
+            ).fetchall()
+            if pendentes:
+                raise StateTransitionError(
+                    self._recusa_por_portao(connection, row, pendentes, operacao="complete")
+                )
             if not bool(row["verified"]) or not self._has_fresh_evidence(connection, row):
                 raise StateTransitionError("task requires fresh verification evidence")
             pipeline = json.loads(row["pipeline_json"])
@@ -1607,6 +1741,31 @@ class HarnessDatabase:
             """,
             (row["task_id"], row["code_revision"], row["task_id"], row["code_revision"], exigido),
         ).fetchone() is not None
+
+    @staticmethod
+    def _status_derivado(connection: sqlite3.Connection, task_id: str, ciclo: str) -> str:
+        """O `status` que a linha deve gravar, e o unico lugar que o calcula.
+
+        A coluna guarda dois fatos: o ciclo de vida e, na task viva, se ha
+        portao pendente em `gates`. Ate 2026-09-30 dezessete caminhos a
+        escreviam, cada um pela propria visao parcial: quem nao lia `gates`
+        deixava `active` com portao pendente ou fechava a task por cima dele;
+        quem lia `gates` mas nao o ciclo de vida ressuscitava task terminal e
+        estourava `one_active_task_per_scope`. Ver
+        `docs/specs/status-derivado-dos-portoes-diagnostico.md`.
+
+        `ciclo` e o ciclo de vida que o escritor pretende. Quem decide ciclo de
+        vida passa o dele (`confirm_classification` e `reclassify`, pelo
+        pipeline; `complete`, `done`); os demais passam o `status` atual da
+        linha e por isso nunca reabrem terminal. Chamar DEPOIS de mexer em
+        `gates`, na mesma transacao.
+        """
+        if ciclo in TERMINAL_STATUSES:
+            return ciclo
+        pendente = connection.execute(
+            "SELECT 1 FROM gates WHERE task_id = ? AND status = 'pending' LIMIT 1", (task_id,)
+        ).fetchone()
+        return "awaiting_gate" if pendente else "active"
 
     @staticmethod
     def _bump(connection: sqlite3.Connection, task_id: str) -> None:
