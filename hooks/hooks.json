@@ -41,6 +41,16 @@
             "statusMessage": "Science evidence routing..."
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-roteamento.sh\" UserPromptSubmit",
+            "timeout": 10,
+            "statusMessage": "Roteamento de chips..."
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -63,6 +73,17 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-arsenal-gate.sh\"",
             "timeout": 15,
             "statusMessage": "Arsenal: orcamento do roster..."
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__ccd_session__spawn_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-roteamento.sh\" PreToolUse",
+            "timeout": 10,
+            "statusMessage": "Roteamento de chips: conferindo o prompt..."
           }
         ]
       }
