@@ -150,15 +150,23 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
     # quando discorda. Ate 2026-09-23 (HC-00e) o canario lia esse campo e media
     # a correcao semantica contra o observado. `classification` so vale para
     # task sem meta, que ninguem confirmou e portanto ainda tem o do regex.
-    observados = [
-        (
-            str((t.get("classification_meta") or {}).get("suggested")
-                or t.get("classification") or "").split("-")[0],
-            t.get("actual_level"),
-        )
-        for t in tasks
-    ]
-    observados = [(s, o) for s, o in observados if s and o]
+    # Medicao parcial (`atribuicao_incompleta`: shell sem arquivo atribuido, ou
+    # escrita fora da raiz) so da PISO ao nivel observado. Abaixo de L2 o piso
+    # nao e fato, e contar L0 como observado distorce o canario (medido
+    # 2026-09-30: task L1-bug com dois arquivos fora da raiz gravada como L0).
+    # L2 ja observado nao diminui com mais escrita invisivel, entao fica.
+    observados = []
+    excluidas_parciais = 0
+    for t in tasks:
+        sugerido = str((t.get("classification_meta") or {}).get("suggested")
+                       or t.get("classification") or "").split("-")[0]
+        observado = t.get("actual_level")
+        if not (sugerido and observado):
+            continue
+        if t.get("atribuicao_incompleta") and observado in {"L0", "L1"}:
+            excluidas_parciais += 1
+            continue
+        observados.append((sugerido, observado))
     casam = sum(1 for s, o in observados if s == o)
     proxy: float | None = (casam / len(observados)) if observados else None
 
@@ -186,6 +194,7 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
             # longo acima antes de citar este numero em qualquer lugar.
             "proxy_regex_vs_observado": proxy,
             "proxy_amostras": len(observados),
+            "proxy_excluidas_parciais": excluidas_parciais,
             "proxy_nota": (
                 "actual_level e derivado da contagem de arquivos, nao e verdade "
                 "fundamental. Serve para detectar deslocamento, nao para afirmar acuracia."
