@@ -21,6 +21,10 @@ ACTIVE_STATUSES = ("suggested", "active", "awaiting_gate", "verified")
 # fora do alcance de qualquer evidencia que chegue depois.
 TERMINAL_STATUSES = frozenset({"done", "abandoned", "superseded"})
 HUMAN_GATES = {"approve-spec", "approve-plan", "answer-clarifications", "escalation", "branch-open"}
+#: Onde moram os CLIs que a recusa de `transition` manda rodar. Derivado deste
+#: arquivo, como `CLI_DE_ESTADO` no hook: e o CLI que acompanha o banco que
+#: recusou, nao o que um marcador externo aponta.
+SCRIPTS = Path(__file__).resolve().parent
 ARTIFACT_OBLIGATIONS = {
     "graph-context": "graph-context",
     "write-spec-light": "spec-light",
@@ -527,11 +531,7 @@ class HarnessDatabase:
                 (task_id,),
             )
         ]
-        pending_gate = None
-        if gate:
-            pending_gate = str(gate["gate_type"])
-            if gate["subject_id"]:
-                pending_gate += f":{gate['subject_id']}"
+        pending_gate = cls._nome_do_portao(gate) if gate else None
         return cls._render_task(row, pending_gate, artifacts)
 
     def current_task(self, scope_id: str) -> dict[str, Any] | None:
@@ -982,6 +982,19 @@ class HarnessDatabase:
                 raise StateTransitionError(
                     f"owner epoch mismatch: expected {owner_epoch}, actual {row['owner_epoch']}"
                 )
+            # Portao pendente e decisao humana em aberto. Ate 2026-09-30 esta
+            # funcao nao lia `gates` e escrevia `status` so pela fase de destino:
+            # sobrescrevia o `awaiting_gate` do portao, deixava `active` com
+            # `pending_gate` preenchido, e numa fase-portao (`approve-spec`)
+            # pedir a fase seguinte pulava a decisao do usuario. Recusa antes de
+            # qualquer escrita. Ver `docs/specs/transition-ignora-portao-diagnostico.md`.
+            pendentes = connection.execute(
+                "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
+                "ORDER BY id DESC",
+                (task_id,),
+            ).fetchall()
+            if pendentes:
+                raise StateTransitionError(self._recusa_por_portao(connection, row, pendentes))
             pipeline = json.loads(row["pipeline_json"])
             current_index = int(row["phase_index"])
             next_index = current_index + 1
@@ -1029,13 +1042,13 @@ class HarnessDatabase:
             ).fetchone()
             if pending is None:
                 raise StateTransitionError(f"pending gate not found: {gate_type}")
+            if not self._resolve_gate_aceita(row, gate_type):
+                raise StateTransitionError(f"gate is not at an advanceable phase: {gate_type}")
             if gate_type == "escalation":
                 self._resolve_escalation(connection, row, pending["id"], decision)
             else:
                 pipeline = json.loads(row["pipeline_json"])
                 current_index = int(row["phase_index"])
-                if pipeline[current_index] != gate_type or current_index + 1 >= len(pipeline):
-                    raise StateTransitionError(f"gate is not at an advanceable phase: {gate_type}")
                 next_phase = pipeline[current_index + 1]
                 new_revision = int(row["revision"]) + 1
                 connection.execute(
@@ -1087,6 +1100,98 @@ class HarnessDatabase:
                 row["task_id"],
             ),
         )
+
+    @staticmethod
+    def _resolve_gate_aceita(row: sqlite3.Row, gate_type: str) -> bool:
+        """`resolve_gate` resolve este portao pendente, nesta task, agora?
+
+        Uma leitura so, usada por `resolve_gate` e pela recusa de `transition`.
+        Se a mensagem tivesse copia propria da condicao, bastaria as duas
+        divergirem para ela imprimir uma linha que o resolvedor recusa com
+        exit 2 — o defeito que a linha existe para evitar.
+
+        `escalation` nao e fase e resolve em qualquer uma. Os outros so na
+        propria fase-portao, com uma fase depois dela para onde avancar.
+        `branch-open` nunca e fase, entao nunca passa aqui: o dono dele e
+        `resolve_branch_decision`, que grava `branches.approved_at`.
+        """
+        if gate_type == "escalation":
+            return True
+        pipeline = json.loads(row["pipeline_json"])
+        index = int(row["phase_index"])
+        return 0 <= index < len(pipeline) - 1 and pipeline[index] == gate_type
+
+    def _recusa_por_portao(
+        self, connection: sqlite3.Connection, row: sqlite3.Row, pendentes: list[sqlite3.Row]
+    ) -> str:
+        """A recusa de `transition`, com a linha que resolve o portao.
+
+        Nomeia todos os pendentes e imprime o comando de UM: o mais recente,
+        que e o que `pending_gate` mostra. Cada resolucao sobe a revisao, entao
+        um segundo comando impresso com a mesma `--expect-revision` falharia; a
+        recusa seguinte imprime o do proximo, com a revisao certa.
+
+        A linha so sai quando roda de verdade. Portao sem resolvedor (hoje,
+        `answer-clarifications` aberto por `open_gate`) ganha a frase que diz
+        isso, nunca um comando que sai com exit 2.
+        """
+        nomes = ", ".join(self._nome_do_portao(gate) for gate in pendentes)
+        linhas = [
+            f"transition recusada: portao humano pendente ({nomes}). "
+            f"task={row['task_id']} fase={self._phase(row)} revision={row['revision']}"
+        ]
+        alvo = pendentes[0]
+        gate_type = str(alvo["gate_type"])
+        ramo = None
+        if gate_type == "branch-open" and alvo["subject_id"]:
+            ramo = connection.execute(
+                "SELECT slug FROM branches WHERE branch_id = ?", (alvo["subject_id"],)
+            ).fetchone()
+        depois = "Depois dela, rode a transicao de novo."
+        if ramo is not None:
+            # Sem `--cwd`: o banco conhece o balde, nao a pasta do projeto, e
+            # `branch_state.py` resolve o registro a partir do diretorio corrente.
+            linhas += [
+                f"Ramo `{ramo['slug']}` oferecido e sem resposta. Pergunte ao usuario se abre o ramo.",
+                "Agora nao (parkeia o ramo), rodada sozinha na pasta do projeto:",
+                f'python "{(SCRIPTS / "branch_state.py").as_posix()}" decision '
+                f"--slug {ramo['slug']} --decision park",
+                "Descartar: a mesma linha com --decision discard. Abrir: skill branch-out.",
+            ]
+        elif self._resolve_gate_aceita(row, gate_type):
+            linhas += [
+                "Leve o portao ao usuario. Com a decisao explicita dele, rode sozinha:",
+                f'python "{(SCRIPTS / "state_cli.py").as_posix()}" '
+                f'--home "{self.home.resolve().as_posix()}" gate --task {row["task_id"]} '
+                f"--type {gate_type} --decision approve --expect-revision {row['revision']}",
+            ]
+            if gate_type != "escalation":
+                # Fase-portao: `resolve_gate` ja avanca. Repetir a transicao
+                # pediria a mesma fase de novo e sairia com "next phase must be".
+                seguinte = json.loads(row["pipeline_json"])[int(row["phase_index"]) + 1]
+                depois = f"A aprovacao ja avanca a fase para `{seguinte}`: nao repita a transicao."
+        else:
+            depois = None
+            linhas.append(
+                f"Nenhum comando resolve `{gate_type}` nesta fase: ele nao e a fase atual do "
+                "pipeline e nao tem resolvedor proprio. Leve o bloqueio ao usuario."
+            )
+        if depois:
+            linhas.append(depois)
+        if depois and len(pendentes) > 1:
+            linhas.append(
+                "Ha mais de um portao pendente, e cada resolucao sobe a revisao: so a linha "
+                "acima vale agora. Os outros voltam na proxima recusa, com a revisao certa."
+            )
+        return "\n".join(linhas)
+
+    @staticmethod
+    def _nome_do_portao(gate: sqlite3.Row) -> str:
+        """`tipo` ou `tipo:assunto` — a forma que `pending_gate` mostra."""
+        nome = str(gate["gate_type"])
+        if gate["subject_id"]:
+            nome += f":{gate['subject_id']}"
+        return nome
 
     def touch_file(self, task_id: str, path: str, *, origem: str = "desconhecida") -> dict[str, Any]:
         return self.touch_files(task_id, [path], origem=origem)
