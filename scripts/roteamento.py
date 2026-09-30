@@ -68,9 +68,21 @@ def carregar_tabela(pasta=None) -> dict:
     return tabela
 
 
+_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+
+
+def _normaliza(prompt: str) -> str:
+    """Texto do chip igual nas duas pontas: a mae registra o prompt como o passou ao
+    spawn_task (LF, sem prefixo); a filha o recebe com o host prefixando um bloco
+    <system-reminder> (worktree) e, as vezes, com CRLF (medido 2026-09-30). Fim de
+    linha vira LF e os blocos <system-reminder> saem: sao contexto do host, nunca do chip."""
+    texto = re.sub(r"\r\n?", "\n", prompt or "")
+    return _REMINDER_RE.sub("", texto)
+
+
 def parse_linha(prompt: str):
     """(modelo, esforco, tipo) da ULTIMA linha de roteamento do texto, ou None."""
-    achados = list(LINHA_RE.finditer(prompt or ""))
+    achados = list(LINHA_RE.finditer(_normaliza(prompt)))
     if not achados:
         return None
     m = achados[-1]
@@ -84,11 +96,12 @@ def termina_na_linha(prompt: str) -> bool:
 
 
 def prompt_sha(prompt: str) -> str | None:
-    """sha do prompt ate o fim da ultima linha de roteamento (12 hex)."""
-    achados = list(LINHA_RE.finditer(prompt or ""))
+    """sha do prompt normalizado ate o fim da ultima linha de roteamento (12 hex)."""
+    texto = _normaliza(prompt)
+    achados = list(LINHA_RE.finditer(texto))
     if not achados:
         return None
-    base = prompt[: achados[-1].end()].strip()
+    base = texto[: achados[-1].end()].strip()
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:12]
 
 

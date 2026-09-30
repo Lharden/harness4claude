@@ -355,3 +355,64 @@ def test_hooks_json_registra_os_dois_eventos():
     ups = [g for g in dados["UserPromptSubmit"]
            if any("harness-roteamento.sh" in h["command"] for h in g["hooks"])]
     assert len(ups) == 1
+
+
+# ---- sha do chip normalizado (prefixo do host + CRLF; medido 2026-09-30) ------
+
+CHIP = "Implemente Z.\n\nSegunda linha.\n\nRoteamento: sonnet · medium (execucao-mecanica)"
+PREFIXO_HOST = ("<system-reminder>\r\nYou are operating in a git worktree. "
+                "Worktree path: C:\\x\\.claude\\worktrees\\y\r\n</system-reminder>\r\n")
+
+
+def _como_a_filha_recebe(chip):
+    return PREFIXO_HOST + chip.replace("\n", "\r\n")
+
+
+def test_sha_do_chip_e_igual_ao_da_filha_com_prefixo_do_host_e_crlf():
+    import roteamento as rt
+    assert rt.prompt_sha(CHIP) is not None
+    assert rt.prompt_sha(_como_a_filha_recebe(CHIP)) == rt.prompt_sha(CHIP)
+
+
+def test_sha_ignora_varios_blocos_system_reminder_antes_da_linha():
+    import roteamento as rt
+    duplo = "<system-reminder>\na\nb\n</system-reminder>\n" + PREFIXO_HOST + CHIP
+    assert rt.prompt_sha(duplo) == rt.prompt_sha(CHIP)
+
+
+def test_sha_de_corpo_diferente_por_uma_palavra_continua_diferente():
+    import roteamento as rt
+    outro = CHIP.replace("Implemente", "Implementei")
+    assert rt.prompt_sha(outro) != rt.prompt_sha(CHIP)
+    assert rt.prompt_sha(_como_a_filha_recebe(outro)) != rt.prompt_sha(_como_a_filha_recebe(CHIP))
+    assert rt.prompt_sha(_como_a_filha_recebe(outro)) == rt.prompt_sha(outro)
+
+
+def test_sha_sem_linha_de_roteamento_e_none():
+    import roteamento as rt
+    assert rt.prompt_sha("Implemente Z.") is None
+    assert rt.prompt_sha(PREFIXO_HOST + "Implemente Z.") is None
+
+
+def test_ponta_a_ponta_chip_registrado_pela_mae_e_achado_para_a_filha_com_prefixo_e_crlf(amb):
+    env, _, _ = amb
+    par = "sonnet · medium (execucao-mecanica)"
+    assert _decisao(_rodar(env, _pre(CHIP, sid="mae-7"), "PreToolUse")) != "deny"
+    filha = _como_a_filha_recebe(CHIP)
+    ctx = _saida(_rodar(env, _ups(filha, "filha-7"), "UserPromptSubmit"))["hookSpecificOutput"]["additionalContext"]
+    import roteamento as rt
+    sha = rt.prompt_sha(filha)
+    assert sha in ctx
+    ok = _saida(_rodar(env, _ups(_msg_mae(par, sha), "mae-7"), "UserPromptSubmit"))
+    ctx_mae = ok["hookSpecificOutput"]["additionalContext"]
+    assert "Pedido conferido" in ctx_mae and "set_session_model" in ctx_mae  # o ok menciona recusado so para aprovacao negada
+    # corpo diferente por uma palavra: a mae recusa
+    outra = _como_a_filha_recebe(CHIP.replace("Implemente", "Implementei"))
+    no = _saida(_rodar(env, _ups(_msg_mae(par, rt.prompt_sha(outra)), "mae-7"), "UserPromptSubmit"))
+    assert "[roteamento-recusado" in no["hookSpecificOutput"]["additionalContext"]
+
+
+def test_parse_linha_le_a_linha_em_prompt_crlf_com_quebra_final():
+    import roteamento as rt
+    chip_crlf = CHIP.replace("\n", "\r\n") + "\r\n"
+    assert rt.parse_linha(PREFIXO_HOST + chip_crlf) == ("sonnet", "medium", "execucao-mecanica")
