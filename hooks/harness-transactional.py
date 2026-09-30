@@ -412,6 +412,15 @@ def _tokenize(command: str) -> list[str]:
         if character in {chr(39), chr(34)}:
             quote = character
             continue
+        if character in {chr(10), chr(13)}:
+            # Quebra de linha fora de aspas separa comandos. Ate 2026-09-30 ela
+            # caia no `isspace` abaixo e virava espaco: `echo hi` + nova linha +
+            # `python gera.py` era UM segmento de `echo`, e `is_read_only`
+            # dizia True. `\r` entra junto porque o PowerShell tambem o le como
+            # fim de linha, e `_scan_composition` ja o tratava como operador.
+            fechar()
+            tokens.append(chr(10))
+            continue
         if character.isspace():
             fechar()
             continue
@@ -431,7 +440,7 @@ def _tokenize(command: str) -> list[str]:
     return tokens
 
 
-_OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
+_OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&', chr(10)})
 
 
 #: Binarios cujo unico efeito e ler. Cada nome aqui e a afirmacao "este comando
@@ -445,6 +454,12 @@ _OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
 #: `code_revision` comecavam por `cd`. `find` tambem le, mas escreve e executa
 #: pelo argumento — por isso fica fora daqui e tem regra propria em
 #: `_FIND_QUE_ESCREVE`.
+#:
+#: Estar aqui NAO dispensa a opcao. `sort -o`, `uniq IN OUT` e `sed -i`/`w`
+#: escrevem, e ate 2026-09-30 passavam como leitura; a regra de cada um mora em
+#: `_ESCRITA_POR_OPCAO`. A auditoria das demais entradas esta escrita em
+#: `tests/test_transactional_hook.py::SEM_ESCRITA_POR_OPCAO`, e o teste reprova
+#: binario novo que entre aqui sem passar por uma das duas.
 _SOMENTE_LEITURA = frozenset({
     'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'ls', 'pwd', 'echo', 'printf',
     'sort', 'uniq', 'cut', 'nl', 'basename', 'dirname', 'stat', 'diff', 'cmp',
@@ -540,7 +555,7 @@ def nao_muda_a_arvore(command: str) -> bool:
     if not segmentos:
         return False
     for partes in segmentos:
-        if _binario(partes[0]) != 'git':
+        if _binario(partes[0]) != 'git' or _escrita_por_opcao(partes)[1]:
             return False
         if _subcomando_git(partes) not in (_GIT_NAO_MUDA_ARVORE | _GIT_SOMENTE_LEITURA):
             return False
@@ -589,8 +604,21 @@ def _segmentos(command: str) -> list[list[str]]:
     binario de leitura — 10 dos 27 comandos de leitura pura do incidente dos
     docs subiram `code_revision` so por isso. Quem decide se o alvo e escrita
     e `_redireciona_para_arquivo`, chamado antes por quem usa os segmentos.
+
+    Nova linha abre segmento (ver `_tokenize`), e por isso o corpo de heredoc
+    sai ANTES, como em `shell_write_targets`: o corpo e dado para o stdin, nao
+    comando, e cada linha dele viraria um segmento de "binario" desconhecido.
     """
-    tokens = _tokenize(command)
+    return _segmentar(_tokenize(sem_corpo_de_heredoc(command)))
+
+
+def _segmentar(tokens: list[str]) -> list[list[str]]:
+    """`_segmentos` sobre tokens ja prontos.
+
+    Separado porque `sem_corpo_de_heredoc` nao e idempotente: aplicado ao texto
+    ja limpo, o `cat <<EOF` que sobrou abriria outro corpo e engoliria as linhas
+    seguintes. `shell_write_targets` limpa uma vez e segmenta os proprios tokens.
+    """
     segmento: list[str] = []
     segmentos: list[list[str]] = []
     indice = 0
@@ -606,7 +634,11 @@ def _segmentos(command: str) -> list[list[str]]:
             indice += 3
             continue
         if token in {'>', '>>'}:
-            indice += 2
+            # O alvo e argumento do redirecionamento — salvo quando o que vem e
+            # operador. `echo x >` no fim da linha e erro de sintaxe, e engolir
+            # a quebra fundiria a linha seguinte neste segmento.
+            seguinte = tokens[indice + 1] if indice + 1 < len(tokens) else None
+            indice += 1 if seguinte in _OPERADORES_TOKEN else 2
             continue
         if token in _OPERADORES_TOKEN:
             if segmento:
@@ -641,6 +673,8 @@ def is_read_only(command: str) -> bool:
     if not segmentos:
         return False
     for partes in segmentos:
+        if _escrita_por_opcao(partes)[1]:
+            return False
         binario = _binario(partes[0])
         if binario == 'git':
             if _subcomando_git(partes) not in _GIT_SOMENTE_LEITURA:
@@ -652,9 +686,30 @@ def is_read_only(command: str) -> bool:
             continue
         if binario not in _SOMENTE_LEITURA:
             return False
-        if binario == 'sed' and any(p.startswith('-i') for p in partes[1:]):
-            return False
     return True
+
+
+def _fim_da_aritmetica(linha: str, inicio: int) -> int:
+    """Indice logo depois da expressao aritmetica que abre em `inicio`.
+
+    `inicio` aponta para `((` (o de `$((` ou o comando `((`) ou para `$[`. Ali
+    dentro `<<` e deslocamento de bits, nao heredoc. Lido como heredoc, o `<<2`
+    de `echo $((1<<2))` engolia as linhas seguintes como corpo — e, com o corpo
+    saindo antes da segmentacao, elas sumiam da leitura. Sem fechamento na
+    linha, a expressao vai ate o fim dela.
+    """
+    abre, fecha = ('[', ']') if linha[inicio] == '$' else ('(', ')')
+    cursor = inicio + 1 if abre == '[' else inicio
+    profundidade = 0
+    while cursor < len(linha):
+        if linha[cursor] == abre:
+            profundidade += 1
+        elif linha[cursor] == fecha:
+            profundidade -= 1
+            if profundidade == 0:
+                return cursor + 1
+        cursor += 1
+    return len(linha)
 
 
 def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
@@ -688,6 +743,9 @@ def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
         if caractere == chr(92):
             escaped = True
             indice += 1
+            continue
+        if linha.startswith('((', indice) or linha.startswith('$[', indice):
+            indice = _fim_da_aritmetica(linha, indice)
             continue
         if caractere == '<' and linha.startswith('<<', indice):
             if linha.startswith('<<<', indice):
@@ -763,6 +821,374 @@ def sem_corpo_de_heredoc(command: str, recusas: list[dict[str, Any]] | None = No
     return "\n".join(mantidas)
 
 
+def _nome_longo(nome: str, longas: dict[str, str], abrevia: bool) -> str | None:
+    """O nome canonico de `--nome`, ou None se ele nao identifica opcao nenhuma.
+
+    O `getopt_long` do GNU aceita qualquer prefixo sem ambiguidade — `sort
+    --out=x` escreve em `x`. Prefixo ambiguo ou desconhecido faz o programa
+    sair com erro antes de rodar, entao nao ha escrita a atribuir.
+    """
+    if nome in longas:
+        return nome
+    if not abrevia or not nome:
+        return None
+    candidatos = [longa for longa in longas if longa.startswith(nome)]
+    return candidatos[0] if len(candidatos) == 1 else None
+
+
+def _opcoes_gnu(
+    argumentos: list[str],
+    *,
+    com_valor: str = '',
+    valor_colado: str = '',
+    longas: dict[str, str] | None = None,
+    abrevia: bool = True,
+) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """(opcoes, operandos) de uma linha no estilo `getopt_long`.
+
+    As opcoes saem como `('-o', valor)` e `('--output', valor)`, ja com o nome
+    longo resolvido. `com_valor` sao as curtas que exigem valor (colado ou no
+    token seguinte), `valor_colado` as que so aceitam valor colado (`sed -i.bak`),
+    e `longas` mapeia cada nome longo para `sim`, `opcional` ou `nao`.
+
+    Existe porque "a opcao aparece na linha" nao basta nas duas direcoes: `-uo x`
+    agrupa o `-o`, `sort f -o x` o poe depois do operando (o GNU permuta), e em
+    `git grep -e -O` o `-O` e o padrao buscado, nao a opcao. Depois de `--` tudo
+    e operando.
+    """
+    longas = longas or {}
+    opcoes: list[tuple[str, str | None]] = []
+    operandos: list[str] = []
+    indice = 0
+    while indice < len(argumentos):
+        argumento = argumentos[indice]
+        indice += 1
+        if argumento == '--':
+            operandos.extend(argumentos[indice:])
+            break
+        if argumento.startswith('--'):
+            nome, igual, valor = argumento[2:].partition('=')
+            resolvido = _nome_longo(nome, longas, abrevia)
+            if resolvido and not igual and longas[resolvido] == 'sim' and indice < len(argumentos):
+                valor, igual = argumentos[indice], '='
+                indice += 1
+            opcoes.append(('--' + (resolvido or nome), valor if igual else None))
+            continue
+        if argumento.startswith('-') and argumento != '-':
+            for posicao in range(1, len(argumento)):
+                letra, resto = argumento[posicao], argumento[posicao + 1:]
+                if letra in com_valor:
+                    if not resto and indice < len(argumentos):
+                        resto = argumentos[indice]
+                        indice += 1
+                    opcoes.append(('-' + letra, resto))
+                    break
+                if letra in valor_colado:
+                    opcoes.append(('-' + letra, resto or None))
+                    break
+                opcoes.append(('-' + letra, None))
+            continue
+        operandos.append(argumento)
+    return opcoes, operandos
+
+
+_LONGAS_DO_SORT = {
+    'output': 'sim', 'compress-program': 'sim', 'key': 'sim',
+    'field-separator': 'sim', 'buffer-size': 'sim', 'temporary-directory': 'sim',
+    'batch-size': 'sim', 'files0-from': 'sim', 'random-source': 'sim',
+    'parallel': 'sim', 'sort': 'sim', 'check': 'opcional',
+    'ignore-leading-blanks': 'nao', 'debug': 'nao', 'dictionary-order': 'nao',
+    'general-numeric-sort': 'nao', 'human-numeric-sort': 'nao', 'ignore-case': 'nao',
+    'ignore-nonprinting': 'nao', 'merge': 'nao', 'month-sort': 'nao',
+    'numeric-sort': 'nao', 'random-sort': 'nao', 'reverse': 'nao', 'stable': 'nao',
+    'unique': 'nao', 'version-sort': 'nao', 'zero-terminated': 'nao',
+    'help': 'nao', 'version': 'nao',
+}
+
+
+def _escrita_do_sort(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`-o`/`--output` escreve o resultado; `--compress-program` executa um programa."""
+    opcoes, _ = _opcoes_gnu(argumentos, com_valor='kotST', longas=_LONGAS_DO_SORT)
+    alvos = [valor for nome, valor in opcoes if nome in {'-o', '--output'} and valor]
+    escreve = any(nome in {'-o', '--output', '--compress-program'} for nome, _ in opcoes)
+    return alvos, escreve
+
+
+_LONGAS_DO_UNIQ = {
+    'skip-fields': 'sim', 'skip-chars': 'sim', 'check-chars': 'sim',
+    'all-repeated': 'opcional', 'group': 'opcional', 'count': 'nao',
+    'repeated': 'nao', 'ignore-case': 'nao', 'unique': 'nao',
+    'zero-terminated': 'nao', 'help': 'nao', 'version': 'nao',
+}
+
+
+def _escrita_do_uniq(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`uniq [ENTRADA [SAIDA]]`: o segundo operando e arquivo escrito, salvo `-`."""
+    _, operandos = _opcoes_gnu(argumentos, com_valor='fsw', longas=_LONGAS_DO_UNIQ)
+    if len(operandos) >= 2 and operandos[1] != '-':
+        return [operandos[1]], True
+    return [], False
+
+
+_LONGAS_DO_SED = {
+    'expression': 'sim', 'file': 'sim', 'line-length': 'sim', 'in-place': 'opcional',
+    'null-data': 'nao', 'zero-terminated': 'nao', 'separate': 'nao', 'sandbox': 'nao',
+    'debug': 'nao', 'posix': 'nao', 'quiet': 'nao', 'silent': 'nao',
+    'regexp-extended': 'nao', 'unbuffered': 'nao', 'follow-symlinks': 'nao',
+    'binary': 'nao', 'help': 'nao', 'version': 'nao',
+}
+
+
+def _escrita_do_sed(argumentos: list[str]) -> tuple[list[str], bool]:
+    """Edicao no lugar, e os comandos do roteiro que escrevem ou executam.
+
+    `-i` edita TODOS os arquivos de entrada, nao so o ultimo, e aparece como
+    `--in-place`, agrupado (`-Ei`) e com sufixo (`-i.bak`). O roteiro escreve
+    por `w`/`W` e pela flag `w` do `s`, e executa por `e` e pela flag `e`.
+    `--sandbox` recusa `e`/`r`/`w`. Roteiro em arquivo (`-f`) nao da para ler
+    daqui: conta como escrita.
+    """
+    opcoes, operandos = _opcoes_gnu(
+        argumentos, com_valor='efl', valor_colado='i', longas=_LONGAS_DO_SED
+    )
+    nomes = {nome for nome, _ in opcoes}
+    roteiros = [valor for nome, valor in opcoes if nome in {'-e', '--expression'} and valor is not None]
+    em_arquivo = bool(nomes & {'-f', '--file'})
+    arquivos = operandos
+    if not roteiros and not em_arquivo and operandos:
+        roteiros, arquivos = [operandos[0]], operandos[1:]
+    alvos: list[str] = []
+    escreve = False
+    if nomes & {'-i', '--in-place'}:
+        alvos.extend(arquivo for arquivo in arquivos if arquivo != '-')
+        escreve = True
+    if '--sandbox' not in nomes:
+        escreve = escreve or em_arquivo
+        for roteiro in roteiros:
+            do_roteiro, escreve_roteiro = _roteiro_do_sed(roteiro)
+            alvos.extend(do_roteiro)
+            escreve = escreve or escreve_roteiro
+    return alvos, escreve
+
+
+def _roteiro_do_sed(roteiro: str) -> tuple[list[str], bool]:
+    """(arquivos que o roteiro escreve, se escreve ou executa), pela gramatica do GNU sed.
+
+    Procurar `w` no texto nao serve: `sed -n '/def test/p'` e `s/hello/world/`
+    tem `e` e `w` dentro da expressao e so leem. Entao o roteiro e lido como o
+    sed le — endereco, `!`, comando, e os argumentos de cada comando — e o que
+    nao for reconhecido conta como escrita.
+    """
+    alvos: list[str] = []
+    escreve = False
+    tamanho = len(roteiro)
+
+    def ate_o_fim_da_linha(cursor: int) -> tuple[str, int]:
+        fim = roteiro.find(chr(10), cursor)
+        if fim < 0:
+            return roteiro[cursor:], tamanho
+        return roteiro[cursor:fim], fim + 1
+
+    def delimitado(cursor: int, delimitador: str) -> int:
+        """Indice depois do delimitador que fecha, ou -1 se nao fecha."""
+        while cursor < tamanho:
+            caractere = roteiro[cursor]
+            if caractere == chr(92):
+                cursor += 2
+                continue
+            if caractere == delimitador:
+                return cursor + 1
+            if caractere == chr(10):
+                return -1
+            cursor += 1
+        return -1
+
+    def endereco(cursor: int) -> int:
+        if cursor < tamanho and roteiro[cursor].isdigit():
+            while cursor < tamanho and (roteiro[cursor].isdigit() or roteiro[cursor] == '~'):
+                cursor += 1
+            return cursor
+        if cursor < tamanho and roteiro[cursor] == '$':
+            return cursor + 1
+        if cursor < tamanho and roteiro[cursor] in {'/', chr(92)}:
+            if roteiro[cursor] == chr(92):
+                if cursor + 1 >= tamanho:
+                    return -1
+                delimitador, cursor = roteiro[cursor + 1], cursor + 2
+            else:
+                delimitador, cursor = '/', cursor + 1
+            cursor = delimitado(cursor, delimitador)
+            while 0 <= cursor < tamanho and roteiro[cursor] in 'IM':
+                cursor += 1
+        return cursor
+
+    def pula_brancos(cursor: int, tambem: str = '') -> int:
+        while cursor < tamanho and roteiro[cursor] in ' \t' + tambem:
+            cursor += 1
+        return cursor
+
+    def arquivo(nome: str) -> None:
+        if nome.strip():
+            alvos.append(nome.strip())
+
+    cursor = 0
+    while cursor < tamanho:
+        if roteiro[cursor] in ' \t;' + chr(10):
+            cursor += 1
+            continue
+        if roteiro[cursor] == '#':
+            _, cursor = ate_o_fim_da_linha(cursor)
+            continue
+        cursor = endereco(cursor)
+        if cursor < 0:
+            return alvos, True
+        cursor = pula_brancos(cursor)
+        if cursor < tamanho and roteiro[cursor] == ',':
+            cursor = pula_brancos(cursor + 1)
+            if cursor < tamanho and roteiro[cursor] in '+~':
+                cursor += 1
+                while cursor < tamanho and roteiro[cursor].isdigit():
+                    cursor += 1
+            else:
+                cursor = endereco(cursor)
+                if cursor < 0:
+                    return alvos, True
+        cursor = pula_brancos(cursor, '!')
+        if cursor >= tamanho:
+            return alvos, True
+        comando = roteiro[cursor]
+        cursor += 1
+        if comando in '{}=dDgGhHnNpPxzF':
+            continue
+        if comando in 'lLqQ':
+            cursor = pula_brancos(cursor)
+            while cursor < tamanho and roteiro[cursor].isdigit():
+                cursor += 1
+            continue
+        if comando in ':btTv':
+            while cursor < tamanho and roteiro[cursor] not in ';' + chr(10):
+                cursor += 1
+            continue
+        if comando in 'aic':
+            linha, cursor = ate_o_fim_da_linha(cursor)
+            while linha.endswith(chr(92)) and cursor < tamanho:
+                linha, cursor = ate_o_fim_da_linha(cursor)
+            continue
+        if comando in 'rRwW':
+            nome, cursor = ate_o_fim_da_linha(cursor)
+            if comando in 'wW':
+                escreve = True
+                arquivo(nome)
+            continue
+        if comando == 'e':
+            _, cursor = ate_o_fim_da_linha(cursor)
+            escreve = True
+            continue
+        if comando in 'sy':
+            if cursor >= tamanho or roteiro[cursor] in {chr(10), chr(92)}:
+                return alvos, True
+            delimitador = roteiro[cursor]
+            cursor = delimitado(cursor + 1, delimitador)
+            if cursor >= 0:
+                cursor = delimitado(cursor, delimitador)
+            if cursor < 0:
+                return alvos, True
+            while comando == 's' and cursor < tamanho:
+                flag = roteiro[cursor]
+                if flag in 'gpiImM' or flag.isdigit():
+                    cursor += 1
+                elif flag == 'e':
+                    escreve = True
+                    cursor += 1
+                elif flag == 'w':
+                    nome, cursor = ate_o_fim_da_linha(cursor + 1)
+                    escreve = True
+                    arquivo(nome)
+                else:
+                    break
+            continue
+        return alvos, True
+    return alvos, escreve
+
+
+#: Subcomandos de leitura do git que aceitam `--output=<arquivo>` (opcao de
+#: diff). Conferido em git 2.55: cada um criou o arquivo; `status`, `grep`,
+#: `ls-files`, `rev-parse`, `describe` e `cat-file` nao.
+_GIT_COM_OUTPUT = frozenset({'diff', 'log', 'show', 'shortlog', 'blame'})
+
+_LONGAS_DO_GIT_GREP = {
+    'open-files-in-pager': 'opcional', 'only-matching': 'nao', 'or': 'nao',
+    'and': 'nao', 'not': 'nao', 'max-depth': 'sim', 'max-count': 'sim',
+    'threads': 'sim', 'after-context': 'sim', 'before-context': 'sim',
+    'context': 'sim',
+}
+
+
+def _escrita_do_git(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`--output` nos subcomandos de diff, e o pager arbitrario de `git grep -O`.
+
+    `--output` nao aceita abreviacao (git 2.55 recusa `--outp`), e
+    `--output-indicator-new` e outra opcao. Depois de `--` e pathspec.
+    """
+    posicao = next((k for k, argumento in enumerate(argumentos) if not argumento.startswith('-')), None)
+    if posicao is None:
+        return [], False
+    subcomando, resto = argumentos[posicao], argumentos[posicao + 1:]
+    if subcomando == 'grep':
+        opcoes, _ = _opcoes_gnu(
+            resto, com_valor='ABCefm', valor_colado='O', longas=_LONGAS_DO_GIT_GREP
+        )
+        return [], any(nome in {'-O', '--open-files-in-pager'} for nome, _ in opcoes)
+    if subcomando not in _GIT_COM_OUTPUT:
+        return [], False
+    alvos: list[str] = []
+    escreve = False
+    for indice, argumento in enumerate(resto):
+        if argumento == '--':
+            break
+        if argumento.startswith('--output='):
+            escreve = True
+            alvos.append(argumento[len('--output='):])
+        elif argumento == '--output':
+            escreve = True
+            if indice + 1 < len(resto):
+                alvos.append(resto[indice + 1])
+    return [alvo for alvo in alvos if alvo], escreve
+
+
+_LONGAS_DO_RG = {
+    'pre': 'sim', 'pre-glob': 'sim', 'no-pre': 'nao', 'regexp': 'sim', 'file': 'sim',
+    'glob': 'sim', 'iglob': 'sim', 'replace': 'sim', 'type': 'sim', 'type-not': 'sim',
+}
+
+
+def _escrita_do_rg(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`--pre COMANDO` roda um programa por arquivo. rg 15.1 nao abrevia opcao."""
+    opcoes, _ = _opcoes_gnu(
+        argumentos, com_valor='efgtTmABCMjdEr', longas=_LONGAS_DO_RG, abrevia=False
+    )
+    return [], any(nome == '--pre' and valor for nome, valor in opcoes)
+
+
+#: Binarios que escrevem ou executam dependendo da opcao. Cada regra devolve
+#: `(alvos, escreve)`: os arquivos atribuiveis, e se o segmento escreve ou
+#: executa. As duas metades sao independentes de proposito — `sort -o $OUT`
+#: escreve sem alvo que a regua aceite, e `rg --pre` executa sem alvo nenhum.
+_ESCRITA_POR_OPCAO = {
+    'sort': _escrita_do_sort,
+    'uniq': _escrita_do_uniq,
+    'sed': _escrita_do_sed,
+    'git': _escrita_do_git,
+    'rg': _escrita_do_rg,
+}
+
+
+def _escrita_por_opcao(partes: list[str]) -> tuple[list[str], bool]:
+    """A regra de `_ESCRITA_POR_OPCAO` para o binario que abre o segmento."""
+    regra = _ESCRITA_POR_OPCAO.get(_binario(partes[0])) if partes else None
+    return regra(partes[1:]) if regra else ([], False)
+
+
 def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = None) -> list[str]:
     """Arquivos que este comando de shell escreve, ate onde da para atribuir.
 
@@ -773,7 +1199,11 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
     que alterou 2 arquivos por heredoc registrou `files=0` e virou L0, e
     `proxy_regex_vs_observado` e calculado sobre esse rotulo.
 
-    Cobre redirecionamento, `tee` e `sed -i`. NAO cobre programa que escreve
+    Cobre redirecionamento, `tee` e a escrita por opcao de `_ESCRITA_POR_OPCAO`
+    (`sed -i`, `sort -o`, `uniq IN OUT`, `git diff --output`...), esta so no
+    binario que abre o segmento: em `grep -rn uniq a.py b.py` a palavra `uniq`
+    e padrao de busca, e ler `b.py` como saida invalidaria evidencia por uma
+    leitura. `tee` segue sendo procurado em qualquer posicao. NAO cobre programa que escreve
     por dentro (`python - <<PY` com `write_text`), e nao ha como cobrir: e um
     programa. Por isso o chamador mantem o placeholder quando esta lista sai
     vazia — 'nao da para saber' e diferente de 'nao escreveu'.
@@ -819,14 +1249,9 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
                     continue
                 considerar(seguinte)
                 break
-        elif token == 'sed':
-            fatia = []
-            for seguinte in tokens[indice + 1:]:
-                if seguinte in _OPERADORES_TOKEN:
-                    break
-                fatia.append(seguinte)
-            if any(f.startswith('-i') for f in fatia) and fatia:
-                considerar(fatia[-1])
+    for partes in _segmentar(tokens):
+        for alvo in _escrita_por_opcao(partes)[0]:
+            considerar(alvo)
     return alvos
 
 def _response(payload: dict[str, Any]) -> Any:
