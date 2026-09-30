@@ -227,8 +227,8 @@ revisores (5) ──findings──▶ dedupe ──┬── critical/high ─�
 
 ### Medição de B (procedimento de REQ-F12)
 
-1. Fixar o commit da rodada 1 com uma ref local (`git branch medicao/verify-rodada1 <sha>`), para ele não ser coletado.
-2. `git worktree add --detach .claude/worktrees/medicao-rodada1 <sha>`.
+1. Fixar o commit da rodada 1 com uma ref local (`git branch medicao/verify-rodada1 578e0bc`), para ele não ser coletado (ASSUMPTION-008).
+2. `git worktree add --detach .claude/worktrees/medicao-rodada1 578e0bc`.
 3. Rodar o Workflow do ramo com `changed_files` = os cinco da rodada 1
    (`scripts/evidencia_em_segundo_plano.py`, `scripts/transactional_state.py`,
    `hooks/harness-transactional.py`, `tests/test_evidencia_em_segundo_plano.py`,
@@ -284,11 +284,11 @@ adjudicado.
 
 ## [NEEDS CLARIFICATION]
 
-- [ ] **CLARIF-1**: L-04 fixou a medição em `5d2086b`. O código exato que a
+- [x] ~~**CLARIF-1**: L-04 fixou a medição em `5d2086b`. O código exato que a
   rodada 1 revisou (12:52) é o `578e0bc` — o merge de 12:47:40 no ramo da mãe,
   antes do rebase. O `5d2086b` é a mesma feature reaplicada sobre `db42807`, com o
   `transactional_state.py` de outra base. Recomendação: medir em `578e0bc`, que é
-  a única comparação que isola a rubrica.
+  a única comparação que isola a rubrica.~~ → ASSUMPTION-008.
 
 ---
 
@@ -301,6 +301,7 @@ adjudicado.
 - **ASSUMPTION-005**: numerar os achados pela posição na lista basta para a tabela de destino, porque a lista de uma rodada não muda depois de devolvida · decidido 2026-09-30 por inferência · justifica: REQ-F3, AC-2.9
 - **ASSUMPTION-006**: a garantia de DONE é de protocolo mais checador, sem trava no `state_cli` · decidido 2026-09-30 por usuário (L-05) · justifica: REQ-F6, REQ-F7
 - **ASSUMPTION-007**: critério de entrada da rubrica é metade dos defeitos conhecidos re-achados em `high`/`critical` · decidido 2026-09-30 por usuário (L-06) · justifica: REQ-F12, AC-4.3
+- **ASSUMPTION-008**: a rodada 1 (`wf_6bd9e71a-c4f`, início 12:52 -0300) revisou o `578e0bc` (merge das 12:47:40 no ramo da mãe, antes do rebase; próximo commit às 13:12), e a medição usa esse commit · decidido 2026-09-30 por usuário (CLARIF-1) · justifica: REQ-F12, AC-4.1
 
 ---
 
@@ -312,7 +313,7 @@ adjudicado.
 - [ ] `tools/orfaos.py` sem acusar `checar_triagem.py`
 - [ ] `wf-verify-multimodel` desta task com `pass: true`, ou checador saindo 0 para a última rodada
 - [ ] `CLAUDE.md` global com a frase de L-03
-- [ ] CLARIF-1 resolvida e registrada como suposição
+- [x] CLARIF-1 resolvida e registrada como suposição (ASSUMPTION-008)
 
 ---
 
@@ -328,8 +329,8 @@ adjudicado.
   "priorities": ["P1", "P2"],
   "requirement_count": 16,
   "user_story_count": 5,
-  "needs_clarification_count": 1,
-  "assumption_count": 7,
+  "needs_clarification_count": 0,
+  "assumption_count": 8,
   "assumptions_by_inference": 4
 }
 ```

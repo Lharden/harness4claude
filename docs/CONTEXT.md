@@ -341,12 +341,14 @@ adjudicação nunca abriu.
 - **L-04 · B é medida antes de entrar:** uma rodada do Workflow com a rubrica
   sobre o diff da sessão-mãe antes dos consertos (`5d2086b`, com os defeitos
   G1–G6 conhecidos da rodada 1). Custo aceito: ~570 mil tokens da revisão mais
-  ~85 mil por achado promovido a `high`.
+  ~85 mil por achado promovido a `high`. **Corrigido em 2026-09-30 (CLARIF-1 da
+  spec, decisão do usuário):** o commit é o `578e0bc`, que a rodada 1 revisou
+  antes do rebase; o `5d2086b` é a mesma feature sobre outra base.
 - **L-05 · "Destino escrito" é checado por script (brainstorming, 2026-09-30):**
   um checador lê o `closure-plan.md` e reprova listando os achados sem destino,
   com a linha que falta; a skill manda rodá-lo antes do `complete`. O
   `state_cli` não muda.
-- **L-06 · Critério de entrada de B:** na rodada sobre `5d2086b`, pelo menos
+- **L-06 · Critério de entrada de B:** na rodada sobre `578e0bc`, pelo menos
   metade dos defeitos conhecidos que a rodada re-achar sai `high`/`critical`.
   Abaixo disso, B não entra e o resultado fica escrito.
 
