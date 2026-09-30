@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -163,30 +164,101 @@ def test_retomada_pos_compact_chega_pelo_session_start(tmp_path: Path):
     assert "Pending human gate: approve-spec" in message
 
 
-def test_subagent_start_includes_scoped_node_contract(tmp_path: Path):
-    harness_root = tmp_path / "harness"
-    cwd = tmp_path / "repo"
-    cwd.mkdir()
-    bucket = ensure_state_dir(harness_root, cwd, session_id="session-b")
-    (bucket / "state.json").write_text(
-        json.dumps({"task_id": "t-node", "status": "active", "pipeline": ["grill-me"]}),
-        encoding="utf-8",
-    )
+# --- SubagentStart registra e fica calado (incidente 2026-09-28) -------------
+#
+# O SubagentStart mandava todo subagente "Invoke skill='harness-workflow' and
+# continue from this exact state". No run wf_8ec3454a-257 (wf-grill), 3 das 5
+# lentes carregaram o orquestrador antes de ler a spec: de 13,2 k a 16,4 k
+# tokens a mais por lente, medidos pelo `usage` do transcript, e a regra 4 de
+# fan-out ("Descontaminar a aresta") desfeita — o juiz recebia o estado da task.
+# Em 1 525 transcripts de subagente da maquina, 49 carregaram a skill e dois
+# (um `Plan`, um `general-purpose`) rodaram `confirm_classification`/`state_cli`
+# sobre a task do PAI.
+#
+# Nao ha como emitir "so para subagente de pipeline": o payload traz apenas
+# `agent_id` e `agent_type`, e `analise-complexa` chega igual de um Workflow
+# (wf-verify-multimodel) e da ferramenta Agent. E nenhum subagente executa fase
+# — as fases rodam na sessao principal. Decisao do usuario em 2026-09-30:
+# nunca. A retomada da sessao principal continua pelo SessionStart
+# (`test_retomada_pos_compact_chega_pelo_session_start`, acima).
+
+# Ultimo commit antes da mudanca: o controle roda o hook que emitia RESUMING.
+OLD_REF = "18ec682eedd2340c66d41dcb0c5d6e3cdb38c7fa"
+
+TIPOS_DE_SUBAGENTE = (
+    "workflow-subagent",  # Workflow sem agentType (wf-grill)
+    "analise-complexa",   # Workflow com agentType E ferramenta Agent
+    "juiz-alto-risco",    # adjudicador do wf-verify-multimodel
+    "general-purpose",    # ferramenta Agent; rodou confirm_classification no pai
+    "Plan",               # ferramenta Agent; rodou state_cli no pai
+)
+
+
+def _rodar_subagent_start(hook: Path, harness_root: Path, cwd: Path, agent_type: str):
     env = os.environ.copy()
     env["HARNESS_DIR"] = str(harness_root)
-
-    result = subprocess.run(
-        [sys.executable, str(ROOT / "hooks" / "harness-lifecycle.py"), "--event", "SubagentStart"],
-        input=json.dumps({"session_id": "session-b", "cwd": str(cwd)}),
+    env["PYTHONPATH"] = str(ROOT / "scripts")
+    return subprocess.run(
+        [sys.executable, str(hook), "--event", "SubagentStart"],
+        input=json.dumps({
+            "session_id": "session-b", "cwd": str(cwd),
+            "hook_event_name": "SubagentStart",
+            "agent_id": "a-1", "agent_type": agent_type,
+        }),
         capture_output=True,
         text=True,
         check=False,
         env=env,
     )
 
-    message = _mensagem(result.stdout)
-    assert "t-node" in message
-    assert "NodeResult" in message
+
+def _task_viva(tmp_path: Path) -> tuple[Path, Path, Path]:
+    harness_root = tmp_path / "harness"
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    bucket = _bucket_com_gate_pendente(harness_root, cwd, "session-b")
+    return harness_root, cwd, bucket
+
+
+@pytest.mark.parametrize("agent_type", TIPOS_DE_SUBAGENTE)
+def test_subagent_start_registra_e_nao_emite(tmp_path: Path, agent_type: str):
+    harness_root, cwd, bucket = _task_viva(tmp_path)
+
+    result = _rodar_subagent_start(
+        ROOT / "hooks" / "harness-lifecycle.py", harness_root, cwd, agent_type)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", (
+        f"SubagentStart emitiu para {agent_type}: {result.stdout[:200]}")
+    with sqlite3.connect(bucket / "lifecycle.db") as conexao:
+        eventos = [linha[0] for linha in conexao.execute("SELECT event FROM lifecycle_events")]
+    assert eventos == ["SubagentStart"], "o evento tem que continuar registrado"
+    assert (harness_root / "heartbeats" / "SubagentStart").exists()
+
+
+def test_CONTROLE_codigo_antigo_mandava_subagente_carregar_o_orquestrador(tmp_path: Path):
+    """Metade de falsificacao: o mesmo cenario, no hook de OLD_REF, emite RESUMING.
+
+    Sem isto o teste acima poderia passar por outro motivo (hook que nao roda,
+    balde errado, estado nao lido) e seria indistinguivel de um conserto.
+    """
+    antigo = tmp_path / "antigo" / "hooks"
+    antigo.mkdir(parents=True)
+    for nome in ("harness-lifecycle.py", "emit.py"):
+        conteudo = subprocess.run(
+            ["git", "show", f"{OLD_REF}:hooks/{nome}"],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+        ).stdout
+        (antigo / nome).write_text(conteudo, encoding="utf-8")
+    harness_root, cwd, _ = _task_viva(tmp_path)
+
+    result = _rodar_subagent_start(
+        antigo / "harness-lifecycle.py", harness_root, cwd, "workflow-subagent")
+
+    assert result.returncode == 0, result.stderr
+    mensagem = _mensagem(result.stdout)
+    assert "HARNESS v3 RESUMING: scoped task t-scoped." in mensagem
+    assert "Invoke skill='harness-workflow'" in mensagem
 
 
 # --- Pagina escrita no vault tem que entrar no indice (incidente 2026-09-03) --

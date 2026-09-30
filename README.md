@@ -213,8 +213,9 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
 - Post-compaction resume is delivered by `SessionStart` (source `compact`) from the
   same session/worktree scope, with the active task, phase and pending gate;
   `PostCompact` only records the event, because the host gives it no channel to the
-  model. `SubagentStart` context is rendered from the same scope and includes the
-  active task, phase, pending gate and artifact paths
+  model. `SubagentStart` also only records the event: subagents are delegates
+  (search, judgment, one-off execution), the parent session owns the task, and a
+  judge's fresh context must not carry the task state
 - Skills communicate via `signals.json` rather than direct invocation, enabling loose coupling
 - The orchestrator (`harness-workflow`) is the only skill that reads classification tags directly
 

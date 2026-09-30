@@ -13,64 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from harness_paths import ensure_state_dir  # type: ignore[import-not-found]
 
 
-def _load_state(bucket: Path) -> dict:
-    try:
-        value = json.loads((bucket / "state.json").read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _resume_message(event: str, state: dict) -> str:
-    task_id = state.get("task_id") or "none"
-    pipeline = state.get("pipeline") or []
-    artifacts = state.get("artifacts_so_far") or []
-    parts = [
-        f"HARNESS v3 RESUMING: scoped task {task_id}.",
-        f"Classification: {state.get('classification') or 'unknown'}; status: {state.get('status') or 'idle'}.",
-        f"Current step: {state.get('current_step') or (pipeline[0] if pipeline else 'none')}.",
-        f"Pipeline: {' -> '.join(str(item) for item in pipeline) if pipeline else 'none'}.",
-    ]
-    if state.get("pending_gate"):
-        parts.append(f"Pending human gate: {state['pending_gate']}.")
-    if artifacts:
-        parts.append("Artifacts: " + ", ".join(str(item) for item in artifacts) + ".")
-    parts.append("Invoke skill='harness-workflow' and continue from this exact state.")
-    if event == "SubagentStart":
-        parts.append("Return a NodeResult with role, status, findings, evidence_refs, coverage, and errors.")
-    return " ".join(parts)
-
-
-def _emit(payload: dict, event: str, texto: str) -> None:
-    """Entrega o contexto do SubagentStart pelo emissor central.
-
-    `systemMessage` e canal de UI e nunca chegou. SubagentStart aceita
-    `hookSpecificOutput.additionalContext` com `hookEventName` "SubagentStart"
-    (https://code.claude.com/docs/en/hooks, secao SubagentStart).
-    """
-    if not texto:
-        return
-    try:
-        import importlib.util
-
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "emit.py")
-        spec = importlib.util.spec_from_file_location("harness_emit", path)
-        if spec is None or spec.loader is None:
-            raise ImportError
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        mod.Emitter(
-            event,
-            hook="lifecycle",
-            session_id=payload.get("session_id"),
-            cwd=payload.get("cwd"),
-        ).add("resume", texto).flush()
-    except Exception:
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": event, "additionalContext": texto,
-        }}, ensure_ascii=False))
-
-
 def _fechar_sessao(payload: dict, root) -> None:
     """SessionEnd: registra a sessao para a busca cross-sessao encontra-la.
 
@@ -235,8 +177,16 @@ def main() -> int:
     # fazia o host rejeitar a saida com "Hook JSON output validation failed".
     # A retomada pos-compactacao sai pelo SessionStart, que dispara de novo com
     # source "compact" e roda harness-session-start.sh sem matcher.
-    if event == "SubagentStart":
-        _emit(payload, event, _resume_message(event, _load_state(bucket)))
+    #
+    # SubagentStart tambem registra e fica calado, por decisao (2026-09-30).
+    # Ate ali ele mandava todo subagente carregar o harness-workflow e continuar
+    # a task do pai: no wf-grill, 3 de 5 lentes carregaram o orquestrador (de
+    # 13 a 16 mil tokens cada) e receberam o estado que o juiz nao pode ver; na
+    # maquina, dois delegados rodaram confirm_classification/state_cli sobre a
+    # task do pai. O payload so traz agent_id e agent_type, e o mesmo
+    # agent_type chega de Workflow e da ferramenta Agent, entao nao ha como
+    # separar "subagente de fase" — e nenhum subagente executa fase. Medicao e
+    # testes em tests/test_lifecycle_context.py.
     return 0
 
 
