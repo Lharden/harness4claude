@@ -89,6 +89,14 @@ def _arquivos_do_banco(harness_dir: Path, task_id: str) -> tuple[list[str], bool
     return reais, len(reais) != len(registrados)
 
 
+def _fora_da_raiz(counter, task_id: str) -> int:
+    """Escritas que o hook viu fora da raiz e nao contou. O contador tem um slot
+    so; o de outra task nao e desta."""
+    if isinstance(counter, dict) and counter.get("task_id") == task_id:
+        return len(counter.get("fora_da_raiz") or [])
+    return 0
+
+
 def files_modified(harness_dir, counter: dict, task_id: str) -> int:
     """Quantos arquivos esta task alterou, unindo as DUAS fontes.
 
@@ -128,7 +136,8 @@ def build_task(
         files = files_modified(harness_dir, counter, task_id)
         _, incompleta = _arquivos_do_banco(Path(harness_dir), task_id)
     return _registro(state, files, incompleta, completed=completed, steps=steps,
-                     reason=reason, timestamp=timestamp)
+                     reason=reason, timestamp=timestamp,
+                     fora=_fora_da_raiz(counter, task_id))
 
 
 def build_task_do_banco(
@@ -173,7 +182,8 @@ def build_task_do_banco(
         "pipeline": linha["pipeline"],
     }
     task = _registro(state, files, len(reais) != len(registrados), completed=completed,
-                     steps=steps, reason=reason, timestamp=timestamp)
+                     steps=steps, reason=reason, timestamp=timestamp,
+                     fora=_fora_da_raiz(counter, task_id))
     task["contador_usado"] = usado
     return task
 
@@ -187,7 +197,11 @@ def _registro(
     steps: list[str],
     reason: str | None,
     timestamp: str,
+    fora: int = 0,
 ) -> dict:
+    # Escrita fora da raiz do projeto da sessao e excluida da contagem de
+    # proposito (nao expira evidencia), mas e escrita: a medicao e parcial.
+    incompleta = incompleta or fora > 0
     task: dict[str, object] = {
         "task_id": state.get("task_id") or "unknown",
         "classification": state.get("classification") or "unknown",
@@ -200,6 +214,8 @@ def _registro(
         # arquivo. Sem esta marca, "nenhum arquivo atribuido" e "nenhum arquivo
         # alterado" ficam indistinguiveis, e e a segunda leitura que vira L0.
         "atribuicao_incompleta": incompleta,
+        # Quantos arquivos o hook viu ser escritos fora da raiz e nao contou.
+        "fora_da_raiz": fora,
     }
     if completed:
         task["completed_at"] = timestamp

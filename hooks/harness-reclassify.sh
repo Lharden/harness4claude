@@ -147,6 +147,28 @@ if cwd_sessao:
     except Exception:
         projeto_raiz = ''
 if projeto_raiz and not counts_as_modified_file(tool_name, file_path, projeto_raiz):
+    # A exclusao e desenho (nao expira evidencia), mas nao pode ser muda: a task
+    # escreveu, so que fora do que a suite mede. Fica no contador, sob a chave
+    # fora_da_raiz, para o record_signal gravar a medicao como parcial. Nao toca
+    # files, touches nem code_revision. Medido 2026-09-30: dois arquivos de outro
+    # repositorio saiam no signals.json como files=0, L0, sem marca.
+    try:
+        _st = json.load(open(state_file, encoding='utf-8'))
+        _tid = _st.get('task_id') or ''
+        if _tid:
+            try:
+                _ct = json.load(open(counter_file, encoding='utf-8'))
+            except Exception:
+                _ct = {}
+            if _ct.get('task_id') != _tid:
+                _ct = {'count': 0, 'files': [], 'task_id': _tid}
+            _fora = _ct.setdefault('fora_da_raiz', [])
+            if file_path not in _fora:
+                _fora.append(file_path)
+            with open(counter_file, 'w', encoding='utf-8') as _f:
+                json.dump(_ct, _f, indent=2)
+    except Exception:
+        pass
     raise SystemExit(0)
 
 # Read state
