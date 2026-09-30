@@ -49,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import branch_config
 import harness_paths
+from projecao import projetar
 from transactional_state import HarnessDatabase, StateTransitionError
 
 SCHEMA_VERSION = 1
@@ -276,15 +277,17 @@ def _projected_task(home: Path, database: HarnessDatabase) -> dict | None:
         return None
 
 
-def _sync_task(home: Path, task: dict) -> None:
-    path = home / "state.json"
-    try:
-        projection = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(projection, dict):
-            projection = {}
-    except (OSError, ValueError):
-        projection = {}
-    projection.update(
+def _sync_task(home: Path, database: HarnessDatabase, task: dict) -> None:
+    """Projeta a task dona do ramo, pela regra de `projecao.projetar`.
+
+    A task aqui e a do registro do ramo (`_transaction_context`), que pode nao
+    ser a da projecao: o ramo sobrevive a troca de task no escopo. Ate
+    2026-09-28 isto era um `update` cego, que misturava as duas tasks e tirava
+    a projecao da task viva (`docs/specs/sim-nao-fecha-entrega-diagnostico.md`).
+    """
+    projetar(
+        home,
+        task,
         {
             "task_id": task["task_id"],
             "status": task["status"],
@@ -294,11 +297,9 @@ def _sync_task(home: Path, task: dict) -> None:
             "verified": task["verified"],
             "pending_gate": task["pending_gate"],
             "scope_id": task["scope_id"],
-        }
+        },
+        database,
     )
-    temporary = path.with_suffix(".json.branch.tmp")
-    temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
 
 
 def _integer_setting(name: str, default: int) -> int:
@@ -528,7 +529,7 @@ def add(
                 )
             except StateTransitionError as exc:
                 raise ValueError(str(exc)) from exc
-            _sync_task(home, database.task(task["task_id"]))
+            _sync_task(home, database, database.task(task["task_id"]))
         if parent_session and not data.get("parent_session"):
             data["parent_session"] = parent_session
         data["branches"].append(branch)
@@ -612,9 +613,9 @@ def set_status(
                             conclusion=conclusion,
                         )
                 except StateTransitionError as exc:
-                    _sync_task(home, database.task(task["task_id"]))
+                    _sync_task(home, database, database.task(task["task_id"]))
                     raise ValueError(str(exc)) from exc
-                _sync_task(home, database.task(task["task_id"]))
+                _sync_task(home, database, database.task(task["task_id"]))
             b["status"] = status
             if status == "open":
                 b["opened_at"] = _now()
@@ -659,7 +660,7 @@ def attach_files(
                     )
                 except StateTransitionError as exc:
                     raise ValueError(str(exc)) from exc
-                _sync_task(home, database.task(task["task_id"]))
+                _sync_task(home, database, database.task(task["task_id"]))
             branch["seed_path"] = seed_path
             branch["launcher_path"] = launcher_path
             save(data, cwd)
@@ -690,7 +691,7 @@ def decide(
                     )
                 except StateTransitionError as exc:
                     raise ValueError(str(exc)) from exc
-                _sync_task(home, database.task(task["task_id"]))
+                _sync_task(home, database, database.task(task["task_id"]))
             if decision == "discard":
                 data["branches"] = [item for item in data["branches"] if item is not branch]
                 save(data, cwd)

@@ -104,7 +104,8 @@ Para L0, NÃO ative — execute direto sem pipeline.
    python "<PLUGIN_ROOT>/scripts/record_signal.py" --completed --steps "step1,step2,..." --expect-task "<task_id>" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
    ```
    (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
-   **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma — nesse caso, restaure o state da sua task antes de registrar.
+   **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma.
+   **Exit 2 não se conserta editando o `state.json`.** Desde 2026-09-28 o `state_cli` não aponta a projeção para uma task substituída enquanto outra está viva no escopo — avisa em stderr e grava só no banco. Nesse caso a projeção é da task viva, o desfecho da sua já está no `harness.db`, e restaurá-la à mão tiraria a projeção da viva: o PostToolUse passaria a gravar toque e evidência na task errada. O sinal da task substituída fica fora de `signals.json` (`docs/specs/sim-nao-fecha-entrega-diagnostico.md` §8).
 
 ## Pipelines
 
