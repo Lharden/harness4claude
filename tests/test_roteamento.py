@@ -159,6 +159,26 @@ def test_ac3_linha_valida_passa_e_anota_o_chip(amb):
     assert r["ts"]
 
 
+def test_chip_com_ponto_medio_passa_com_stdin_na_codificacao_do_locale(amb):
+    """Como o Claude Code chama: bytes UTF-8 no pipe, sem PYTHONUTF8 nem PYTHONIOENCODING.
+
+    No Windows o stdin em pipe e decodificado em cp1252 por padrao e o "·"
+    (C2 B7) chegava como "Â·": parse_linha devolvia None e todo chip era negado.
+    Medido em 2026-09-30.
+    """
+    env, _, _ = amb
+    env = {k: v for k, v in env.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    p = "Implemente Z.\n\nRoteamento: opus · medium (analise-complexa)"
+    corpo = json.dumps(_pre(p), ensure_ascii=False).encode("utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(HOOK), "--event", "PreToolUse"],
+        input=corpo, capture_output=True, env=env, check=False,
+    )
+    saida = proc.stdout.decode("utf-8").strip()
+    dec = (json.loads(saida) if saida else {}).get("hookSpecificOutput", {}).get("permissionDecision")
+    assert dec != "deny", saida
+
+
 def test_linha_so_vale_no_fim_do_prompt(amb):
     env, _, _ = amb
     p = "Roteamento: sonnet · medium (execucao-mecanica)\nmas o prompt continua depois"
