@@ -161,6 +161,48 @@ def test_sem_repo_root_o_prompt_nao_fala_de_repositorio(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# US-3: rubrica de severidade por consequencia (entra so se a medicao de US-4
+# passar; se sair, estes testes saem no mesmo commit — REQ-F12)
+# ---------------------------------------------------------------------------
+
+RUBRICA_MARCA = "SEVERIDADE (julgue pela consequencia):"
+
+
+def _rubrica(prompt: str) -> str:
+    i = prompt.find(RUBRICA_MARCA)
+    return prompt[i:] if i >= 0 else ""
+
+
+def test_rubrica_inteira_e_igual_nos_cinco_revisores(tmp_path):
+    """AC-3.1. 0 `high` em 25 defeitos reais: sem regua, ninguem usava o nivel."""
+    out = _run(WF_FILE, _cenario(correctness=[_achado("bug real", "critical")]), tmp_path)
+    rubricas = {c["label"]: _rubrica(c["prompt"]) for c in out["calls"]["review"]}
+    assert all(rubricas.values()), [k for k, v in rubricas.items() if not v]
+    assert len(set(rubricas.values())) == 1
+    texto = next(iter(rubricas.values()))
+    for clausula in ("critical", "forjar verificacao", "high", "aceitar o que devia recusar", "medium", "low"):
+        assert clausula in texto, clausula
+
+
+def test_adjudicador_nao_recebe_a_rubrica_nem_o_racional(tmp_path):
+    """AC-3.3 / REQ-NF2. A aresta do refutador carrega alegacao, local e criterio."""
+    out = _run(WF_FILE, _cenario(correctness=[_achado("bug real", "critical")]), tmp_path)
+    prompt = out["calls"]["adjudicate"][0]["prompt"]
+    assert RUBRICA_MARCA not in prompt
+    assert "racional" not in prompt
+
+
+def test_spec_coverage_mantem_a_regra_p1_ao_lado_da_rubrica(tmp_path):
+    """AC-3.4. As duas reguas nao podem brigar sobre o mesmo achado (grill #31)."""
+    out = _run(WF_FILE, _cenario(), tmp_path)
+    prompt = next(c["prompt"] for c in out["calls"]["review"] if c["label"] == "review:spec-coverage")
+    assert "P1 ausente=critical" in prompt
+    rubrica = _rubrica(prompt)
+    assert "requisito P1 sem implementacao e critical" in rubrica
+    assert "implementado sem teste e low" in rubrica
+
+
+# ---------------------------------------------------------------------------
 # Metade-controle: o mesmo cenario no codigo de antes desta task
 # ---------------------------------------------------------------------------
 
@@ -190,3 +232,10 @@ def test_CONTROLE_codigo_de_antes_aprovava_lote_so_medium_low(tmp_path):
     out = _run(_old_wf_file(), SO_MEDIUM_LOW, tmp_path)
     assert out["result"]["pass"] is True
     assert out["result"]["nao_adjudicados"] == 2
+
+
+def test_CONTROLE_codigo_de_antes_nao_tinha_rubrica(tmp_path):
+    """AC-3.2. Metade de `test_rubrica_inteira_e_igual_nos_cinco_revisores`."""
+    out = _run(_old_wf_file(), _cenario(), tmp_path)
+    assert len(out["calls"]["review"]) == 5
+    assert all(RUBRICA_MARCA not in c["prompt"] for c in out["calls"]["review"])
