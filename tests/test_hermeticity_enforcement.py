@@ -85,21 +85,43 @@ def test_fixture_dir_exists_and_is_writable():
 
 
 # ---------------------------------------------------------------------------
-# AC-4: classes distintas nao compartilham diretorio
+# AC-4: o diretorio e por classe — compartilhado dentro, isolado entre classes
 # ---------------------------------------------------------------------------
-class TestScopeA:
-    def test_writes_marker(self):
+class TestEscopoPorClasse:
+    """As duas metades so existem entre testes do MESMO processo, na ordem.
+
+    Verificadas de dentro da suite (um teste gravava a marca, o seguinte a
+    procurava), dependiam do xdist por os dois no mesmo worker. `--dist load`
+    nao garante, e `-n auto` reprovava o segundo em toda rodada (2026-09-28).
+    Um pytest filho serial fixa processo e ordem, e mede o conftest de verdade.
+    """
+
+    _FONTE = '''
+import os
+from pathlib import Path
+
+class TestA:
+    def test_1_grava(self):
         Path(os.environ["HARNESS_DIR"], "marker-a").write_text("a", encoding="utf-8")
 
-    def test_sees_own_marker(self):
-        assert Path(os.environ["HARNESS_DIR"], "marker-a").exists()
+    def test_2_mesma_classe_ve(self):
+        assert Path(os.environ["HARNESS_DIR"], "marker-a").exists(), (
+            "a mesma classe nao compartilhou o diretorio"
+        )
 
-
-class TestScopeB:
-    def test_does_not_see_other_class_marker(self):
+class TestB:
+    def test_3_outra_classe_nao_ve(self):
         assert not Path(os.environ["HARNESS_DIR"], "marker-a").exists(), (
             "vazamento entre classes: o diretorio nao e por classe"
         )
+'''
+
+    def test_compartilha_na_classe_e_isola_entre_classes(self, synthetic_test):
+        f = synthetic_test("escopo_por_classe", self._FONTE)
+        # `-p no:xdist`: o filho precisa ser serial; um `-n` herdado de
+        # PYTEST_ADDOPTS vira erro de uso em vez de reprovar pelo motivo errado.
+        proc = _run_pytest(f, extra=["-p", "no:xdist", "-v"])
+        assert proc.returncode == 0 and "3 passed" in proc.stdout, proc.stdout[-2000:]
 
 
 # ---------------------------------------------------------------------------
