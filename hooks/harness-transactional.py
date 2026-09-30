@@ -51,9 +51,33 @@ def _tool_input(payload: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+#: Surrogate sem par. `json.load` junta os pares validos num caractere so,
+#: entao todo D800-DFFF que sobra num `str` do payload e solitario: JSON valido
+#: (`"\ud800"`), e sem codificacao UTF-8 nenhuma.
+_SURROGATE_SOLITARIO = re.compile(r"[\ud800-\udfff]")
+
+
+def _texto_codificavel(texto: str) -> str:
+    """O texto do payload com cada surrogate solitario trocado por U+FFFD.
+
+    Todo sumidouro deste hook e UTF-8 — hash, `recusas.jsonl`, sqlite — e um
+    surrogate solitario derrubava o primeiro que alcancasse, com exit 1 e a
+    task sem o toque. Eram quatro medidos (revisao adversarial de 2026-09-28):
+    os dois hashes, `touch_files` e `record_evidence`. Normalizar aqui, na
+    entrada, cobre os quatro e o proximo que alguem escrever.
+
+    U+FFFD e nao a forma `\\ud800` em texto: esta troca roda ANTES do parser de
+    shell, e uma barra invertida nova mudaria o que `shell_write_targets` le.
+    U+FFFD nao e aspa, operador nem espaco.
+    """
+    return _SURROGATE_SOLITARIO.sub("\ufffd", texto)
+
+
 def _command(payload: dict[str, Any]) -> str:
     value = _tool_input(payload)
-    return str(value.get("command") or value.get("cmd") or value.get("script") or "")
+    return _texto_codificavel(
+        str(value.get("command") or value.get("cmd") or value.get("script") or "")
+    )
 
 
 #: Operadores que compoem comandos. Montados com `chr()` porque este arquivo
@@ -867,7 +891,7 @@ def _response_text(payload: dict[str, Any]) -> str:
     error = payload.get("error")
     if isinstance(error, str) and error:
         values.append(error)
-    return "\n".join(values)
+    return _texto_codificavel("\n".join(values))
 
 
 def _write_heartbeat(
@@ -1056,10 +1080,17 @@ def _registrar_recusas(
     """
     if not recusas:
         return
-    digest = hashlib.sha256(command.encode("utf-8")).hexdigest()[:12]
+    # O hook ja entrega texto codificavel (`_texto_codificavel`), mas o contrato
+    # acima e desta funcao, nao de quem a chama. `surrogatepass` no hash e
+    # `backslashreplace` no arquivo tornam a escrita total para qualquer `str`
+    # sem perder a linha: um surrogate solitario sai como `\ud800`, que e o
+    # escape JSON dele, e `json.loads` devolve o texto identico.
+    digest = hashlib.sha256(command.encode("utf-8", "surrogatepass")).hexdigest()[:12]
     agora = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
     try:
-        with (bucket / ARQUIVO_DE_RECUSAS).open("a", encoding="utf-8") as arquivo:
+        with (bucket / ARQUIVO_DE_RECUSAS).open(
+            "a", encoding="utf-8", errors="backslashreplace"
+        ) as arquivo:
             for recusa in recusas:
                 arquivo.write(
                     json.dumps(
