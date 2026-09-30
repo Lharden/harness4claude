@@ -2115,6 +2115,7 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
             tool_use_id=payload.get("tool_use_id") or payload.get("toolUseId"),
             command=command,
             transcript_path=payload.get("transcript_path") or payload.get("transcriptPath"),
+            subagente=bool(payload.get("agent_id")),
         )
         aviso = AVISO_SEGUNDO_PLANO.format(
             job=job,

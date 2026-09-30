@@ -242,6 +242,14 @@ lançamento fica no estado indicado, e o Stop decide como hoje:
   exit code 1` → código 1.
 - **AC-3.15**: `description` que carrega um bloco `<task-notification>` inteiro
   para outro job J2 → J2 continua `pendente`.
+- **AC-3.16**: `description` com `<task-id>`/`<status>` → a notificação do
+  próprio job continua valendo (campos do host lidos antes do `<summary>`).
+- **AC-3.17**: lançamento de subagente (`agent_id` no payload) → nasce
+  `rejeitado:subagente`.
+- **AC-3.18**: arquivo só com o trailer, sem contagem (`pytest -q > log.txt`)
+  → `rejeitado:sem-contagem`; um verde anterior continua verde.
+- **AC-3.19**: `complete` fora da fase final → recusa sem capturar (revisão
+  intacta, lançamento pendente).
 - **AC-3.9**: saída sem contagem reconhecível (ex.: `no tests ran`) →
   evidência em N' com `tests_collected` 0 ou `NULL`, `verified=0`, `capturado`.
 - **AC-3.10**: transcript ausente ou ilegível, arquivo existente mas sem

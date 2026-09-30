@@ -59,6 +59,26 @@
   `HarnessDatabase` do teste, não a do hook.
 - Mutação: 16 de 16 mortos (M12–M16 novos, um por regra desta iteração).
 
+## Iteração 2 de 2 (re-verify `wf_47eeb4d4-140`: `pass: true`, 0 críticos, 11 médios/baixos)
+
+- [x] E1 (#9): `complete` confere a fase final ANTES de capturar — recusado por
+      fase não grava nada. Mutante M21.
+- [x] E2 (#4): campos do host lidos só antes do `<summary>`; tag na
+      `description` não esconde mais a notificação legítima. M18.
+- [x] E3 (#5): lançamento de subagente (`agent_id` no payload) nasce
+      `rejeitado:subagente`. M19.
+- [x] E4 (#6): saída sem contagem nenhuma (`pytest -q > log.txt`, `>` não é
+      composição) → `rejeitado:sem-contagem`; não desverifica. M20.
+- [x] E5 (#1): teste do diretório `tasks`. M17.
+- Resultado: 74 testes; mutação **21 de 21** mortos.
+- **Não re-revisado pelo Workflow**: a iteração 2 é a última permitida pelo
+  protocolo; os cinco consertos são pequenos e cada um tem mutante que o mata.
+  Uma terceira rodada do `wf-verify-multimodel` (~570 k tokens) fica a critério
+  do usuário.
+- #3 do re-verify (falsificação fora do arquivo de testes): os scripts do
+  controle por SHA e da mutação estão descritos, com números, em
+  `docs/specs/evidencia-em-segundo-plano-verification.md`.
+
 ## Declarados como limite, sem conserto (com motivo)
 - #16/#22 janela de CAS do `complete` com Stop concorrente: erra recusando
   (fail-closed), nunca aceitando.

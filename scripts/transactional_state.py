@@ -1832,8 +1832,13 @@ class HarnessDatabase:
         tool_use_id: str | None,
         command: str,
         transcript_path: str | None,
+        subagente: bool = False,
     ) -> None:
         """Um lancamento por (task, job); a revisao e lida sob o mesmo lock.
+
+        `subagente`: o termino de job lancado por subagente chega ao subagente
+        (`isSidechain`), que a captura recusa por procedencia — o lancamento
+        nasce rejeitado em vez de prometer uma captura que nao vem.
 
         Chamado DEPOIS do toque do proprio comando, entao `code_revision` e a
         revisao que a suite vai testar (N'). Repetido — hook registrado duas
@@ -1847,7 +1852,14 @@ class HarnessDatabase:
             # o lancamento nasce resolvido, com o motivo, em vez de ficar
             # pendente para sempre e parecer mudanca de formato do host (verify
             # #9, #14).
-            motivo = "sem-tool-use-id" if not tool_use_id else ("sem-transcript" if not transcript_path else None)
+            if subagente:
+                motivo = "subagente"
+            elif not tool_use_id:
+                motivo = "sem-tool-use-id"
+            elif not transcript_path:
+                motivo = "sem-transcript"
+            else:
+                motivo = None
             agora = utc_now()
             inseriu = connection.execute(
                 "INSERT OR IGNORE INTO lancamentos(task_id, job_id, tool_use_id, command, "
@@ -2010,6 +2022,12 @@ class HarnessDatabase:
             raise StateTransitionError(
                 f"revision mismatch: expected {expected_revision}, actual {atual['revision']}"
             )
+        # A fase se confere ANTES da captura: `complete` que recusa por fase nao
+        # pode ter gravado nada (re-verify #9) — quem repetia com a mesma revisao
+        # levava `revision mismatch` por uma escrita do proprio `complete`.
+        pipeline = atual["pipeline"] or []
+        if pipeline and atual["phase"] != pipeline[-1]:
+            raise StateTransitionError(f"task is not at final phase: {atual['phase']}")
         gravadas = _capturar_lancamentos(self, task_id)
         with self._write() as connection:
             row = self._locked_task(connection, task_id)

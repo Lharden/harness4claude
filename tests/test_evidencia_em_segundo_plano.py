@@ -1131,3 +1131,91 @@ def test_banco_antigo_ganha_a_tabela_sem_mexer_no_resto(tmp_path: Path):
         assert raw.execute("SELECT * FROM evidence").fetchall() == antes
     assert reaberto.lancamentos(task["task_id"]) == []
     assert reaberto.task(task["task_id"])["verified"] is True
+
+
+# --- Fechamento do verify, iteracao 2 ----------------------------------------------
+
+
+def test_complete_fora_da_fase_final_recusa_sem_capturar(sessao: Sessao):
+    """Re-verify #9: `complete` recusado nao pode mudar o estado.
+
+    Antes: capturava (revision +1, lancamento `capturado`) e so depois recusava
+    por fase; quem repetia com a mesma revisao levava `revision mismatch`.
+    """
+    sessao.lanca("bjob1")
+    sessao.saida("bjob1", VERDE)
+    sessao.notifica(sessao.bloco("bjob1"))
+    antes = sessao.atual()["revision"]
+
+    with pytest.raises(state.StateTransitionError, match="not at final phase"):
+        sessao.database.complete(sessao.task_id, expected_revision=antes)
+
+    assert sessao.atual()["revision"] == antes
+    assert [l["estado"] for l in sessao.lancamentos()] == ["pendente"]
+
+
+def test_tag_na_descricao_nao_esconde_a_notificacao_do_proprio_job(sessao: Sessao):
+    """Re-verify #4: os campos do host sao lidos antes do `<summary>`.
+
+    Uma descricao com `<task-id>x</task-id>` fazia o bloco ter dois task-ids e a
+    notificacao legitima sumia; o lancamento ficava pendente para sempre.
+    """
+    sessao.lanca("bjob1")
+    sessao.saida("bjob1", VERDE)
+    sessao.notifica(sessao.bloco(
+        "bjob1", resumo='Background command "suite <task-id>x</task-id> <status>failed</status>" completed (exit code 0)'
+    ))
+
+    sessao.stop()
+
+    assert [l["estado"] for l in sessao.lancamentos()] == ["capturado"]
+
+
+def test_lancamento_de_subagente_nasce_rejeitado(sessao: Sessao):
+    """Re-verify #5: a notificacao do subagente e `isSidechain` e nunca e aceita.
+
+    Registrar como pendente prometia captura que nao vem e virava falso alarme de
+    formato. `agent_id` so existe no payload de subagente (sonda de 2026-09-28).
+    """
+    resposta = {"stdout": "", "stderr": "", "interrupted": False, "backgroundTaskId": "bjob1"}
+    hook.handle_payload(
+        {"hook_event_name": "PostToolUse", "cwd": str(sessao.cwd), "session_id": "session-a",
+         "agent_id": "a123", "agent_type": "general-purpose",
+         "tool_name": "Bash", "tool_input": {"command": "python -m pytest -q"}, "tool_response": resposta,
+         "tool_use_id": U, "transcript_path": str(sessao.transcript)},
+        harness_root=sessao.root,
+    )
+
+    (lancamento,) = sessao.lancamentos()
+    assert (lancamento["estado"], lancamento["motivo"]) == ("rejeitado", "subagente")
+
+
+def test_saida_so_com_trailer_nao_desverifica(sessao: Sessao):
+    """Re-verify #6: `pytest -q > log.txt` em segundo plano e verificacao confiavel
+    (`>` nao e composicao), e o `.output` fica so com o trailer. Sem contagem
+    nenhuma nao ha informacao: nada e gravado, e um verde anterior fica verde.
+    """
+    sessao.lanca("bjob1", comando="python -m pytest -q > log.txt 2>&1")
+    _evidencia_direta(sessao, verde=True)
+    sessao.saida("bjob1", "\n[exited with code 0]\n")
+    sessao.notifica(sessao.bloco("bjob1"), quando=_iso(+1))
+
+    sessao.stop()
+
+    assert sessao.atual()["verified"] is True
+    (lancamento,) = sessao.lancamentos()
+    assert (lancamento["estado"], lancamento["motivo"]) == ("rejeitado", "sem-contagem")
+
+
+def test_arquivo_fora_de_um_diretorio_tasks_rejeita(sessao: Sessao):
+    """Re-verify #1: o ramo do diretorio `tasks` tinha teste nenhum que o isolasse."""
+    sessao.lanca("bjob1")
+    arquivo = sessao.tmp / "qualquer" / "bjob1.output"
+    arquivo.parent.mkdir(parents=True)
+    arquivo.write_bytes(VERDE.encode("utf-8"))
+    sessao.notifica(sessao.bloco("bjob1", arquivo=arquivo))
+
+    sessao.stop()
+
+    (lancamento,) = sessao.lancamentos()
+    assert (lancamento["estado"], lancamento["motivo"]) == ("rejeitado", "arquivo-estranho")

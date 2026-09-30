@@ -186,12 +186,17 @@ def notificacoes_de(
                 if texto.count("<task-notification>") != 1:
                     continue
                 for bloco in _BLOCO.findall(texto):
-                    status = _tag("status", bloco)
-                    ids = _TASK_ID.findall(bloco)
+                    # Os campos do host vem ANTES do `<summary>`; dali em diante
+                    # e a `description` do modelo. Ler o bloco inteiro deixava
+                    # uma tag na descricao esconder a notificacao legitima
+                    # (re-verify #4).
+                    cabeca = bloco.split("<summary>", 1)[0]
+                    status = _tag("status", cabeca)
+                    ids = _TASK_ID.findall(cabeca)
                     if not status or len(ids) != 1 or ids[0] not in esperados:
                         continue
                     job = ids[0]
-                    tool_use_id = _tag("tool-use-id", bloco)
+                    tool_use_id = _tag("tool-use-id", cabeca)
                     if esperados[job] is None or tool_use_id != esperados[job]:
                         continue
                     nova = Notificacao(
@@ -199,7 +204,7 @@ def notificacoes_de(
                         tool_use_id=tool_use_id,
                         status=status,
                         resumo=_tag("summary", bloco) or "",
-                        arquivo=_tag("output-file", bloco),
+                        arquivo=_tag("output-file", cabeca),
                         terminou_em=quando,
                     )
                     # A mesma notificacao chega em copias (prompt e texto
@@ -294,6 +299,13 @@ def julgar(
     if int(trailer.group(1)) != codigo:
         return Veredito("rejeitado", "codigo-diverge", terminou_em=termino)
     coletados, passaram, pulados, digest = contar_testes(cauda)
+    if coletados is None:
+        # Nenhuma contagem reconhecivel: `pytest -q > log.txt` em segundo plano
+        # (`>` nao e composicao) deixa o `.output` so com o trailer. Sem
+        # informacao nao ha evidencia para nenhum lado — gravar a linha nula
+        # desverificaria um verde (re-verify #6). `no tests ran` conta 0, nao
+        # None, e continua gravando (AC-3.9).
+        return Veredito("rejeitado", "sem-contagem", terminou_em=termino)
     return Veredito(
         "aceito",
         exit_code=codigo,
