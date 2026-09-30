@@ -368,7 +368,12 @@ def test_resolver_escalation_legado_de_task_done_nao_ressuscita(tmp_path: Path):
         )
     _task(db, BUG, task_id="t-2")
 
-    task = db.resolve_gate("t-1", "escalation", "approve", expected_revision=db.task("t-1")["revision"])
+    # Desfecho registrado recusa `resolve_gate` (D3 de
+    # docs/specs/desfecho-terminal-diagnostico.md); quem limpa o portao legado
+    # e `_migrar_status_derivado`, na proxima abertura do banco.
+    with pytest.raises(state.StateTransitionError, match="desfecho registrado"):
+        db.resolve_gate("t-1", "escalation", "approve", expected_revision=db.task("t-1")["revision"])
+    task = state.HarnessDatabase(tmp_path).task("t-1")
 
     assert (task["status"], task["pending_gate"]) == ("done", None)
     assert db.task("t-2")["status"] == "active"
@@ -379,9 +384,13 @@ def test_transition_em_task_abandonada_nao_ressuscita(tmp_path: Path):
     _task(db)
     _task(db, BUG, task_id="t-2")
 
-    task = db.transition("t-1", "tdd", expected_revision=db.task("t-1")["revision"])
+    # Recusa antes de escrever (D3 de docs/specs/desfecho-terminal-diagnostico.md):
+    # a fase da task abandonada tambem nao anda.
+    with pytest.raises(state.StateTransitionError, match="desfecho registrado"):
+        db.transition("t-1", "tdd", expected_revision=db.task("t-1")["revision"])
+    task = db.task("t-1")
 
-    assert task["status"] == "abandoned"
+    assert (task["status"], task["phase"]) == ("abandoned", BUG[0])
     assert db.task("t-2")["status"] == "active"
 
 
