@@ -19,8 +19,12 @@ const baseRef = input.base_ref || 'HEAD'
 // medicao de verify-adjudica-tudo esse cwd era o worktree da mae com os consertos
 // ja aplicados. Vai para o prompt dos revisores E do adjudicador.
 const repoRoot = typeof input.repo_root === 'string' && input.repo_root ? input.repo_root : null
+// "O escopo sao os arquivos listados" so quando ha lista: sem ela, o scope manda
+// usar `git diff <base_ref>`, e as duas frases juntas se contradiziam.
 const linhaRaiz = repoRoot
-  ? `Repositorio: ${repoRoot}. Todo caminho abaixo e relativo a ele; leia e rode git la. O escopo sao os arquivos listados: nao compare com outro ramo.\n`
+  ? `Repositorio: ${repoRoot}. Todo caminho abaixo e relativo a ele; leia e rode git la.` +
+    (changedFiles.length ? ' O escopo sao os arquivos listados: nao compare com outro ramo.' : '') +
+    '\n'
   : ''
 
 const scope =
@@ -142,6 +146,7 @@ if (findings.length === 0) {
   return {
     pass: completo,
     critical_count: 0,
+    nao_adjudicados: 0,
     findings: [],
     nos_mortos: censoReview.mortos,
     summary: completo

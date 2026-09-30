@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -423,6 +424,80 @@ def test_dado_real_da_rodada_1_com_a_triagem_medida_sai_0(tmp_path):
     codigo, texto = _checar(_plano(tmp_path, [ln for ln in linhas if "| 19 |" not in ln]), verify)
     assert codigo == 1
     assert "wf_6bd9e71a-c4f #19" in texto
+
+
+# --------------------------------------- verify da task, rodada wf_d91bfd29-d22 ----
+
+
+def test_linha_que_cita_rodada_ausente_reprova(tmp_path):
+    """Achados #1 e #13: linha de rodada sem copia era ignorada em silencio. Um id
+    digitado errado, ou a copia de uma rodada esquecida, passava sem aviso."""
+    verify = tmp_path / "verify"
+    _rodada_a(verify)
+    linhas = [*_linhas_validas(), _linha("wf_b", 1, "achado de uma rodada sem copia no balde")]
+    plano = _plano(tmp_path, linhas)
+    codigo, texto = _checar(plano, verify)
+    assert codigo == 1
+    numero = plano.read_text(encoding="utf-8").splitlines().index(linhas[-1]) + 1
+    assert f"closure-plan.md:{numero}" in texto
+    assert "wf_b" in texto
+
+
+def test_digito_unicode_no_numero_reprova_sem_traceback(tmp_path):
+    """Achados #4 e #10: '²'.isdigit() e True e int('²') levanta."""
+    verify = tmp_path / "verify"
+    _rodada_a(verify)
+    codigo, texto = _checar(_plano(tmp_path, [*_linhas_validas(), "| wf_a | ² | x | limite | motivo longo |"]), verify)
+    assert codigo == 1
+    assert "nao e numero" in texto
+
+
+def test_linha_pronta_de_titulo_com_quebra_de_linha_fica_numa_linha(tmp_path):
+    """Achados #5 e #8: a linha que o checador manda colar nao pode partir."""
+    verify = tmp_path / "verify"
+    _saida(verify, "wf_b", [("Primeira linha do titulo\nsegunda linha com mais texto", False)])
+    _, texto = _checar(_plano(tmp_path, []), verify)
+    pronta = next(ln for ln in texto.splitlines() if ln.startswith("| wf_b | 1 |"))
+    assert pronta.endswith("|")
+    editada = pronta.replace("<consertado|limite|nao-defeito>", "limite").replace(
+        "<teste, commit ou motivo>", "motivo: formato do host"
+    )
+    assert _checar(_plano(tmp_path, [editada]), verify)[0] == 0
+
+
+def test_plano_que_nao_e_utf8_sai_2(tmp_path):
+    """Achado #9: traceback saia com 1, que no contrato quer dizer pendente."""
+    verify = tmp_path / "verify"
+    _rodada_a(verify)
+    plano = tmp_path / "closure-plan.md"
+    plano.write_bytes(f"{SECAO}\n| wf_a | 3 | não | limite | motivo longo |\n".encode("cp1252"))
+    codigo, texto = _checar(plano, verify)
+    assert codigo == 2
+    assert "closure-plan.md" in texto
+
+
+def test_cabecalho_e_destino_em_nfd_casam(tmp_path):
+    """Achado #11: texto colado do macOS ou de terminal chega decomposto."""
+    verify = tmp_path / "verify"
+    _rodada_a(verify)
+    plano = _plano(tmp_path, [*_linhas_validas()[:2], _linha("wf_a", 7, TITULOS[6], destino="não-defeito")])
+    plano.write_text(unicodedata.normalize("NFD", plano.read_text(encoding="utf-8")), encoding="utf-8")
+    assert _checar(plano, verify)[0] == 0
+
+
+def test_copia_com_bom_e_lida(tmp_path):
+    """Achado #12: salvar pelo PowerShell ou por um editor pode acrescentar BOM."""
+    verify = tmp_path / "verify"
+    copia = _rodada_a(verify)
+    copia.write_bytes(b"\xef\xbb\xbf" + copia.read_bytes())
+    assert _checar(_plano(tmp_path, _linhas_validas()), verify)[0] == 0
+
+
+def test_mesmo_arquivo_passado_duas_vezes_nao_e_duplicata(tmp_path):
+    """Achado #12: a mensagem dizia "arquivos diferentes" para um arquivo so."""
+    verify = tmp_path / "verify"
+    copia = _rodada_a(verify)
+    assert _checar(_plano(tmp_path, _linhas_validas()), verify, copia)[0] == 0
 
 
 # ------------------------------------------------------- AC-2.16: skill ----

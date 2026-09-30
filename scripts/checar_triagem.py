@@ -22,8 +22,13 @@ Sai 0 (todo nao adjudicado de toda rodada com destino, e a ultima rodada sem
 bloqueio), 1 (pendente, linha invalida ou bloqueio — com as linhas prontas para
 colar) ou 2 (entrada ilegivel). Toda duvida erra reprovando.
 
-O que ele NAO garante: que o destino e verdadeiro (um "limite" pode ser defeito),
-nem que a copia e a saida do host sem edicao — o host nao assina a saida.
+Linha que cita uma rodada sem copia em `--saidas` reprova: e id digitado errado
+ou copia esquecida.
+
+O que ele NAO garante: que o destino e verdadeiro (um "limite" pode ser defeito);
+que a copia e a saida do host sem edicao — o host nao assina a saida; nem que
+toda rodada foi copiada — rodada sem copia E sem linha na tabela fica invisivel,
+porque o id das rodadas nao e registrado em lugar que o agente nao escreva.
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -80,9 +86,14 @@ class Linha:
     lineno: int
 
 
+def _uma_linha(texto: str) -> str:
+    """Espaco repetido e quebra de linha viram um espaco; `|` quebraria a tabela."""
+    return " ".join(unicodedata.normalize("NFC", texto).replace("|", "/").split())
+
+
 def _normaliza(texto: str) -> str:
-    """Caixa, espaco repetido e `|` (que quebraria a tabela) nao distinguem titulo."""
-    return " ".join(texto.replace("|", "/").split()).casefold()
+    """Caixa, espaco, forma Unicode e `|` nao distinguem titulo."""
+    return _uma_linha(texto).casefold()
 
 
 def _arquivos(saidas: list[Path]) -> list[Path]:
@@ -97,12 +108,17 @@ def _arquivos(saidas: list[Path]) -> list[Path]:
             arquivos.append(s)
         else:
             raise EntradaIlegivel(f"{s}: nao existe")
-    return arquivos
+    # O mesmo arquivo pelo diretorio e pelo nome nao e duas rodadas.
+    unicos: dict[Path, Path] = {}
+    for a in arquivos:
+        unicos.setdefault(a.resolve(), a)
+    return list(unicos.values())
 
 
 def _ler_rodada(caminho: Path) -> Rodada:
     try:
-        dado = json.loads(caminho.read_text(encoding="utf-8"))
+        # utf-8-sig: salvar pelo PowerShell ou por um editor pode acrescentar BOM.
+        dado = json.loads(caminho.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         raise EntradaIlegivel(f"{caminho}: {exc}") from exc
     if not isinstance(dado, dict):
@@ -142,10 +158,14 @@ def _ler_tabela(plano: Path) -> tuple[list[Linha], list[str]]:
     """Linhas da secao de destino, fora de bloco de codigo, e os problemas de formato."""
     if not plano.is_file():
         return [], []
+    try:
+        conteudo = plano.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise EntradaIlegivel(f"{plano}: {exc} — salve o plano em UTF-8") from exc
     linhas: list[Linha] = []
     problemas: list[str] = []
     dentro = cerca = False
-    for i, bruta in enumerate(plano.read_text(encoding="utf-8").splitlines(), 1):
+    for i, bruta in enumerate(unicodedata.normalize("NFC", conteudo).splitlines(), 1):
         texto = bruta.strip()
         if CERCA.match(bruta):
             cerca = not cerca
@@ -170,7 +190,8 @@ def _ler_tabela(plano: Path) -> tuple[list[Linha], list[str]]:
                 "troque o destino e a referencia"
             )
             continue
-        if not celulas[1].isdigit():
+        # isascii: '²'.isdigit() e True, e int('²') levanta.
+        if not (celulas[1].isascii() and celulas[1].isdigit()):
             problemas.append(f'INVALIDA {onde}: "#" = "{celulas[1]}" nao e numero')
             continue
         linhas.append(Linha(celulas[0], int(celulas[1]), celulas[2], celulas[3], celulas[4], i))
@@ -192,7 +213,7 @@ def _erros_da_linha(linha: Linha, achado: Achado) -> list[str]:
 
 
 def _linha_pronta(rodada: Rodada, achado: Achado) -> str:
-    inicio = achado.titulo.replace("|", "/")[:TAM_PRONTA].rstrip()
+    inicio = _uma_linha(achado.titulo)[:TAM_PRONTA].rstrip()
     return f"| {rodada.id} | {achado.n} | {inicio} | {MARCADOR_DESTINO} | {MARCADOR_REFERENCIA} |"
 
 
@@ -208,15 +229,24 @@ def checar(plano: Path, saidas: list[Path]) -> tuple[int, list[str]]:
         return 2, [f"ENTRADA ILEGIVEL: rodada(s) com o mesmo id em arquivos diferentes: {', '.join(repetidos)}"]
 
     por_id = {r.id: r for r in rodadas}
-    linhas, problemas = _ler_tabela(plano)
+    try:
+        linhas, problemas = _ler_tabela(plano)
+    except EntradaIlegivel as exc:
+        return 2, [f"ENTRADA ILEGIVEL: {exc}"]
     vistas: dict[tuple[str, int], int] = {}
     decididos: set[tuple[str, int]] = set()
     for linha in linhas:
         rodada = por_id.get(linha.rodada)
-        if rodada is None:
-            continue  # linha de rodada que nao veio em --saidas
-        chave = (linha.rodada, linha.n)
         onde = f"{plano.name}:{linha.lineno}"
+        if rodada is None:
+            # Id digitado errado, ou copia de uma rodada esquecida: as duas coisas
+            # deixariam achados de fora da conferencia em silencio.
+            problemas.append(
+                f'INVALIDA {onde}: rodada "{linha.rodada}" nao tem copia em --saidas — '
+                "copie a saida dessa rodada para o balde, ou corrija o id"
+            )
+            continue
+        chave = (linha.rodada, linha.n)
         if chave in vistas:
             problemas.append(f"DUPLICADA {onde}: {linha.rodada} #{linha.n} ja tem linha em :{vistas[chave]}")
             decididos.discard(chave)

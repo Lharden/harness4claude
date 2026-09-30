@@ -116,6 +116,37 @@ def test_cada_achado_traz_n_da_posicao(tmp_path):
     assert [f["n"] for f in out["result"]["findings"]] == [1, 2, 3]
 
 
+def test_lote_misto_bloqueia_pelos_dois_motivos(tmp_path):
+    """Edge case de US-1 (achado #2 do verify da task): high confirmado junto com
+    medium/low. Bloqueio e triagem aparecem os dois no retorno."""
+    cenario = _cenario(
+        correctness=[_achado("bug confirmado", "high", "d.py", 1)],
+        edge_cases=[_achado("borda um", "medium", "e.py", 2), _achado("borda dois", "low", "f.py", 3)],
+    )
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert out["result"]["pass"] is False
+    assert out["result"]["critical_count"] == 1
+    assert out["result"]["nao_adjudicados"] == 2
+
+
+def test_rodada_sem_achado_traz_nao_adjudicados_zero(tmp_path):
+    """Achado #16: o retorno antecipado nao tinha a chave que o contrato documenta."""
+    out = _run(WF_FILE, _cenario(), tmp_path)
+    assert out["result"]["nao_adjudicados"] == 0
+
+
+def test_repo_root_sem_lista_de_arquivos_nao_contradiz_o_git_diff(tmp_path):
+    """Achado #14: "o escopo sao os arquivos listados" sem lista nenhuma, ao lado
+    de "use git diff <base>", era instrucao contraditoria."""
+    cenario = _cenario()
+    cenario["args"] = {"repo_root": "C:/wt/x", "base_ref": "abc123"}
+    out = _run(WF_FILE, cenario, tmp_path)
+    for c in out["calls"]["review"]:
+        assert "Repositorio: C:/wt/x" in c["prompt"]
+        assert "arquivos listados" not in c["prompt"]
+        assert "git diff abc123" in c["prompt"]
+
+
 def test_summary_nomeia_o_checador_e_a_secao(tmp_path):
     """AC-1.7. Sessao com o texto antigo da skill le no retorno o que fazer."""
     summary = _run(WF_FILE, SO_MEDIUM_LOW, tmp_path)["result"]["summary"]

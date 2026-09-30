@@ -165,6 +165,9 @@ rodada de medição mostrar que ela muda a severidade dos defeitos conhecidos.
 **Edge Cases**:
 - Limite que reaparece numa rodada seguinte com outro `#`: ganha linha nova; a referência pode apontar a decisão anterior (`ver wf_… #4`).
 - Rodada sem achado não adjudicado e sem bloqueio: não exige tabela.
+- ~~Linha de outra rodada no mesmo `closure-plan.md`: ignorada.~~ Linha que cita
+  rodada sem cópia em `--saidas` **reprova** (verify da task, achados #1 e #13 de
+  `wf_d91bfd29-d22`): é id digitado errado ou cópia esquecida.
 
 ---
 
@@ -340,6 +343,10 @@ adjudicado de cada rodada da task, e nenhum bloqueio na última.
 - A **integridade da cópia**. O checador amarra cada linha ao achado pelo id da
   rodada e pelo início do título, mas confia que o arquivo no balde é a saída do
   host sem edição: o host não assina a saída.
+- A **completude das rodadas**. Rodada sem cópia e sem linha na tabela fica
+  invisível ao checador: o id das rodadas não é registrado em lugar que o agente
+  não escreva, e registrar exigiria mexer em `state_cli` ou hook (NEVER, L-05).
+  Linha que cita rodada sem cópia reprova (achado #6 de `wf_d91bfd29-d22`).
 - A **obrigatoriedade** fora da skill. O `state_cli complete` não chama o
   checador; quem não segue a seção de verify fecha a task sem ele.
 - A **cobertura** da revisão. A rubrica muda o rótulo do que os revisores acham;
