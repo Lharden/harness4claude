@@ -100,6 +100,29 @@ Desligamento: `HARNESS_ROTEAMENTO=0`. O desenho não toca `harness-classify.sh`,
 - **Aumento de esforço** (filha `juiz-alto-risco` em opus·high que nasce em medium): o app pergunta ao usuário. Isso é intencional.
 - **Laço:** fechado pelo REQ-5 (gatilhos disjuntos) e pela deduplicação do REQ-3.
 
+## Decisões do usuário e resultado da SPIKE-1 (2026-09-30)
+
+**Decisões** (chat da sessão de orquestração, 2026-09-30, ~11:30), com a spec aprovada para seguir:
+- **NC-1 → um dos 4 tipos.** Não existe tipo `livre`. Conversa e planejamento contam como "complexo com risco
+  baixo" (`analise-complexa`, opus · medium).
+- **NC-2 → avisar e seguir.** Filha sem mãe que responda diz, na primeira resposta, qual roteamento a tabela pedia
+  e segue no nível herdado.
+- **NC-4 → sim.** O hook da filha grava `get_session("self")` do nascimento como telemetria.
+- **NC-5 → manter o chip.** O clique do usuário continua sendo o consentimento; `start_session` fica fora.
+- **NC-3** fica sem efeito no modo auto (ver a SPIKE-1). Nos outros modos, o custo é um clique de aprovação.
+
+**SPIKE-1, medida em 2026-09-30 às ~11:45** (mãe = sessão de orquestração, opus · max, modo auto; chip com a linha
+`Roteamento: haiku · low (busca-leve)`):
+- **Nascimento:** a filha nasceu **opus · max**, o nível exato da mãe; a linha de roteamento do prompt não teve efeito.
+  Outro caso no mesmo dia: "Harden harness_paths/_escopo", filha de uma sessão que estava em sonnet · medium,
+  nasceu sonnet · medium. **A herança do nível da mãe no instante do clique fica confirmada.**
+- **A mãe roteia a filha:** `set_session_effort(filha, low)` e `set_session_model(filha, claude-haiku-4-5-20251001)`
+  foram aplicados na hora, sem aprovação, e o `get_session` confirmou haiku · low. Isso vale para o modo auto da mãe.
+- **Mensagem entre sessões dispara o `UserPromptSubmit` de quem recebe:** observado na sessão de orquestração a cada
+  mensagem de outra sessão.
+- **Falta medir:** se o `PreToolUse` dispara para `mcp__ccd_session__spawn_task`. Vai para o primeiro teste do TDD
+  (o hook registrado e um chip real).
+
 ## [NEEDS CLARIFICATION]
 
 - **NC-1:** chip de trabalho que não cabe em nenhum dos 4 tipos (conversa, planejamento com o usuário). Opções: um tipo `livre`, que o gate aceita sem mexer em nada; ou obrigar a escolher um dos 4.
