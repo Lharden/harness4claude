@@ -1023,6 +1023,151 @@ def test_comando_de_inspecao_nao_invalida_evidencia(tmp_path: Path):
     assert depois["code_revision"] == antes["code_revision"]
 
 
+# --- Opcao global com valor nao e subcomando (sessao 44b0dfb5, 2026-09-30) ---
+#
+# `is_read_only` e `nao_muda_a_arvore` tomavam o primeiro token sem `-` depois
+# de `git` como subcomando. Em `git -C <dir> log` esse token e `<dir>`, e a
+# leitura caia no placeholder: 28 toques `shell-placeholder` na sessao
+# `44b0dfb5` vieram de `git -C <caminho> log|status|diff|show|...`. Nos
+# transcripts dela (principal + subagentes, medidos em 2026-09-30) ha 181
+# linhas `git <opcao com valor> ...`, e as 181 eram classificadas como toque.
+#
+# O mesmo erro tinha a direcao perigosa: em `git -C log checkout main` o `log`
+# e o diretorio, e o checkout passava por leitura.
+#
+# As opcoes que levam valor SEPARADO foram medidas no git 2.55.0:
+# `git <opcao> <valor> version` aceito para `-C`, `-c`, `--git-dir`,
+# `--work-tree`, `--namespace`, `--attr-source` e `--config-env`; recusado
+# (`'x' is not a git command`) para `--no-pager`, `--no-optional-locks`,
+# `-p`, `-P`, `--bare`, `--literal-pathspecs` e `--no-replace-objects`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "git -C x log --oneline -3",
+        "git -C 'C:/dir com espaco' status --short",
+        "git -c core.quotepath=off diff",
+        "git --git-dir x/.git log",
+        "git --work-tree x status",
+        "git --namespace ns show HEAD",
+        "git --attr-source HEAD diff",
+        "git --config-env a.b=HOME log",
+        "git -C x -c color.ui=never --no-pager log",
+    ],
+)
+def test_opcao_global_com_valor_nao_e_subcomando(comando: str):
+    assert hook.is_read_only(comando) is True, comando
+    assert hook.nao_muda_a_arvore(comando) is True, comando
+
+
+def test_opcao_global_com_valor_em_linha_composta():
+    """So `is_read_only`: `nao_muda_a_arvore` exige git em todo segmento."""
+    assert hook.is_read_only("git -C x status 2>&1 | head -5")
+    assert hook.is_read_only("git -C x log --oneline -3 && git -C x diff --stat")
+
+
+def test_opcao_global_com_valor_antes_de_add_e_commit():
+    """`add` e `commit` tambem chegam precedidos de `-C` e de `-c user.*`."""
+    assert hook.nao_muda_a_arvore("git -C x add -A")
+    assert hook.nao_muda_a_arvore("git -c user.name=a -c user.email=b commit -m y")
+    assert not hook.is_read_only("git -C x add -A")
+
+
+def test_flag_global_sem_valor_continua_pulada():
+    """Ja funcionava: nao leva valor, e o subcomando e o token seguinte."""
+    assert hook.is_read_only("git --no-pager log")
+    assert hook.is_read_only("git --no-optional-locks status")
+    assert hook.nao_muda_a_arvore("git --no-pager commit -m x")
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "git -C log checkout main",
+        "git -C status reset --hard HEAD~1",
+        "git --git-dir diff merge outra",
+        "git -c show stash",
+    ],
+)
+def test_CONTROLE_valor_da_opcao_nao_passa_por_subcomando(comando: str):
+    """Metade 1: o valor que se chama como leitura nao pode liberar a escrita.
+
+    Falha no codigo anterior na direcao que apaga toque: `log`, `status`,
+    `diff` e `show` eram lidos como subcomando.
+    """
+    assert hook.is_read_only(comando) is False, comando
+    assert hook.nao_muda_a_arvore(comando) is False, comando
+
+
+def test_CONTROLE_valor_que_se_chama_add_nao_libera_checkout():
+    assert hook.nao_muda_a_arvore("git -C add checkout main") is False
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "git -C x checkout main",
+        "git -C x merge y",
+        "git -C x reset --hard HEAD~1",
+        "git -C x stash",
+        "git -C x worktree add ../y",
+        "git -C x config user.name z",
+        "git -c a.b=c pull",
+        "git --work-tree x checkout -- .",
+        "git -C x log && git -C x checkout main",
+        "git -C x",
+        "git -C",
+    ],
+)
+def test_CONTROLE_opcao_global_nao_libera_o_que_muda_a_arvore(comando: str):
+    """Metade 2: pular a opcao nao pode virar pular o comando."""
+    assert hook.is_read_only(comando) is False, comando
+    assert hook.nao_muda_a_arvore(comando) is False, comando
+
+
+def test_git_com_C_nao_invalida_evidencia(tmp_path: Path):
+    """O custo medido: ler outro checkout com `-C` custava a suite."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=10, tests_passed=10, output_hash=None,
+    )
+    antes = database.task(task["task_id"])
+
+    hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": f'git -C "{cwd.as_posix()}" log --oneline -3'},
+    ), harness_root=tmp_path / "harness")
+
+    depois = database.task(task["task_id"])
+    assert depois["verified"] is True, "um `git -C <dir> log` invalidou a evidencia"
+    assert depois["code_revision"] == antes["code_revision"]
+
+
+def test_CONTROLE_git_com_C_que_muda_a_arvore_invalida_evidencia(tmp_path: Path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+    database.record_evidence(
+        task["task_id"], evidence_type="test", command="python -m pytest -q",
+        exit_code=0, tests_collected=10, tests_passed=10, output_hash=None,
+    )
+    antes = database.task(task["task_id"])
+
+    hook.handle_payload(_payload(
+        "PostToolUse", cwd, tool_name="Bash",
+        tool_input={"command": f'git -C "{cwd.as_posix()}" checkout main'},
+    ), harness_root=tmp_path / "harness")
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"] + 1
+    assert depois["verified"] is False
+
+
 # --- O aviso tem de ser auditavel (incidente 2026-09-03) ---------------------
 #
 # O aviso de composicao de shell diz "a evidencia deste teste NAO foi gravada".
