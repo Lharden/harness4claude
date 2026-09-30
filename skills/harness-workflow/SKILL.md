@@ -103,9 +103,10 @@ Para L0, NÃO ative — execute direto sem pipeline.
    # <PLUGIN_ROOT> e <STATE_DIR> ja foram resolvidos no inicio do pipeline.
    python "<PLUGIN_ROOT>/scripts/record_signal.py" --completed --steps "step1,step2,..." --expect-task "<task_id>" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
    ```
-   (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>"`.
-   **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline**: se o `state.json` global tiver sido sobrescrito por outra sessão no meio do caminho (incidente 2026-06-12), o script aborta com exit 2 em vez de registrar uma task fantasma.
-   **Exit 2 não se conserta editando o `state.json`.** Desde 2026-09-28 o `state_cli` não aponta a projeção para uma task substituída enquanto outra está viva no escopo — avisa em stderr e grava só no banco. Nesse caso a projeção é da task viva, o desfecho da sua já está no `harness.db`, e restaurá-la à mão tiraria a projeção da viva: o PostToolUse passaria a gravar toque e evidência na task errada. O sinal da task substituída fica fora de `signals.json` (`docs/specs/sim-nao-fecha-entrega-diagnostico.md` §8).
+   (grava em `signals.json` com `classification_meta` e recalcula `avg_classify_accuracy`; idempotente por `task_id`). Para troca de tarefa antes do fim: `--abandoned --reason "<motivo>" --expect-task "<task_id>"` — o `--expect-task` é obrigatório com `--abandoned`.
+   **Sempre passe `--expect-task` com o task_id anotado no INÍCIO do pipeline.** Com ele, e com `harness.db` no balde, o registro sai do banco pelo id — `task_id`, classificação, `classification_meta` e arquivos da SUA task —, mesmo quando a projeção já é de outra (task substituída por trabalho novo). O contador `.session-files-count` só entra se for da sua task, e o registro diz se entrou (`contador_usado`). Sem banco, ou sem a task nele, vale a projeção: se ela for de outra task (incidente 2026-06-12), o script sai 2 sem gravar.
+   **Exit 2 não se conserta editando o `state.json`.** Desde 2026-09-28 o `state_cli` não aponta a projeção para uma task substituída enquanto outra está viva no escopo — avisa em stderr e grava só no banco. Restaurar a projeção à mão tiraria a projeção da viva: o PostToolUse passaria a gravar toque e evidência na task errada. Exit 2 com banco no balde quer dizer que o `--harness-dir` não é o balde da sessão da task.
+   **`--abandoned` sem `--expect-task` sai 2 sem encerrar nada.** O abandono vem de troca de assunto, e nesse momento a projeção já é da task nova: sem o id, o script encerraria a task que o usuário acabou de pedir. A mensagem traz a linha para copiar e lista as tasks recentes do balde, para quem perdeu o id (`docs/specs/sinal-da-task-substituida-diagnostico.md`).
 
 ## Pipelines
 
@@ -416,8 +417,10 @@ Ao completar (ou abandonar) o pipeline, **NÃO edite `signals.json` à mão**. U
 # aborta com exit 2 se o state foi trocado por outra sessão no meio)
 python "<PLUGIN_ROOT>/scripts/record_signal.py" --completed --steps "discuss,write-spec,grill-me,design-doc,tdd,verify-against-spec" --expect-task "t-20260612-033900" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
 
-# Tarefa abandonada (troca de assunto / cancelamento)
-python "<PLUGIN_ROOT>/scripts/record_signal.py" --abandoned --reason "user_switch" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
+# Tarefa abandonada (troca de assunto / cancelamento). --expect-task e
+# obrigatorio aqui: na troca de assunto a projecao ja e da task NOVA, e o
+# abandono sem o id encerraria justamente ela.
+python "<PLUGIN_ROOT>/scripts/record_signal.py" --abandoned --reason "user_switch" --expect-task "t-20260612-033900" --harness-dir "<STATE_DIR>" --signals-dir "<HARNESS_ROOT>"
 ```
 
 > **Escopo do estado (desde 2026-07-28).** `state.json`, `.session-files-count` e
@@ -429,12 +432,16 @@ python "<PLUGIN_ROOT>/scripts/record_signal.py" --abandoned --reason "user_switc
 > telemetria é agregada e seus registros são chaveados por `task_id`.
 
 O script (idempotente por `task_id`):
-1. Lê `task_id`, `classification` e `classification_meta` do `state.json`
-2. Lê `files_modified` do counter e deriva `actual_level` (0-1=L0, 2-3=L1, 4+=L2)
+1. Com `--expect-task` e a task no `harness.db`: lê `task_id`, `classification`,
+   `classification_meta` e arquivos do banco, pelo id. Senão, do `state.json`
+2. Conta `files_modified` (banco ∪ contador, o contador só se for da task) e deriva
+   `actual_level` (0-1=L0, 2-3=L1, 4+=L2)
 3. Acrescenta/atualiza a task em `signals.json` → array `tasks`
 4. Recalcula `aggregates`, incluindo o bloco `classify` (`avg_classify_accuracy`,
    `regex_vs_semantic_agreement`, `human_override_count`) — fechando o loop de feedback
-5. Com `--abandoned`, encerra a task como `abandoned` no `harness.db`
+5. Com `--abandoned` (exige `--expect-task`), encerra a task esperada como
+   `abandoned` no `harness.db` — nunca a da projeção
+6. Não escreve `state.json` nem o contador
 
 **Não edite o `state.json` à mão para encerrar.** Desde 2026-09-23 (ramo
 `ciclo-de-vida-da-task`) quem responde "há task viva?" é o `harness.db`, não a

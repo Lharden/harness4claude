@@ -211,7 +211,10 @@ hook. A medição fica no relatório de verificação.
   linha em `signals.json`. Ação: `record_signal --expect-task` ler a task e o
   meta do banco pelo id; na mesma passada, o exemplo `--abandoned` do
   `SKILL.md`, que não passa `--expect-task` e encerraria a task da projeção.
-  Dono: task separada.
+  Dono: task separada. **Fechado em `fix/sinal-da-task-substituida`**
+  (`sinal-da-task-substituida-diagnostico.md`): o registro sai do banco pelo
+  id, e `--abandoned` exige `--expect-task`; o B2 passou a esperar a linha da
+  substituída.
 - **Os dois vermelhos pré-existentes da suíte** (medidos em `c175fd9`, antes de
   qualquer edição deste ramo): `test_verify_por_tabela.py::test_CONTROLE_codigo_antigo_adjudicava_medium_low`
   usa `git show main:...` como "código antigo", e desde o merge `c175fd9` o
