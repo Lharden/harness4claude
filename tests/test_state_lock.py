@@ -446,3 +446,34 @@ class TestIntervaloDeEspera:
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == esperado
+
+
+class TestCaminhoSemDisputaNaoLancaProcessos:
+    """acquire + release sem disputa lancam so o que o lock precisa: mkdir e rm.
+
+    No Git Bash do Windows cada processo externo custa ~200 ms. O lock lancava
+    `date` (2x no acquire), `awk` e `mkdir -p` a toda passagem: um acquire sem
+    disputa levava 570 ms, e dez workers em fila (10 x ~1,5 s) chegavam a 15 s
+    contra os 20 s do teste de escrita concorrente, que estourava com qualquer
+    carga (2026-09-30). Prova sem relogio: cada externo vigiado registra a
+    chamada antes de executar.
+    """
+
+    def test_acquire_e_release_lancam_so_mkdir_e_rm(self, harness_dir):
+        spy = harness_dir / "spy.log"
+        vigiados = "date stat awk sleep mkdir rm"
+        script = f"""
+            source "{LOCK_SH}"
+            for c in {vigiados}; do
+                eval "$c() {{ echo $c >> \\"\\$SPY\\"; command $c \\"\\$@\\"; }}"
+            done
+            acquire_state_lock || exit 1
+            release_state_lock
+        """
+        result = subprocess.run(
+            [BASH, "-c", script],
+            env=_env(harness_dir, SPY=spy.as_posix()),
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert spy.read_text(encoding="utf-8").split() == ["mkdir", "rm"]
