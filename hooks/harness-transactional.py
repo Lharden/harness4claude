@@ -131,9 +131,17 @@ def _scan_composition(command: str) -> tuple[int, bool]:
     `is_trusted_verification` recusa nos DOIS casos, enquanto `atomic_prefix`
     so pode cortar no primeiro. Manter duas varreduras separadas foi o que
     fez o corte cair dentro de um argumento entre aspas.
+
+    A segunda pergunta e "nao confiavel, mas sem ponto de corte bom": aspa
+    aberta, ou `$( )`/crase DENTRO de aspas duplas — o bash executa as duas ali.
+    Ate 2026-09-30 o miolo das aspas duplas era inerte para esta varredura, e
+    `python state_cli.py ... "$(python gera.py)"` saia isento rodando um
+    programa. Nao vira indice porque cortar no meio da aspa daria a
+    `atomic_prefix` uma sugestao que nem fecha as aspas.
     """
     quote = None
     escaped = False
+    substitui_entre_aspas = False
     for index, character in enumerate(command):
         if escaped:
             escaped = False
@@ -143,6 +151,8 @@ def _scan_composition(command: str) -> tuple[int, bool]:
                 escaped = True
             elif character == quote:
                 quote = None
+            elif quote == '"' and (character == '`' or command.startswith('$(', index)):
+                substitui_entre_aspas = True
             continue
         if character in {chr(39), '"'}:
             quote = character
@@ -153,12 +163,13 @@ def _scan_composition(command: str) -> tuple[int, bool]:
             return index, False
         if character == '$' and index + 1 < len(command) and command[index + 1] == '(':
             return index, False
-    return -1, quote is not None
+    return -1, quote is not None or substitui_entre_aspas
 
 
 def _has_unquoted_shell_composition(command: str) -> bool:
-    indice, aspa_aberta = _scan_composition(command)
-    return indice >= 0 or aspa_aberta
+    """Composicao que as aspas NAO neutralizam — `$( )` entre aspas duplas conta."""
+    indice, sem_corte = _scan_composition(command)
+    return indice >= 0 or sem_corte
 
 
 def is_trusted_verification(command: str) -> bool:
@@ -412,6 +423,15 @@ def _tokenize(command: str) -> list[str]:
         if character in {chr(39), chr(34)}:
             quote = character
             continue
+        if character in {chr(10), chr(13)}:
+            # Quebra de linha fora de aspas separa comandos. Ate 2026-09-30 ela
+            # caia no `isspace` abaixo e virava espaco: `echo hi` + nova linha +
+            # `python gera.py` era UM segmento de `echo`, e `is_read_only`
+            # dizia True. `\r` entra junto porque o PowerShell tambem o le como
+            # fim de linha, e `_scan_composition` ja o tratava como operador.
+            fechar()
+            tokens.append(chr(10))
+            continue
         if character.isspace():
             fechar()
             continue
@@ -431,7 +451,7 @@ def _tokenize(command: str) -> list[str]:
     return tokens
 
 
-_OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
+_OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&', chr(10)})
 
 
 #: Binarios cujo unico efeito e ler. Cada nome aqui e a afirmacao "este comando
@@ -445,6 +465,12 @@ _OPERADORES_TOKEN = frozenset({'>', '>>', ';', '|', '&'})
 #: `code_revision` comecavam por `cd`. `find` tambem le, mas escreve e executa
 #: pelo argumento — por isso fica fora daqui e tem regra propria em
 #: `_FIND_QUE_ESCREVE`.
+#:
+#: Estar aqui NAO dispensa a opcao. `sort -o`, `uniq IN OUT` e `sed -i`/`w`
+#: escrevem, e ate 2026-09-30 passavam como leitura; a regra de cada um mora em
+#: `_ESCRITA_POR_OPCAO`. A auditoria das demais entradas esta escrita em
+#: `tests/test_transactional_hook.py::SEM_ESCRITA_POR_OPCAO`, e o teste reprova
+#: binario novo que entre aqui sem passar por uma das duas.
 _SOMENTE_LEITURA = frozenset({
     'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'ls', 'pwd', 'echo', 'printf',
     'sort', 'uniq', 'cut', 'nl', 'basename', 'dirname', 'stat', 'diff', 'cmp',
@@ -520,6 +546,12 @@ _GIT_OPCAO_COM_VALOR = frozenset({
 
 def _subcomando_git(partes: list[str]) -> str | None:
     """O subcomando de `git ...`, depois das opcoes globais e dos valores delas."""
+    indice = _posicao_do_subcomando_git(partes)
+    return partes[indice] if indice is not None else None
+
+
+def _posicao_do_subcomando_git(partes: list[str]) -> int | None:
+    """Indice do subcomando em `partes`. `_escrita_do_git` le as opcoes depois dele."""
     indice = 1
     while indice < len(partes):
         parte = partes[indice]
@@ -528,19 +560,30 @@ def _subcomando_git(partes: list[str]) -> str | None:
         elif parte.startswith('-'):
             indice += 1
         else:
-            return parte
+            return indice
     return None
 
 
 def nao_muda_a_arvore(command: str) -> bool:
-    """O comando escreve, mas nao no codigo que a suite mede."""
-    if not command or shell_write_targets(command) or _redireciona_para_arquivo(command):
+    """O comando escreve, mas nao no codigo que a suite mede.
+
+    O commit do Claude Code, `git commit -m "$(cat <<'EOF' ... EOF)"`, passa
+    aqui porque a substituicao dele roda so `cat`: cada corpo de `_decompor`
+    tem de ser leitura, e `git commit -m "$(python gera.py)"` nao passa.
+    """
+    decomposto = _decompor(command) if command else None
+    if decomposto is None:
         return False
-    segmentos = _segmentos(command)
+    externa, corpos = decomposto
+    if not all(_corpo_so_le(corpo) for corpo in corpos):
+        return False
+    if _alvos_da_linha(externa) or _redireciona_para_arquivo(externa):
+        return False
+    segmentos = _segmentos(externa)
     if not segmentos:
         return False
     for partes in segmentos:
-        if _binario(partes[0]) != 'git':
+        if _binario(partes[0]) != 'git' or _escrita_por_opcao(partes)[1]:
             return False
         if _subcomando_git(partes) not in (_GIT_NAO_MUDA_ARVORE | _GIT_SOMENTE_LEITURA):
             return False
@@ -563,8 +606,12 @@ def _redireciona_para_arquivo(command: str) -> bool:
 
     `>` sem alvo e erro de sintaxe no shell, nao escrita. A duplicacao de
     descritor (`2>&1`, `>&2`) nao aponta para arquivo e passa.
+
+    O corpo de heredoc sai antes, como em `_segmentos`: ate 2026-09-30 o `>` do
+    `<noreply@anthropic.com>` na mensagem de `git commit -F - <<'EOF'` era lido
+    como redirecionamento, e todo commit por heredoc contava como mudanca.
     """
-    tokens = _tokenize(command)
+    tokens = _tokenize(sem_corpo_de_heredoc(command))
     for indice, token in enumerate(tokens):
         if token not in {'>', '>>'} or indice + 1 >= len(tokens):
             continue
@@ -589,8 +636,21 @@ def _segmentos(command: str) -> list[list[str]]:
     binario de leitura — 10 dos 27 comandos de leitura pura do incidente dos
     docs subiram `code_revision` so por isso. Quem decide se o alvo e escrita
     e `_redireciona_para_arquivo`, chamado antes por quem usa os segmentos.
+
+    Nova linha abre segmento (ver `_tokenize`), e por isso o corpo de heredoc
+    sai ANTES, como em `shell_write_targets`: o corpo e dado para o stdin, nao
+    comando, e cada linha dele viraria um segmento de "binario" desconhecido.
     """
-    tokens = _tokenize(command)
+    return _segmentar(_tokenize(sem_corpo_de_heredoc(command)))
+
+
+def _segmentar(tokens: list[str]) -> list[list[str]]:
+    """`_segmentos` sobre tokens ja prontos.
+
+    Separado porque `sem_corpo_de_heredoc` nao e idempotente: aplicado ao texto
+    ja limpo, o `cat <<EOF` que sobrou abriria outro corpo e engoliria as linhas
+    seguintes. `shell_write_targets` limpa uma vez e segmenta os proprios tokens.
+    """
     segmento: list[str] = []
     segmentos: list[list[str]] = []
     indice = 0
@@ -606,7 +666,11 @@ def _segmentos(command: str) -> list[list[str]]:
             indice += 3
             continue
         if token in {'>', '>>'}:
-            indice += 2
+            # O alvo e argumento do redirecionamento — salvo quando o que vem e
+            # operador. `echo x >` no fim da linha e erro de sintaxe, e engolir
+            # a quebra fundiria a linha seguinte neste segmento.
+            seguinte = tokens[indice + 1] if indice + 1 < len(tokens) else None
+            indice += 1 if seguinte in _OPERADORES_TOKEN else 2
             continue
         if token in _OPERADORES_TOKEN:
             if segmento:
@@ -621,6 +685,212 @@ def _segmentos(command: str) -> list[list[str]]:
     return segmentos
 
 
+#: O que entra na linha externa no lugar de cada substituicao. Comeca por `$_`
+#: de proposito: `nao_pode_ser_caminho` o recusa como variavel, entao `> $(x)`
+#: continua sendo redirecionamento sem alvo atribuivel; e, como cabeca de
+#: segmento, nao casa com binario de leitura nenhum — `$(x) arg` roda o que a
+#: substituicao imprimir.
+_MARCA_DE_SUBSTITUICAO = '$__substituicao__'
+
+
+class _SubstituicaoAberta(ValueError):
+    """Uma substituicao abriu e a linha acabou antes de ela fechar."""
+
+
+def _decompor(command: str) -> tuple[str, list[str]] | None:
+    """`(linha externa, corpos)`: cada substituicao sai da linha e vira um corpo.
+
+    Substituicao e o trecho que o shell EXECUTA para usar a saida: `$( )` e
+    crase (fora de aspas e dentro de aspas duplas), `<( )` e `>( )`, o `( )` de
+    subshell — que tambem e o agrupamento do PowerShell, `echo (python x)` —
+    e a aritmetica `$(( ))`, que nao executa mas pode conter uma substituicao.
+    Corpo de heredoc sem aspas no delimitador passa pela mesma expansao.
+
+    Ate 2026-09-30 `_tokenize` tratava todos como caractere comum:
+    `echo $(python gera.py)` era um segmento de `echo`, e `is_read_only` dizia
+    True para uma linha que roda um programa. Recusar todo `$(` tambem nao
+    serve: o commit do Claude Code, `git commit -m "$(cat <<'EOF' ... EOF)"`,
+    roda so `cat`, e conta-lo de volta faria todo commit invalidar a evidencia
+    — o problema que `_GIT_NAO_MUDA_ARVORE` resolve. Por isso cada corpo e
+    devolvido para ser julgado como comando, recursivamente.
+
+    Corpo de heredoc com delimitador entre aspas e literal e e pulado: la,
+    crase e parentese de mensagem de commit sao texto.
+
+    `None` quando uma substituicao nao fecha: nao da para saber o que roda.
+    Aspa sem fechamento nao e isso — o shell recusa a linha inteira, nada roda.
+
+    EXCECOES CONHECIDAS, todas na direcao segura (contam a mais, nunca a menos):
+    a crase e escape no PowerShell, entao `echo "a`nb"` la vira substituicao
+    sem fechamento e conta; `$( )` dentro de comentario `#` conta; e `case`
+    dentro de `$( )` fecha no primeiro `x)` e deixa um `)` solto, que conta.
+    """
+    try:
+        externa, corpos, _fim = _varrer(command, 0, 'shell', fecha=False)
+    except _SubstituicaoAberta:
+        return None
+    return externa, corpos
+
+
+def _varrer(texto: str, inicio: int, modo: str, fecha: bool) -> tuple[str, list[str], int]:
+    """Varre `texto` desde `inicio`. Devolve `(saida, corpos, fim)`.
+
+    `modo`: `shell` (linha de comando), `expande` (corpo de heredoc sem aspas:
+    aspas e parenteses sao literais, `$( )` e crase executam) ou `aritmetica`
+    (parentese agrupa conta, nao abre subshell). Com `fecha`, a varredura para
+    no `)` que fecha a substituicao aberta por quem chamou, e `fim` aponta logo
+    depois dele.
+    """
+    saida: list[str] = []
+    corpos: list[str] = []
+    aspas = None
+    profundidade = 0
+    heredocs: list[tuple[str, bool, bool]] = []
+    indice = inicio
+    tamanho = len(texto)
+
+    def substituir(corpo: str, depois: int) -> int:
+        corpos.append(corpo)
+        saida.append(_MARCA_DE_SUBSTITUICAO)
+        return depois
+
+    def ate_fechar(abertura: int) -> int:
+        """Indice logo depois do `)` que fecha o corpo aberto em `abertura`."""
+        return _varrer(texto, abertura, 'shell', fecha=True)[2]
+
+    def entre_parenteses(abertura: int) -> int:
+        fim = ate_fechar(abertura)
+        return substituir(texto[abertura:fim - 1], fim)
+
+    def aritmetica(abertura: int) -> int:
+        """A conta nao executa; o que ela contem, sim. Pede o segundo `)`."""
+        _conta, internos, fim = _varrer(texto, abertura, 'aritmetica', fecha=True)
+        if fim >= tamanho or texto[fim] != ')':
+            raise _SubstituicaoAberta(texto[abertura:])
+        corpos.extend(internos)
+        saida.append(_MARCA_DE_SUBSTITUICAO)
+        return fim + 1
+
+    while indice < tamanho:
+        caractere = texto[indice]
+        if aspas == chr(39):
+            if caractere == chr(39):
+                aspas = None
+            saida.append(caractere)
+            indice += 1
+            continue
+        if caractere == chr(92):
+            saida.append(texto[indice:indice + 2])
+            indice += 2
+            continue
+        if texto.startswith('$((', indice):
+            indice = aritmetica(indice + 3)
+            continue
+        if texto.startswith('$(', indice):
+            indice = entre_parenteses(indice + 2)
+            continue
+        if caractere == '`':
+            fim = indice + 1
+            while fim < tamanho and texto[fim] != '`':
+                fim += 2 if texto[fim] == chr(92) else 1
+            if fim >= tamanho:
+                raise _SubstituicaoAberta(texto[indice:])
+            # Dentro da crase a barra ainda escapa crase, cifrao e barra.
+            corpo = re.sub(r'\\([`$\\])', r'\1', texto[indice + 1:fim])
+            indice = substituir(corpo, fim + 1)
+            continue
+        if modo == 'expande':
+            saida.append(caractere)
+            indice += 1
+            continue
+        if aspas == chr(34):
+            if caractere == chr(34):
+                aspas = None
+            saida.append(caractere)
+            indice += 1
+            continue
+        if caractere in {chr(39), chr(34)}:
+            aspas = caractere
+            saida.append(caractere)
+            indice += 1
+            continue
+        if modo == 'aritmetica':
+            if caractere == '(':
+                profundidade += 1
+            elif caractere == ')':
+                if not profundidade:
+                    return ''.join(saida), corpos, indice + 1
+                profundidade -= 1
+            saida.append(caractere)
+            indice += 1
+            continue
+        if texto.startswith('((', indice):
+            indice = aritmetica(indice + 2)
+            continue
+        if caractere in {'<', '>'} and texto.startswith('(', indice + 1):
+            indice = entre_parenteses(indice + 2)
+            continue
+        if caractere == '(':
+            indice = entre_parenteses(indice + 1)
+            continue
+        if caractere == ')':
+            if fecha:
+                return ''.join(saida), corpos, indice + 1
+            raise _SubstituicaoAberta(texto[:indice + 1])
+        if texto.startswith('<<', indice) and not texto.startswith('<<<', indice):
+            achado, depois = _delimitador_de_heredoc(texto, indice)
+            if depois is None:
+                # Aspa do delimitador sem fechamento: a varredura segue pela
+                # aspa, e o que houver depois dela continua sendo olhado.
+                depois = indice + 2
+            elif achado:
+                heredocs.append(achado)
+            saida.append(texto[indice:depois])
+            indice = depois
+            continue
+        if caractere == chr(10) and heredocs:
+            saida.append(caractere)
+            indice = _pular_corpos_de_heredoc(texto, indice + 1, heredocs, corpos, saida)
+            heredocs = []
+            continue
+        saida.append(caractere)
+        indice += 1
+    if fecha:
+        raise _SubstituicaoAberta(texto[inicio:])
+    return ''.join(saida), corpos, indice
+
+
+def _pular_corpos_de_heredoc(
+    texto: str,
+    indice: int,
+    heredocs: list[tuple[str, bool, bool]],
+    corpos: list[str],
+    saida: list[str],
+) -> int:
+    """Consome os corpos pendentes a partir de `indice`; devolve onde a linha segue.
+
+    O corpo fica na saida como esta: quem tokeniza a linha externa ja o tira
+    por `sem_corpo_de_heredoc`. Corpo sem aspas no delimitador expande `$( )` e
+    crase, e o que ele executa vai para `corpos`. Sem delimitador de fechamento,
+    o corpo vai ate o fim, como no bash e em `sem_corpo_de_heredoc`.
+    """
+    for delimitador, ignora_tab, expande in heredocs:
+        comeco = indice
+        while indice < len(texto):
+            quebra = texto.find(chr(10), indice)
+            fim_da_linha = len(texto) if quebra == -1 else quebra
+            linha = texto[indice:fim_da_linha]
+            indice = fim_da_linha + 1 if quebra != -1 else len(texto)
+            alvo = linha.lstrip('\t') if ignora_tab else linha
+            if alvo.rstrip('\r') == delimitador:
+                break
+        corpo = texto[comeco:indice]
+        if expande:
+            corpos.extend(_varrer(corpo, 0, 'expande', fecha=False)[1])
+        saida.append(corpo)
+    return indice
+
+
 def is_read_only(command: str) -> bool:
     """Sei que este comando nao escreve — nao apenas "nao consegui ver escrita".
 
@@ -632,15 +902,30 @@ def is_read_only(command: str) -> bool:
 
     A porta e estreita: todo segmento da linha tem de comecar por um binario da
     lista, e qualquer redirecionamento ja tira o comando daqui pelo chamador.
+    Cada substituicao (`_decompor`) tem de ser leitura por si.
     """
-    if not command:
+    decomposto = _decompor(command) if command else None
+    if decomposto is None:
         return False
-    if shell_write_targets(command) or _redireciona_para_arquivo(command):
+    externa, corpos = decomposto
+    return _externa_so_le(externa) and all(_corpo_so_le(corpo) for corpo in corpos)
+
+
+def _corpo_so_le(corpo: str) -> bool:
+    """`$()` vazio nao roda nada; qualquer outro corpo e julgado como comando."""
+    return not corpo.strip() or is_read_only(corpo)
+
+
+def _externa_so_le(command: str) -> bool:
+    """`is_read_only` da linha externa, com as substituicoes ja trocadas pela marca."""
+    if _alvos_da_linha(command) or _redireciona_para_arquivo(command):
         return False
     segmentos = _segmentos(command)
     if not segmentos:
         return False
     for partes in segmentos:
+        if _escrita_por_opcao(partes)[1]:
+            return False
         binario = _binario(partes[0])
         if binario == 'git':
             if _subcomando_git(partes) not in _GIT_SOMENTE_LEITURA:
@@ -652,9 +937,30 @@ def is_read_only(command: str) -> bool:
             continue
         if binario not in _SOMENTE_LEITURA:
             return False
-        if binario == 'sed' and any(p.startswith('-i') for p in partes[1:]):
-            return False
     return True
+
+
+def _fim_da_aritmetica(linha: str, inicio: int) -> int:
+    """Indice logo depois da expressao aritmetica que abre em `inicio`.
+
+    `inicio` aponta para `((` (o de `$((` ou o comando `((`) ou para `$[`. Ali
+    dentro `<<` e deslocamento de bits, nao heredoc. Lido como heredoc, o `<<2`
+    de `echo $((1<<2))` engolia as linhas seguintes como corpo — e, com o corpo
+    saindo antes da segmentacao, elas sumiam da leitura. Sem fechamento na
+    linha, a expressao vai ate o fim dela.
+    """
+    abre, fecha = ('[', ']') if linha[inicio] == '$' else ('(', ')')
+    cursor = inicio + 1 if abre == '[' else inicio
+    profundidade = 0
+    while cursor < len(linha):
+        if linha[cursor] == abre:
+            profundidade += 1
+        elif linha[cursor] == fecha:
+            profundidade -= 1
+            if profundidade == 0:
+                return cursor + 1
+        cursor += 1
+    return len(linha)
 
 
 def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
@@ -689,34 +995,52 @@ def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
             escaped = True
             indice += 1
             continue
+        if linha.startswith('((', indice) or linha.startswith('$[', indice):
+            indice = _fim_da_aritmetica(linha, indice)
+            continue
         if caractere == '<' and linha.startswith('<<', indice):
             if linha.startswith('<<<', indice):
                 indice += 3
                 continue
-            cursor = indice + 2
-            ignora_tab = False
-            if cursor < tamanho and linha[cursor] == '-':
-                ignora_tab = True
-                cursor += 1
-            while cursor < tamanho and linha[cursor] in ' \t':
-                cursor += 1
-            if cursor < tamanho and linha[cursor] in {chr(39), chr(34)}:
-                fecha = linha[cursor]
-                fim = linha.find(fecha, cursor + 1)
-                if fim == -1:
-                    break
-                achados.append((linha[cursor + 1:fim], ignora_tab))
-                indice = fim + 1
-                continue
-            fim = cursor
-            while fim < tamanho and (linha[fim].isalnum() or linha[fim] in '_-.'):
-                fim += 1
-            if fim > cursor:
-                achados.append((linha[cursor:fim], ignora_tab))
-            indice = max(fim, cursor + 1)
+            achado, depois = _delimitador_de_heredoc(linha, indice)
+            if depois is None:
+                break
+            if achado:
+                achados.append(achado[:2])
+            indice = depois
             continue
         indice += 1
     return achados
+
+
+def _delimitador_de_heredoc(
+    texto: str, indice: int
+) -> tuple[tuple[str, bool, bool] | None, int | None]:
+    """O `<<DELIM` que comeca em `indice`: `((delim, ignora_tab, expande), depois)`.
+
+    `expande` e False quando o delimitador vem entre aspas: ai o corpo e
+    literal. Sem aspas, o shell expande `$( )` e crase no corpo — e o que
+    `_decompor` precisa saber. `depois` e None quando a aspa do delimitador
+    nao fecha; o achado e None quando nao ha palavra depois do `<<`.
+    """
+    tamanho = len(texto)
+    cursor = indice + 2
+    ignora_tab = False
+    if cursor < tamanho and texto[cursor] == '-':
+        ignora_tab = True
+        cursor += 1
+    while cursor < tamanho and texto[cursor] in ' \t':
+        cursor += 1
+    if cursor < tamanho and texto[cursor] in {chr(39), chr(34)}:
+        fim = texto.find(texto[cursor], cursor + 1)
+        if fim == -1:
+            return None, None
+        return (texto[cursor + 1:fim], ignora_tab, False), fim + 1
+    fim = cursor
+    while fim < tamanho and (texto[fim].isalnum() or texto[fim] in '_-.'):
+        fim += 1
+    achado = (texto[cursor:fim], ignora_tab, True) if fim > cursor else None
+    return achado, max(fim, cursor + 1)
 
 
 def sem_corpo_de_heredoc(command: str, recusas: list[dict[str, Any]] | None = None) -> str:
@@ -763,6 +1087,376 @@ def sem_corpo_de_heredoc(command: str, recusas: list[dict[str, Any]] | None = No
     return "\n".join(mantidas)
 
 
+def _nome_longo(nome: str, longas: dict[str, str], abrevia: bool) -> str | None:
+    """O nome canonico de `--nome`, ou None se ele nao identifica opcao nenhuma.
+
+    O `getopt_long` do GNU aceita qualquer prefixo sem ambiguidade — `sort
+    --out=x` escreve em `x`. Prefixo ambiguo ou desconhecido faz o programa
+    sair com erro antes de rodar, entao nao ha escrita a atribuir.
+    """
+    if nome in longas:
+        return nome
+    if not abrevia or not nome:
+        return None
+    candidatos = [longa for longa in longas if longa.startswith(nome)]
+    return candidatos[0] if len(candidatos) == 1 else None
+
+
+def _opcoes_gnu(
+    argumentos: list[str],
+    *,
+    com_valor: str = '',
+    valor_colado: str = '',
+    longas: dict[str, str] | None = None,
+    abrevia: bool = True,
+) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """(opcoes, operandos) de uma linha no estilo `getopt_long`.
+
+    As opcoes saem como `('-o', valor)` e `('--output', valor)`, ja com o nome
+    longo resolvido. `com_valor` sao as curtas que exigem valor (colado ou no
+    token seguinte), `valor_colado` as que so aceitam valor colado (`sed -i.bak`),
+    e `longas` mapeia cada nome longo para `sim`, `opcional` ou `nao`.
+
+    Existe porque "a opcao aparece na linha" nao basta nas duas direcoes: `-uo x`
+    agrupa o `-o`, `sort f -o x` o poe depois do operando (o GNU permuta), e em
+    `git grep -e -O` o `-O` e o padrao buscado, nao a opcao. Depois de `--` tudo
+    e operando.
+    """
+    longas = longas or {}
+    opcoes: list[tuple[str, str | None]] = []
+    operandos: list[str] = []
+    indice = 0
+    while indice < len(argumentos):
+        argumento = argumentos[indice]
+        indice += 1
+        if argumento == '--':
+            operandos.extend(argumentos[indice:])
+            break
+        if argumento.startswith('--'):
+            nome, igual, valor = argumento[2:].partition('=')
+            resolvido = _nome_longo(nome, longas, abrevia)
+            if resolvido and not igual and longas[resolvido] == 'sim' and indice < len(argumentos):
+                valor, igual = argumentos[indice], '='
+                indice += 1
+            opcoes.append(('--' + (resolvido or nome), valor if igual else None))
+            continue
+        if argumento.startswith('-') and argumento != '-':
+            for posicao in range(1, len(argumento)):
+                letra, resto = argumento[posicao], argumento[posicao + 1:]
+                if letra in com_valor:
+                    if not resto and indice < len(argumentos):
+                        resto = argumentos[indice]
+                        indice += 1
+                    opcoes.append(('-' + letra, resto))
+                    break
+                if letra in valor_colado:
+                    opcoes.append(('-' + letra, resto or None))
+                    break
+                opcoes.append(('-' + letra, None))
+            continue
+        operandos.append(argumento)
+    return opcoes, operandos
+
+
+_LONGAS_DO_SORT = {
+    'output': 'sim', 'compress-program': 'sim', 'key': 'sim',
+    'field-separator': 'sim', 'buffer-size': 'sim', 'temporary-directory': 'sim',
+    'batch-size': 'sim', 'files0-from': 'sim', 'random-source': 'sim',
+    'parallel': 'sim', 'sort': 'sim', 'check': 'opcional',
+    'ignore-leading-blanks': 'nao', 'debug': 'nao', 'dictionary-order': 'nao',
+    'general-numeric-sort': 'nao', 'human-numeric-sort': 'nao', 'ignore-case': 'nao',
+    'ignore-nonprinting': 'nao', 'merge': 'nao', 'month-sort': 'nao',
+    'numeric-sort': 'nao', 'random-sort': 'nao', 'reverse': 'nao', 'stable': 'nao',
+    'unique': 'nao', 'version-sort': 'nao', 'zero-terminated': 'nao',
+    'help': 'nao', 'version': 'nao',
+}
+
+
+def _escrita_do_sort(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`-o`/`--output` escreve o resultado; `--compress-program` executa um programa."""
+    opcoes, _ = _opcoes_gnu(argumentos, com_valor='kotST', longas=_LONGAS_DO_SORT)
+    alvos = [valor for nome, valor in opcoes if nome in {'-o', '--output'} and valor]
+    escreve = any(nome in {'-o', '--output', '--compress-program'} for nome, _ in opcoes)
+    return alvos, escreve
+
+
+_LONGAS_DO_UNIQ = {
+    'skip-fields': 'sim', 'skip-chars': 'sim', 'check-chars': 'sim',
+    'all-repeated': 'opcional', 'group': 'opcional', 'count': 'nao',
+    'repeated': 'nao', 'ignore-case': 'nao', 'unique': 'nao',
+    'zero-terminated': 'nao', 'help': 'nao', 'version': 'nao',
+}
+
+
+def _escrita_do_uniq(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`uniq [ENTRADA [SAIDA]]`: o segundo operando e arquivo escrito, salvo `-`."""
+    _, operandos = _opcoes_gnu(argumentos, com_valor='fsw', longas=_LONGAS_DO_UNIQ)
+    if len(operandos) >= 2 and operandos[1] != '-':
+        return [operandos[1]], True
+    return [], False
+
+
+_LONGAS_DO_SED = {
+    'expression': 'sim', 'file': 'sim', 'line-length': 'sim', 'in-place': 'opcional',
+    'null-data': 'nao', 'zero-terminated': 'nao', 'separate': 'nao', 'sandbox': 'nao',
+    'debug': 'nao', 'posix': 'nao', 'quiet': 'nao', 'silent': 'nao',
+    'regexp-extended': 'nao', 'unbuffered': 'nao', 'follow-symlinks': 'nao',
+    'binary': 'nao', 'help': 'nao', 'version': 'nao',
+}
+
+
+def _escrita_do_sed(argumentos: list[str]) -> tuple[list[str], bool]:
+    """Edicao no lugar, e os comandos do roteiro que escrevem ou executam.
+
+    `-i` edita TODOS os arquivos de entrada, nao so o ultimo, e aparece como
+    `--in-place`, agrupado (`-Ei`) e com sufixo (`-i.bak`). O roteiro escreve
+    por `w`/`W` e pela flag `w` do `s`, e executa por `e` e pela flag `e`.
+    `--sandbox` recusa `e`/`r`/`w`. Roteiro em arquivo (`-f`) nao da para ler
+    daqui: conta como escrita.
+    """
+    opcoes, operandos = _opcoes_gnu(
+        argumentos, com_valor='efl', valor_colado='i', longas=_LONGAS_DO_SED
+    )
+    nomes = {nome for nome, _ in opcoes}
+    roteiros = [valor for nome, valor in opcoes if nome in {'-e', '--expression'} and valor is not None]
+    em_arquivo = bool(nomes & {'-f', '--file'})
+    arquivos = operandos
+    if not roteiros and not em_arquivo and operandos:
+        roteiros, arquivos = [operandos[0]], operandos[1:]
+    alvos: list[str] = []
+    escreve = False
+    if nomes & {'-i', '--in-place'}:
+        alvos.extend(arquivo for arquivo in arquivos if arquivo != '-')
+        escreve = True
+    if '--sandbox' not in nomes:
+        escreve = escreve or em_arquivo
+        for roteiro in roteiros:
+            do_roteiro, escreve_roteiro = _roteiro_do_sed(roteiro)
+            alvos.extend(do_roteiro)
+            escreve = escreve or escreve_roteiro
+    return alvos, escreve
+
+
+def _roteiro_do_sed(roteiro: str) -> tuple[list[str], bool]:
+    """(arquivos que o roteiro escreve, se escreve ou executa), pela gramatica do GNU sed.
+
+    Procurar `w` no texto nao serve: `sed -n '/def test/p'` e `s/hello/world/`
+    tem `e` e `w` dentro da expressao e so leem. Entao o roteiro e lido como o
+    sed le — endereco, `!`, comando, e os argumentos de cada comando — e o que
+    nao for reconhecido conta como escrita.
+    """
+    alvos: list[str] = []
+    escreve = False
+    tamanho = len(roteiro)
+
+    def ate_o_fim_da_linha(cursor: int) -> tuple[str, int]:
+        fim = roteiro.find(chr(10), cursor)
+        if fim < 0:
+            return roteiro[cursor:], tamanho
+        return roteiro[cursor:fim], fim + 1
+
+    def delimitado(cursor: int, delimitador: str) -> int:
+        """Indice depois do delimitador que fecha, ou -1 se nao fecha."""
+        while cursor < tamanho:
+            caractere = roteiro[cursor]
+            if caractere == chr(92):
+                cursor += 2
+                continue
+            if caractere == delimitador:
+                return cursor + 1
+            if caractere == chr(10):
+                return -1
+            cursor += 1
+        return -1
+
+    def endereco(cursor: int) -> int:
+        if cursor < tamanho and roteiro[cursor].isdigit():
+            while cursor < tamanho and (roteiro[cursor].isdigit() or roteiro[cursor] == '~'):
+                cursor += 1
+            return cursor
+        if cursor < tamanho and roteiro[cursor] == '$':
+            return cursor + 1
+        if cursor < tamanho and roteiro[cursor] in {'/', chr(92)}:
+            if roteiro[cursor] == chr(92):
+                if cursor + 1 >= tamanho:
+                    return -1
+                delimitador, cursor = roteiro[cursor + 1], cursor + 2
+            else:
+                delimitador, cursor = '/', cursor + 1
+            cursor = delimitado(cursor, delimitador)
+            while 0 <= cursor < tamanho and roteiro[cursor] in 'IM':
+                cursor += 1
+        return cursor
+
+    def pula_brancos(cursor: int, tambem: str = '') -> int:
+        while cursor < tamanho and roteiro[cursor] in ' \t' + tambem:
+            cursor += 1
+        return cursor
+
+    def arquivo(nome: str) -> None:
+        if nome.strip():
+            alvos.append(nome.strip())
+
+    cursor = 0
+    while cursor < tamanho:
+        if roteiro[cursor] in ' \t;' + chr(10):
+            cursor += 1
+            continue
+        if roteiro[cursor] == '#':
+            _, cursor = ate_o_fim_da_linha(cursor)
+            continue
+        cursor = endereco(cursor)
+        if cursor < 0:
+            return alvos, True
+        cursor = pula_brancos(cursor)
+        if cursor < tamanho and roteiro[cursor] == ',':
+            cursor = pula_brancos(cursor + 1)
+            if cursor < tamanho and roteiro[cursor] in '+~':
+                cursor += 1
+                while cursor < tamanho and roteiro[cursor].isdigit():
+                    cursor += 1
+            else:
+                cursor = endereco(cursor)
+                if cursor < 0:
+                    return alvos, True
+        cursor = pula_brancos(cursor, '!')
+        if cursor >= tamanho:
+            return alvos, True
+        comando = roteiro[cursor]
+        cursor += 1
+        if comando in '{}=dDgGhHnNpPxzF':
+            continue
+        if comando in 'lLqQ':
+            cursor = pula_brancos(cursor)
+            while cursor < tamanho and roteiro[cursor].isdigit():
+                cursor += 1
+            continue
+        if comando in ':btTv':
+            while cursor < tamanho and roteiro[cursor] not in ';' + chr(10):
+                cursor += 1
+            continue
+        if comando in 'aic':
+            linha, cursor = ate_o_fim_da_linha(cursor)
+            while linha.endswith(chr(92)) and cursor < tamanho:
+                linha, cursor = ate_o_fim_da_linha(cursor)
+            continue
+        if comando in 'rRwW':
+            nome, cursor = ate_o_fim_da_linha(cursor)
+            if comando in 'wW':
+                escreve = True
+                arquivo(nome)
+            continue
+        if comando == 'e':
+            _, cursor = ate_o_fim_da_linha(cursor)
+            escreve = True
+            continue
+        if comando in 'sy':
+            if cursor >= tamanho or roteiro[cursor] in {chr(10), chr(92)}:
+                return alvos, True
+            delimitador = roteiro[cursor]
+            cursor = delimitado(cursor + 1, delimitador)
+            if cursor >= 0:
+                cursor = delimitado(cursor, delimitador)
+            if cursor < 0:
+                return alvos, True
+            while comando == 's' and cursor < tamanho:
+                flag = roteiro[cursor]
+                if flag in 'gpiImM' or flag.isdigit():
+                    cursor += 1
+                elif flag == 'e':
+                    escreve = True
+                    cursor += 1
+                elif flag == 'w':
+                    nome, cursor = ate_o_fim_da_linha(cursor + 1)
+                    escreve = True
+                    arquivo(nome)
+                else:
+                    break
+            continue
+        return alvos, True
+    return alvos, escreve
+
+
+#: Subcomandos de leitura do git que aceitam `--output=<arquivo>` (opcao de
+#: diff). Conferido em git 2.55: cada um criou o arquivo; `status`, `grep`,
+#: `ls-files`, `rev-parse`, `describe` e `cat-file` nao.
+_GIT_COM_OUTPUT = frozenset({'diff', 'log', 'show', 'shortlog', 'blame'})
+
+_LONGAS_DO_GIT_GREP = {
+    'open-files-in-pager': 'opcional', 'only-matching': 'nao', 'or': 'nao',
+    'and': 'nao', 'not': 'nao', 'max-depth': 'sim', 'max-count': 'sim',
+    'threads': 'sim', 'after-context': 'sim', 'before-context': 'sim',
+    'context': 'sim',
+}
+
+
+def _escrita_do_git(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`--output` nos subcomandos de diff, e o pager arbitrario de `git grep -O`.
+
+    `--output` nao aceita abreviacao (git 2.55 recusa `--outp`), e
+    `--output-indicator-new` e outra opcao. Depois de `--` e pathspec.
+    """
+    # A mesma leitura de `_subcomando_git`: `git -C sub diff` tem o `sub` como
+    # valor de `-C`, e confundi-lo com o subcomando esconderia o `--output`.
+    posicao = _posicao_do_subcomando_git(['git', *argumentos])
+    if posicao is None:
+        return [], False
+    subcomando, resto = argumentos[posicao - 1], argumentos[posicao:]
+    if subcomando == 'grep':
+        opcoes, _ = _opcoes_gnu(
+            resto, com_valor='ABCefm', valor_colado='O', longas=_LONGAS_DO_GIT_GREP
+        )
+        return [], any(nome in {'-O', '--open-files-in-pager'} for nome, _ in opcoes)
+    if subcomando not in _GIT_COM_OUTPUT:
+        return [], False
+    alvos: list[str] = []
+    escreve = False
+    for indice, argumento in enumerate(resto):
+        if argumento == '--':
+            break
+        if argumento.startswith('--output='):
+            escreve = True
+            alvos.append(argumento[len('--output='):])
+        elif argumento == '--output':
+            escreve = True
+            if indice + 1 < len(resto):
+                alvos.append(resto[indice + 1])
+    return [alvo for alvo in alvos if alvo], escreve
+
+
+_LONGAS_DO_RG = {
+    'pre': 'sim', 'pre-glob': 'sim', 'no-pre': 'nao', 'regexp': 'sim', 'file': 'sim',
+    'glob': 'sim', 'iglob': 'sim', 'replace': 'sim', 'type': 'sim', 'type-not': 'sim',
+}
+
+
+def _escrita_do_rg(argumentos: list[str]) -> tuple[list[str], bool]:
+    """`--pre COMANDO` roda um programa por arquivo. rg 15.1 nao abrevia opcao."""
+    opcoes, _ = _opcoes_gnu(
+        argumentos, com_valor='efgtTmABCMjdEr', longas=_LONGAS_DO_RG, abrevia=False
+    )
+    return [], any(nome == '--pre' and valor for nome, valor in opcoes)
+
+
+#: Binarios que escrevem ou executam dependendo da opcao. Cada regra devolve
+#: `(alvos, escreve)`: os arquivos atribuiveis, e se o segmento escreve ou
+#: executa. As duas metades sao independentes de proposito — `sort -o $OUT`
+#: escreve sem alvo que a regua aceite, e `rg --pre` executa sem alvo nenhum.
+_ESCRITA_POR_OPCAO = {
+    'sort': _escrita_do_sort,
+    'uniq': _escrita_do_uniq,
+    'sed': _escrita_do_sed,
+    'git': _escrita_do_git,
+    'rg': _escrita_do_rg,
+}
+
+
+def _escrita_por_opcao(partes: list[str]) -> tuple[list[str], bool]:
+    """A regra de `_ESCRITA_POR_OPCAO` para o binario que abre o segmento."""
+    regra = _ESCRITA_POR_OPCAO.get(_binario(partes[0])) if partes else None
+    return regra(partes[1:]) if regra else ([], False)
+
+
 def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = None) -> list[str]:
     """Arquivos que este comando de shell escreve, ate onde da para atribuir.
 
@@ -773,7 +1467,11 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
     que alterou 2 arquivos por heredoc registrou `files=0` e virou L0, e
     `proxy_regex_vs_observado` e calculado sobre esse rotulo.
 
-    Cobre redirecionamento, `tee` e `sed -i`. NAO cobre programa que escreve
+    Cobre redirecionamento, `tee` e a escrita por opcao de `_ESCRITA_POR_OPCAO`
+    (`sed -i`, `sort -o`, `uniq IN OUT`, `git diff --output`...), esta so no
+    binario que abre o segmento: em `grep -rn uniq a.py b.py` a palavra `uniq`
+    e padrao de busca, e ler `b.py` como saida invalidaria evidencia por uma
+    leitura. `tee` segue sendo procurado em qualquer posicao. NAO cobre programa que escreve
     por dentro (`python - <<PY` com `write_text`), e nao ha como cobrir: e um
     programa. Por isso o chamador mantem o placeholder quando esta lista sai
     vazia — 'nao da para saber' e diferente de 'nao escreveu'.
@@ -782,9 +1480,27 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
     Um candidato rejeitado por engano e uma escrita real que some do contador —
     o erro na direcao perigosa. Sem o registro, "o ruido caiu" e "o guarda
     cegou" produzem exatamente o mesmo numero.
+
+    A escrita de dentro de uma substituicao conta: `echo $(sed -i ... x.py)`
+    escreve `x.py`. Substituicao sem fechamento (`_decompor` devolve None) e lida
+    como a linha crua — `is_read_only` ja a recusa, e o placeholder fica.
     """
     if not command:
         return []
+    decomposto = _decompor(command)
+    if decomposto is None:
+        return _alvos_da_linha(command, recusas)
+    externa, corpos = decomposto
+    alvos = _alvos_da_linha(externa, recusas)
+    for corpo in corpos:
+        for alvo in shell_write_targets(corpo, recusas):
+            if alvo not in alvos:
+                alvos.append(alvo)
+    return alvos
+
+
+def _alvos_da_linha(command: str, recusas: list[dict[str, Any]] | None = None) -> list[str]:
+    """`shell_write_targets` de uma linha so, sem descer nas substituicoes."""
     tokens = _tokenize(sem_corpo_de_heredoc(command, recusas))
     alvos: list[str] = []
 
@@ -819,14 +1535,9 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
                     continue
                 considerar(seguinte)
                 break
-        elif token == 'sed':
-            fatia = []
-            for seguinte in tokens[indice + 1:]:
-                if seguinte in _OPERADORES_TOKEN:
-                    break
-                fatia.append(seguinte)
-            if any(f.startswith('-i') for f in fatia) and fatia:
-                considerar(fatia[-1])
+    for partes in _segmentar(tokens):
+        for alvo in _escrita_por_opcao(partes)[0]:
+            considerar(alvo)
     return alvos
 
 def _response(payload: dict[str, Any]) -> Any:

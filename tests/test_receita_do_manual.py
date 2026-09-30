@@ -215,25 +215,8 @@ def test_composicao_continua_nao_isenta():
     assert hook.is_state_management('X=$(python state_cli.py show)') is False
     assert hook.is_state_management('python state_cli.py complete \\\n  --task t-1') is False
     assert hook.is_state_management('python -m pytest -q') is False
-
-
-def test_substituicao_entre_aspas_duplas_nao_e_vista_LIMITE_CONHECIDO():
-    """Buraco medido em 2026-09-17, declarado em vez de escondido.
-
-    `_scan_composition` (`hooks/harness-transactional.py:52-80`) para de olhar
-    operadores assim que entra em aspas — e o bash executa `$( )` dentro de
-    aspas DUPLAS do mesmo jeito. Entao `python state_cli.py --home "$(pwd)"`
-    passa por isento, e um `"$(sed -i ...)"` no lugar do `pwd` escreveria de
-    verdade sem subir o contador. A direcao do erro e a perigosa.
-
-    NAO esta consertado aqui, e a razao e de escopo, nao de conveniencia: a
-    mesma varredura decide `is_trusted_verification`. Apertar a regra faria
-    comando de teste com substituicao entre aspas parar de contar como
-    evidencia — mudanca de comportamento com falsificacao propria, fora de R4.
-    Escrito no plano `portao-mede-a-arvore-verification.md` como aberto.
-
-    Se este teste REPROVAR, o buraco foi fechado por outra mudanca: apague este
-    teste e atualize aquele documento.
-    """
-    assert hook.is_state_management('X="$(python state_cli.py show)"') is True
-    assert hook._has_unquoted_shell_composition('echo "$(date)"') is False
+    # Entre aspas duplas o bash executa `$( )` do mesmo jeito. Era limite
+    # conhecido desde 2026-09-17, fechado em 2026-09-30; os casos estao em
+    # `test_transactional_hook.py::test_substituicao_entre_aspas_*`.
+    assert hook.is_state_management('X="$(python state_cli.py show)"') is False
+    assert hook._has_unquoted_shell_composition('echo "$(date)"') is True
