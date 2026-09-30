@@ -191,6 +191,25 @@ class TestRecordESignalSeExcluem:
         )
 
 
+class TestSignalSemLockNaoGrava:
+    def test_lock_ocupado_perde_o_contador_e_nao_o_documento(self, mods, tmp_path, monkeypatch):
+        """Fail-open de `signal` e desistir do contador, nao gravar sem exclusao.
+
+        Gravar sem o lock e exatamente a corrida acima com o prazo no lugar do
+        shim: quem segura o lock pode estar entre a leitura e a escrita de uma
+        task, e o documento que `signal` grava por cima nao tem essa task.
+        """
+        _semeia(tmp_path)
+        antes = (tmp_path / "signals.json").read_bytes()
+        # Lock vivo de outro escritor: recente, longe de stale.
+        os.mkdir(tmp_path / "signals.json.lockdir")
+        monkeypatch.setattr(mods.bs, "LOCK_TIMEOUT_S", 0)
+        mods.bs.signal("offers", tmp_path)
+        assert (tmp_path / "signals.json").read_bytes() == antes, (
+            "signal gravou signals.json sem ter o lock"
+        )
+
+
 class TestMigracaoNaoApagaOutroEscritor:
     def test_migracao_preserva_o_bloco_branch(self, mods, tmp_path):
         """Sem corrida: `branch` e campo legitimo do schema e sai da migracao."""
