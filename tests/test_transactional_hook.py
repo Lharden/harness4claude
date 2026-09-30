@@ -2355,3 +2355,168 @@ def test_toda_entrada_de_somente_leitura_foi_auditada():
         f"sem auditoria: {sorted(set(hook._SOMENTE_LEITURA) - auditados)}"
     )
     assert not set(SEM_ESCRITA_POR_OPCAO) & set(hook._ESCRITA_POR_OPCAO)
+
+
+# --- Substituicao de comando executa programa -------------------------------
+#
+# Ate 2026-09-30 `_tokenize` tratava `$(`, crase, `<(` e `(` como caracteres
+# comuns: `echo $(python gera.py)` virava UM segmento encabecado por `echo`, e
+# `is_read_only` dizia True para uma linha que roda um programa. O mesmo
+# buraco, pela outra varredura: `_scan_composition` via o miolo de aspas duplas
+# como inerte, e o bash executa `$( )` e crase ali dentro.
+#
+# O conserto nao pode recusar todo `$(`: a forma de commit do Claude Code,
+# `git commit -m "$(cat <<'EOF' ... EOF)"`, roda so `cat`, e contá-la de volta
+# faria todo commit invalidar a evidencia de teste — o problema que
+# `_GIT_NAO_MUDA_ARVORE` existe para resolver. O corpo da substituicao e
+# analisado como comando: ele tem de ser leitura por si.
+
+COMMIT_DO_CLAUDE_CODE = (
+    "git commit -m \"$(cat <<'EOF'\n"
+    "fix(x): `crase` e (parenteses) e $(nada) na mensagem\n"
+    "\n"
+    "Co-Authored-By: Claude <noreply@anthropic.com>\n"
+    "EOF\n"
+    ")\""
+)
+
+SUBSTITUICAO_QUE_EXECUTA = [
+    "echo $(python gera.py)",
+    'echo "$(python gera.py)"',
+    "echo `python gera.py`",
+    'echo "`python gera.py`"',
+    "diff <(python gera.py) a",
+    "sort a >(python gera.py)",            # ja recusado pelo `>`; guarda
+    "echo (python gera.py)",               # PowerShell: agrupamento executa
+    'echo "$(echo "$(python gera.py)")"',  # aninhada
+    "cat $(ls) $(python gera.py)",         # a segunda e que roda programa
+    "echo $((1 + $(python gera.py)))",      # dentro de aritmetica tambem roda
+    "cat <<EOF\n$(python gera.py)\nEOF",   # heredoc sem aspas expande
+    "cat <<EOF\n`python gera.py`\nEOF",
+    "echo $(python gera.py",               # sem fechamento: nao da para saber
+]
+
+
+@pytest.mark.parametrize("comando", SUBSTITUICAO_QUE_EXECUTA)
+def test_substituicao_que_roda_programa_nao_e_leitura(comando: str):
+    assert hook.is_read_only(comando) is False, comando
+
+
+@pytest.mark.parametrize("comando", [
+    'git commit -m "$(python gera.py)"',
+    "git commit -m `python gera.py`",
+    "git add $(python gera.py)",
+    "git commit -m \"$(cat <<EOF\n$(python gera.py)\nEOF\n)\"",
+])
+def test_substituicao_que_roda_programa_muda_a_arvore(comando: str):
+    assert hook.nao_muda_a_arvore(comando) is False, comando
+
+
+@pytest.mark.parametrize("comando", [
+    "echo $(sed -i s/a/b/ gera.py)",
+    'echo "$(cat a > gera.py)"',
+    "echo `tee gera.py < a`",
+])
+def test_escrita_dentro_da_substituicao_e_atribuida(comando: str):
+    assert hook.shell_write_targets(comando) == ["gera.py"], comando
+    assert hook.is_read_only(comando) is False, comando
+
+
+@pytest.mark.parametrize("comando", [
+    'python state_cli.py evidence --note "$(python gera.py)"',
+    "python state_cli.py evidence --note \"`python gera.py`\"",
+    'X="$(python state_cli.py show)"',
+])
+def test_substituicao_entre_aspas_tira_a_isencao_de_estado(comando: str):
+    assert hook.is_state_management(comando) is False, comando
+
+
+def test_substituicao_entre_aspas_nao_fabrica_evidencia():
+    """O stderr do corpo sai na tela junto com o do pytest, e pode forjar `N passed`."""
+    comando = 'python -m pytest -q -k "$(python forja.py)"'
+    assert hook.is_trusted_verification(comando) is False
+    assert hook.looks_like_verification(comando) is True
+
+
+# Controles: a porta so fecha para o que executa.
+
+@pytest.mark.parametrize("comando", [
+    "echo $(git rev-parse HEAD)",
+    'echo "$(cat a)"',
+    "echo `pwd`",
+    "diff <(sort a) <(sort b)",
+    "cat $(ls)",
+    "echo $((1 + 2))",
+    "echo $((1<<2))",
+    "cat <<'EOF'\n$(python gera.py) e `python gera.py` sao texto aqui\nEOF",
+    "echo '$(python gera.py)' '`python gera.py`' '(python gera.py)'",
+    r'echo \$\(python gera.py\)',
+    "grep -c 'def (' a.py",
+    "echo $()",
+])
+def test_CONTROLE_substituicao_que_so_le_continua_leitura(comando: str):
+    assert hook.is_read_only(comando) is True, comando
+    assert hook.shell_write_targets(comando) == [], comando
+
+
+def test_maior_que_no_corpo_de_heredoc_nao_redireciona():
+    """O `>` que fecha o e-mail da atribuicao e texto do corpo.
+
+    `_redireciona_para_arquivo` tokenizava a linha crua, com o corpo dentro,
+    enquanto `_segmentos` e `shell_write_targets` ja o tiravam. Com a
+    substituicao decomposta, o heredoc do commit do Claude Code vira corpo de
+    primeiro nivel — e o `<noreply@anthropic.com>` dele contava o commit
+    como mudanca na arvore.
+    """
+    commit = "git commit -F - <<'EOF'\nfix: x\n\nCo-Authored-By: C <noreply@anthropic.com>\nEOF"
+    assert hook.nao_muda_a_arvore(commit) is True
+    assert hook.is_read_only("cat <<'EOF'\na > b\nEOF") is True
+    # A outra metade: o `>` da linha de comando continua sendo escrita.
+    assert hook.is_read_only("cat > b <<'EOF'\na\nEOF") is False
+    assert hook.nao_muda_a_arvore("git log > b <<'EOF'\na\nEOF") is False
+
+
+@pytest.mark.parametrize("comando", [
+    COMMIT_DO_CLAUDE_CODE,
+    'git commit -m "$(git log -1 --format=%s)"',
+    'git -C repo commit -m "$(cat msg.txt)"',
+])
+def test_CONTROLE_commit_do_claude_code_continua_sem_mudar_a_arvore(comando: str):
+    assert hook.nao_muda_a_arvore(comando) is True, comando
+    assert hook.shell_write_targets(comando) == [], comando
+
+
+def test_CONTROLE_commit_do_claude_code_nao_invalida_evidencia(tmp_path: Path):
+    """Pelo caminho de producao: rodar a suite, gravar, commitar, continuar verificada."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": COMMIT_DO_CLAUDE_CODE},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    assert database.task(task["task_id"])["verified"] is True
+
+
+def test_substituicao_que_roda_programa_invalida_evidencia(tmp_path: Path):
+    """A metade que o conserto existe para pegar, pelo mesmo caminho."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": 'echo "$(python gera.py)"'},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    assert database.task(task["task_id"])["verified"] is False

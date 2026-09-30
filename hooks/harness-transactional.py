@@ -131,9 +131,17 @@ def _scan_composition(command: str) -> tuple[int, bool]:
     `is_trusted_verification` recusa nos DOIS casos, enquanto `atomic_prefix`
     so pode cortar no primeiro. Manter duas varreduras separadas foi o que
     fez o corte cair dentro de um argumento entre aspas.
+
+    A segunda pergunta e "nao confiavel, mas sem ponto de corte bom": aspa
+    aberta, ou `$( )`/crase DENTRO de aspas duplas — o bash executa as duas ali.
+    Ate 2026-09-30 o miolo das aspas duplas era inerte para esta varredura, e
+    `python state_cli.py ... "$(python gera.py)"` saia isento rodando um
+    programa. Nao vira indice porque cortar no meio da aspa daria a
+    `atomic_prefix` uma sugestao que nem fecha as aspas.
     """
     quote = None
     escaped = False
+    substitui_entre_aspas = False
     for index, character in enumerate(command):
         if escaped:
             escaped = False
@@ -143,6 +151,8 @@ def _scan_composition(command: str) -> tuple[int, bool]:
                 escaped = True
             elif character == quote:
                 quote = None
+            elif quote == '"' and (character == '`' or command.startswith('$(', index)):
+                substitui_entre_aspas = True
             continue
         if character in {chr(39), '"'}:
             quote = character
@@ -153,12 +163,13 @@ def _scan_composition(command: str) -> tuple[int, bool]:
             return index, False
         if character == '$' and index + 1 < len(command) and command[index + 1] == '(':
             return index, False
-    return -1, quote is not None
+    return -1, quote is not None or substitui_entre_aspas
 
 
 def _has_unquoted_shell_composition(command: str) -> bool:
-    indice, aspa_aberta = _scan_composition(command)
-    return indice >= 0 or aspa_aberta
+    """Composicao que as aspas NAO neutralizam — `$( )` entre aspas duplas conta."""
+    indice, sem_corte = _scan_composition(command)
+    return indice >= 0 or sem_corte
 
 
 def is_trusted_verification(command: str) -> bool:
@@ -554,10 +565,21 @@ def _posicao_do_subcomando_git(partes: list[str]) -> int | None:
 
 
 def nao_muda_a_arvore(command: str) -> bool:
-    """O comando escreve, mas nao no codigo que a suite mede."""
-    if not command or shell_write_targets(command) or _redireciona_para_arquivo(command):
+    """O comando escreve, mas nao no codigo que a suite mede.
+
+    O commit do Claude Code, `git commit -m "$(cat <<'EOF' ... EOF)"`, passa
+    aqui porque a substituicao dele roda so `cat`: cada corpo de `_decompor`
+    tem de ser leitura, e `git commit -m "$(python gera.py)"` nao passa.
+    """
+    decomposto = _decompor(command) if command else None
+    if decomposto is None:
         return False
-    segmentos = _segmentos(command)
+    externa, corpos = decomposto
+    if not all(_corpo_so_le(corpo) for corpo in corpos):
+        return False
+    if _alvos_da_linha(externa) or _redireciona_para_arquivo(externa):
+        return False
+    segmentos = _segmentos(externa)
     if not segmentos:
         return False
     for partes in segmentos:
@@ -584,8 +606,12 @@ def _redireciona_para_arquivo(command: str) -> bool:
 
     `>` sem alvo e erro de sintaxe no shell, nao escrita. A duplicacao de
     descritor (`2>&1`, `>&2`) nao aponta para arquivo e passa.
+
+    O corpo de heredoc sai antes, como em `_segmentos`: ate 2026-09-30 o `>` do
+    `<noreply@anthropic.com>` na mensagem de `git commit -F - <<'EOF'` era lido
+    como redirecionamento, e todo commit por heredoc contava como mudanca.
     """
-    tokens = _tokenize(command)
+    tokens = _tokenize(sem_corpo_de_heredoc(command))
     for indice, token in enumerate(tokens):
         if token not in {'>', '>>'} or indice + 1 >= len(tokens):
             continue
@@ -659,6 +685,212 @@ def _segmentar(tokens: list[str]) -> list[list[str]]:
     return segmentos
 
 
+#: O que entra na linha externa no lugar de cada substituicao. Comeca por `$_`
+#: de proposito: `nao_pode_ser_caminho` o recusa como variavel, entao `> $(x)`
+#: continua sendo redirecionamento sem alvo atribuivel; e, como cabeca de
+#: segmento, nao casa com binario de leitura nenhum — `$(x) arg` roda o que a
+#: substituicao imprimir.
+_MARCA_DE_SUBSTITUICAO = '$__substituicao__'
+
+
+class _SubstituicaoAberta(ValueError):
+    """Uma substituicao abriu e a linha acabou antes de ela fechar."""
+
+
+def _decompor(command: str) -> tuple[str, list[str]] | None:
+    """`(linha externa, corpos)`: cada substituicao sai da linha e vira um corpo.
+
+    Substituicao e o trecho que o shell EXECUTA para usar a saida: `$( )` e
+    crase (fora de aspas e dentro de aspas duplas), `<( )` e `>( )`, o `( )` de
+    subshell — que tambem e o agrupamento do PowerShell, `echo (python x)` —
+    e a aritmetica `$(( ))`, que nao executa mas pode conter uma substituicao.
+    Corpo de heredoc sem aspas no delimitador passa pela mesma expansao.
+
+    Ate 2026-09-30 `_tokenize` tratava todos como caractere comum:
+    `echo $(python gera.py)` era um segmento de `echo`, e `is_read_only` dizia
+    True para uma linha que roda um programa. Recusar todo `$(` tambem nao
+    serve: o commit do Claude Code, `git commit -m "$(cat <<'EOF' ... EOF)"`,
+    roda so `cat`, e conta-lo de volta faria todo commit invalidar a evidencia
+    — o problema que `_GIT_NAO_MUDA_ARVORE` resolve. Por isso cada corpo e
+    devolvido para ser julgado como comando, recursivamente.
+
+    Corpo de heredoc com delimitador entre aspas e literal e e pulado: la,
+    crase e parentese de mensagem de commit sao texto.
+
+    `None` quando uma substituicao nao fecha: nao da para saber o que roda.
+    Aspa sem fechamento nao e isso — o shell recusa a linha inteira, nada roda.
+
+    EXCECOES CONHECIDAS, todas na direcao segura (contam a mais, nunca a menos):
+    a crase e escape no PowerShell, entao `echo "a`nb"` la vira substituicao
+    sem fechamento e conta; `$( )` dentro de comentario `#` conta; e `case`
+    dentro de `$( )` fecha no primeiro `x)` e deixa um `)` solto, que conta.
+    """
+    try:
+        externa, corpos, _fim = _varrer(command, 0, 'shell', fecha=False)
+    except _SubstituicaoAberta:
+        return None
+    return externa, corpos
+
+
+def _varrer(texto: str, inicio: int, modo: str, fecha: bool) -> tuple[str, list[str], int]:
+    """Varre `texto` desde `inicio`. Devolve `(saida, corpos, fim)`.
+
+    `modo`: `shell` (linha de comando), `expande` (corpo de heredoc sem aspas:
+    aspas e parenteses sao literais, `$( )` e crase executam) ou `aritmetica`
+    (parentese agrupa conta, nao abre subshell). Com `fecha`, a varredura para
+    no `)` que fecha a substituicao aberta por quem chamou, e `fim` aponta logo
+    depois dele.
+    """
+    saida: list[str] = []
+    corpos: list[str] = []
+    aspas = None
+    profundidade = 0
+    heredocs: list[tuple[str, bool, bool]] = []
+    indice = inicio
+    tamanho = len(texto)
+
+    def substituir(corpo: str, depois: int) -> int:
+        corpos.append(corpo)
+        saida.append(_MARCA_DE_SUBSTITUICAO)
+        return depois
+
+    def ate_fechar(abertura: int) -> int:
+        """Indice logo depois do `)` que fecha o corpo aberto em `abertura`."""
+        return _varrer(texto, abertura, 'shell', fecha=True)[2]
+
+    def entre_parenteses(abertura: int) -> int:
+        fim = ate_fechar(abertura)
+        return substituir(texto[abertura:fim - 1], fim)
+
+    def aritmetica(abertura: int) -> int:
+        """A conta nao executa; o que ela contem, sim. Pede o segundo `)`."""
+        _conta, internos, fim = _varrer(texto, abertura, 'aritmetica', fecha=True)
+        if fim >= tamanho or texto[fim] != ')':
+            raise _SubstituicaoAberta(texto[abertura:])
+        corpos.extend(internos)
+        saida.append(_MARCA_DE_SUBSTITUICAO)
+        return fim + 1
+
+    while indice < tamanho:
+        caractere = texto[indice]
+        if aspas == chr(39):
+            if caractere == chr(39):
+                aspas = None
+            saida.append(caractere)
+            indice += 1
+            continue
+        if caractere == chr(92):
+            saida.append(texto[indice:indice + 2])
+            indice += 2
+            continue
+        if texto.startswith('$((', indice):
+            indice = aritmetica(indice + 3)
+            continue
+        if texto.startswith('$(', indice):
+            indice = entre_parenteses(indice + 2)
+            continue
+        if caractere == '`':
+            fim = indice + 1
+            while fim < tamanho and texto[fim] != '`':
+                fim += 2 if texto[fim] == chr(92) else 1
+            if fim >= tamanho:
+                raise _SubstituicaoAberta(texto[indice:])
+            # Dentro da crase a barra ainda escapa crase, cifrao e barra.
+            corpo = re.sub(r'\\([`$\\])', r'\1', texto[indice + 1:fim])
+            indice = substituir(corpo, fim + 1)
+            continue
+        if modo == 'expande':
+            saida.append(caractere)
+            indice += 1
+            continue
+        if aspas == chr(34):
+            if caractere == chr(34):
+                aspas = None
+            saida.append(caractere)
+            indice += 1
+            continue
+        if caractere in {chr(39), chr(34)}:
+            aspas = caractere
+            saida.append(caractere)
+            indice += 1
+            continue
+        if modo == 'aritmetica':
+            if caractere == '(':
+                profundidade += 1
+            elif caractere == ')':
+                if not profundidade:
+                    return ''.join(saida), corpos, indice + 1
+                profundidade -= 1
+            saida.append(caractere)
+            indice += 1
+            continue
+        if texto.startswith('((', indice):
+            indice = aritmetica(indice + 2)
+            continue
+        if caractere in {'<', '>'} and texto.startswith('(', indice + 1):
+            indice = entre_parenteses(indice + 2)
+            continue
+        if caractere == '(':
+            indice = entre_parenteses(indice + 1)
+            continue
+        if caractere == ')':
+            if fecha:
+                return ''.join(saida), corpos, indice + 1
+            raise _SubstituicaoAberta(texto[:indice + 1])
+        if texto.startswith('<<', indice) and not texto.startswith('<<<', indice):
+            achado, depois = _delimitador_de_heredoc(texto, indice)
+            if depois is None:
+                # Aspa do delimitador sem fechamento: a varredura segue pela
+                # aspa, e o que houver depois dela continua sendo olhado.
+                depois = indice + 2
+            elif achado:
+                heredocs.append(achado)
+            saida.append(texto[indice:depois])
+            indice = depois
+            continue
+        if caractere == chr(10) and heredocs:
+            saida.append(caractere)
+            indice = _pular_corpos_de_heredoc(texto, indice + 1, heredocs, corpos, saida)
+            heredocs = []
+            continue
+        saida.append(caractere)
+        indice += 1
+    if fecha:
+        raise _SubstituicaoAberta(texto[inicio:])
+    return ''.join(saida), corpos, indice
+
+
+def _pular_corpos_de_heredoc(
+    texto: str,
+    indice: int,
+    heredocs: list[tuple[str, bool, bool]],
+    corpos: list[str],
+    saida: list[str],
+) -> int:
+    """Consome os corpos pendentes a partir de `indice`; devolve onde a linha segue.
+
+    O corpo fica na saida como esta: quem tokeniza a linha externa ja o tira
+    por `sem_corpo_de_heredoc`. Corpo sem aspas no delimitador expande `$( )` e
+    crase, e o que ele executa vai para `corpos`. Sem delimitador de fechamento,
+    o corpo vai ate o fim, como no bash e em `sem_corpo_de_heredoc`.
+    """
+    for delimitador, ignora_tab, expande in heredocs:
+        comeco = indice
+        while indice < len(texto):
+            quebra = texto.find(chr(10), indice)
+            fim_da_linha = len(texto) if quebra == -1 else quebra
+            linha = texto[indice:fim_da_linha]
+            indice = fim_da_linha + 1 if quebra != -1 else len(texto)
+            alvo = linha.lstrip('\t') if ignora_tab else linha
+            if alvo.rstrip('\r') == delimitador:
+                break
+        corpo = texto[comeco:indice]
+        if expande:
+            corpos.extend(_varrer(corpo, 0, 'expande', fecha=False)[1])
+        saida.append(corpo)
+    return indice
+
+
 def is_read_only(command: str) -> bool:
     """Sei que este comando nao escreve — nao apenas "nao consegui ver escrita".
 
@@ -670,10 +902,23 @@ def is_read_only(command: str) -> bool:
 
     A porta e estreita: todo segmento da linha tem de comecar por um binario da
     lista, e qualquer redirecionamento ja tira o comando daqui pelo chamador.
+    Cada substituicao (`_decompor`) tem de ser leitura por si.
     """
-    if not command:
+    decomposto = _decompor(command) if command else None
+    if decomposto is None:
         return False
-    if shell_write_targets(command) or _redireciona_para_arquivo(command):
+    externa, corpos = decomposto
+    return _externa_so_le(externa) and all(_corpo_so_le(corpo) for corpo in corpos)
+
+
+def _corpo_so_le(corpo: str) -> bool:
+    """`$()` vazio nao roda nada; qualquer outro corpo e julgado como comando."""
+    return not corpo.strip() or is_read_only(corpo)
+
+
+def _externa_so_le(command: str) -> bool:
+    """`is_read_only` da linha externa, com as substituicoes ja trocadas pela marca."""
+    if _alvos_da_linha(command) or _redireciona_para_arquivo(command):
         return False
     segmentos = _segmentos(command)
     if not segmentos:
@@ -757,30 +1002,45 @@ def _aberturas_de_heredoc(linha: str) -> list[tuple[str, bool]]:
             if linha.startswith('<<<', indice):
                 indice += 3
                 continue
-            cursor = indice + 2
-            ignora_tab = False
-            if cursor < tamanho and linha[cursor] == '-':
-                ignora_tab = True
-                cursor += 1
-            while cursor < tamanho and linha[cursor] in ' \t':
-                cursor += 1
-            if cursor < tamanho and linha[cursor] in {chr(39), chr(34)}:
-                fecha = linha[cursor]
-                fim = linha.find(fecha, cursor + 1)
-                if fim == -1:
-                    break
-                achados.append((linha[cursor + 1:fim], ignora_tab))
-                indice = fim + 1
-                continue
-            fim = cursor
-            while fim < tamanho and (linha[fim].isalnum() or linha[fim] in '_-.'):
-                fim += 1
-            if fim > cursor:
-                achados.append((linha[cursor:fim], ignora_tab))
-            indice = max(fim, cursor + 1)
+            achado, depois = _delimitador_de_heredoc(linha, indice)
+            if depois is None:
+                break
+            if achado:
+                achados.append(achado[:2])
+            indice = depois
             continue
         indice += 1
     return achados
+
+
+def _delimitador_de_heredoc(
+    texto: str, indice: int
+) -> tuple[tuple[str, bool, bool] | None, int | None]:
+    """O `<<DELIM` que comeca em `indice`: `((delim, ignora_tab, expande), depois)`.
+
+    `expande` e False quando o delimitador vem entre aspas: ai o corpo e
+    literal. Sem aspas, o shell expande `$( )` e crase no corpo — e o que
+    `_decompor` precisa saber. `depois` e None quando a aspa do delimitador
+    nao fecha; o achado e None quando nao ha palavra depois do `<<`.
+    """
+    tamanho = len(texto)
+    cursor = indice + 2
+    ignora_tab = False
+    if cursor < tamanho and texto[cursor] == '-':
+        ignora_tab = True
+        cursor += 1
+    while cursor < tamanho and texto[cursor] in ' \t':
+        cursor += 1
+    if cursor < tamanho and texto[cursor] in {chr(39), chr(34)}:
+        fim = texto.find(texto[cursor], cursor + 1)
+        if fim == -1:
+            return None, None
+        return (texto[cursor + 1:fim], ignora_tab, False), fim + 1
+    fim = cursor
+    while fim < tamanho and (texto[fim].isalnum() or texto[fim] in '_-.'):
+        fim += 1
+    achado = (texto[cursor:fim], ignora_tab, True) if fim > cursor else None
+    return achado, max(fim, cursor + 1)
 
 
 def sem_corpo_de_heredoc(command: str, recusas: list[dict[str, Any]] | None = None) -> str:
@@ -1220,9 +1480,27 @@ def shell_write_targets(command: str, recusas: list[dict[str, Any]] | None = Non
     Um candidato rejeitado por engano e uma escrita real que some do contador —
     o erro na direcao perigosa. Sem o registro, "o ruido caiu" e "o guarda
     cegou" produzem exatamente o mesmo numero.
+
+    A escrita de dentro de uma substituicao conta: `echo $(sed -i ... x.py)`
+    escreve `x.py`. Substituicao sem fechamento (`_decompor` devolve None) e lida
+    como a linha crua — `is_read_only` ja a recusa, e o placeholder fica.
     """
     if not command:
         return []
+    decomposto = _decompor(command)
+    if decomposto is None:
+        return _alvos_da_linha(command, recusas)
+    externa, corpos = decomposto
+    alvos = _alvos_da_linha(externa, recusas)
+    for corpo in corpos:
+        for alvo in shell_write_targets(corpo, recusas):
+            if alvo not in alvos:
+                alvos.append(alvo)
+    return alvos
+
+
+def _alvos_da_linha(command: str, recusas: list[dict[str, Any]] | None = None) -> list[str]:
+    """`shell_write_targets` de uma linha so, sem descer nas substituicoes."""
     tokens = _tokenize(sem_corpo_de_heredoc(command, recusas))
     alvos: list[str] = []
 
