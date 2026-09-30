@@ -1376,3 +1376,46 @@ def test_dois_lancamentos_em_revisoes_diferentes_cada_um_na_sua(sessao: Sessao):
     assert estados == {"bjob1": ("historico", rev1), "bjob2": ("capturado", rev2)}
     assert [e["code_revision"] for e in sessao.evidencias()] == [rev1, rev2]
     assert sessao.atual()["verified"] is True
+
+
+# --- Rebase sobre db42807: as travas novas do `complete` recusam antes da captura --
+
+
+def _pronta_para_fechar(sessao: Sessao):
+    for fase in ("tdd", "verify"):
+        sessao.database.transition(sessao.task_id, fase, expected_revision=sessao.atual()["revision"])
+    sessao.lanca("bjob1")
+    sessao.saida("bjob1", VERDE)
+    sessao.notifica(sessao.bloco("bjob1"))
+
+
+def test_complete_com_portao_pendente_recusa_sem_capturar(sessao: Sessao):
+    """`main` passou a recusar `complete` com decisao humana em aberto; a recusa
+    vinha DEPOIS da captura e deixava escrita (mesma classe do re-verify #9)."""
+    _pronta_para_fechar(sessao)
+    with sqlite3.connect(sessao.database.path) as raw:
+        raw.execute(
+            "INSERT INTO gates(task_id, gate_type, status, created_at) VALUES (?, 'escalation', 'pending', ?)",
+            (sessao.task_id, _iso(0)),
+        )
+    antes = sessao.atual()["revision"]
+
+    with pytest.raises(state.StateTransitionError):
+        sessao.database.complete(sessao.task_id, expected_revision=antes)
+
+    assert sessao.atual()["revision"] == antes
+    assert [l["estado"] for l in sessao.lancamentos()] == ["pendente"]
+
+
+def test_complete_de_task_encerrada_recusa_sem_capturar(sessao: Sessao):
+    """Desfecho registrado (`superseded`) nao muda; a recusa nao pode ter capturado."""
+    _pronta_para_fechar(sessao)
+    with sqlite3.connect(sessao.database.path) as raw:
+        raw.execute("UPDATE tasks SET status = 'superseded' WHERE task_id = ?", (sessao.task_id,))
+    antes = sessao.atual()["revision"]
+
+    with pytest.raises(state.StateTransitionError):
+        sessao.database.complete(sessao.task_id, expected_revision=antes)
+
+    assert sessao.atual()["revision"] == antes
+    assert [l["estado"] for l in sessao.lancamentos()] == ["pendente"]

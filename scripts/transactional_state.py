@@ -2025,21 +2025,36 @@ class HarnessDatabase:
         exatamente esse acrescimo e mais nenhum. CAS errado recusa ANTES de
         qualquer escrita.
         """
-        atual = self.task(task_id)
-        if int(atual["revision"]) != expected_revision:
-            raise StateTransitionError(
-                f"revision mismatch: expected {expected_revision}, actual {atual['revision']}"
-            )
+        # A ordem das recusas e a do `complete` sob o lock: desfecho antes da
+        # revisao (`test_desfecho_terminal`: "revision mismatch" mandaria reler e
+        # tentar de novo uma task que nao fecha mais), depois fase e portao.
+        #
         # A fase se confere ANTES da captura: `complete` que recusa por fase nao
         # pode ter gravado nada (re-verify #9) — quem repetia com a mesma revisao
         # levava `revision mismatch` por uma escrita do proprio `complete`.
         # Pelo INDICE, como a checagem sob o lock: pelo nome, um pipeline com fase
         # repetida passava aqui, capturava e so entao recusava (rodada 3 #3).
+        #
+        # Desfecho registrado e portao pendente tambem se conferem aqui, so
+        # lendo: as duas recusas entraram em `main` depois da captura existir,
+        # e sob o lock elas vinham DEPOIS dela — um `complete` recusado por elas
+        # ja tinha gravado. Continuam sob o lock tambem, contra corrida.
         with self._connect() as connection:
             antes = self._locked_task(connection, task_id)
-        pipeline = json.loads(antes["pipeline_json"])
-        if pipeline and int(antes["phase_index"]) != len(pipeline) - 1:
-            raise StateTransitionError(f"task is not at final phase: {self._phase(antes)}")
+            self._exige_task_viva(connection, antes, "complete")
+            self._expect_revision(antes, expected_revision)
+            pipeline = json.loads(antes["pipeline_json"])
+            if pipeline and int(antes["phase_index"]) != len(pipeline) - 1:
+                raise StateTransitionError(f"task is not at final phase: {self._phase(antes)}")
+            pendentes = connection.execute(
+                "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
+                "AND gate_type <> ? ORDER BY id DESC",
+                (task_id, PORTAO_QUE_SOBREVIVE_A_DONA),
+            ).fetchall()
+            if pendentes:
+                raise StateTransitionError(
+                    self._recusa_por_portao(connection, antes, pendentes, operacao="complete")
+                )
         gravadas = _capturar_lancamentos(self, task_id)
         with self._write() as connection:
             row = self._locked_task(connection, task_id)

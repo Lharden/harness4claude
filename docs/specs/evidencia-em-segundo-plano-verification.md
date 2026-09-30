@@ -132,6 +132,26 @@ medido), término sem carimbo, ordem das recusas do `complete`.
 Não houve rodada 4 do Workflow sobre estes consertos; cada um tem mutante que o
 derruba.
 
+## 9. Rebase sobre `db42807` (pedido da coordenação, 2026-09-30)
+
+`main` candidato com o lote transacional (`d44fb62`), desfecho (`dab7cb3`) e
+xdist (`db42807`). O merge de `dc7e63e` que estava no meio saiu (rebase
+lineariza). Um conflito, em `scripts/transactional_state.py`:
+
+- `record_evidence` → `_gravar_evidencia`: a regra de status nova de `main`
+  (`_status_derivado`) foi levada para dentro do helper.
+- `complete`: as travas novas de `main` (desfecho registrado via
+  `_exige_task_viva`, portão pendente) entraram. **O encontro das duas mudanças
+  criou um defeito**: sob o lock, as travas vinham DEPOIS da captura, e um
+  `complete` recusado por elas já tinha gravado (a mesma classe do re-verify
+  #9). Dois testes vermelhos provaram (`revision` 3 → 4 numa recusa); as
+  travas agora também rodam na pré-checagem sem escrita, na ordem do
+  contrato de `main` — desfecho antes de revisão
+  (`test_desfecho_terminal::test_recusa_por_desfecho_vem_antes_da_revisao`
+  pegou a primeira ordem, que conferia revisão antes).
+- Mutantes M30 (portão só depois da captura) e M31 (desfecho só depois da
+  captura) mortos. **Mutação: 31 de 31.** Testes do arquivo novo: **85**.
+
 ## 7. Implantação
 
 Nenhum deploy. Os hooks rodam do plugin instalado; o merge em `main` e o deploy
