@@ -350,7 +350,9 @@ adjudicação nunca abriu.
   `state_cli` não muda.
 - **L-06 · Critério de entrada de B:** na rodada sobre `578e0bc`, pelo menos
   metade dos defeitos conhecidos que a rodada re-achar sai `high`/`critical`.
-  Abaixo disso, B não entra e o resultado fica escrito.
+  Abaixo disso, B não entra e o resultado fica escrito. **Resultado
+  (2026-09-30, medição §7):** 1 de 7 defeitos re-achados saiu `high` — B não
+  entrou; a constante e seus testes saíram do ramo.
 
 **Achado do brainstorming:** antes do corte de adjudicação
 (`tests/data/wf-verify-multimodel-antes-de-d017a6b.js:151-158`) medium/low já

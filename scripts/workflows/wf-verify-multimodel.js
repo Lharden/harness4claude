@@ -98,24 +98,6 @@ const DIMENSIONS = [
   },
 ]
 
-// Rubrica de severidade, anexada ao prompt dos cinco revisores (nunca ao do
-// adjudicador). Nas tres rodadas medidas em verify-adjudica-tudo, 25 defeitos
-// reais sairam medium/low, inclusive dois caminhos de evidencia verde forjada:
-// sem regua, ninguem usava `high`, e a adjudicacao nunca abria. Entra condicionada
-// a medicao da spec (US-4); se reprovar, sai com os testes dela.
-const RUBRICA_SEVERIDADE = [
-  'SEVERIDADE (julgue pela consequencia):',
-  'Julgue pela consequencia se o defeito acontecer, nao pela chance de acontecer nem pelo tamanho do conserto. ' +
-    'Vale a faixa mais alta cuja clausula se aplica.',
-  '- critical: permite forjar verificacao, evidencia ou aprovacao; perde ou corrompe dado persistido.',
-  '- high: aceitar o que devia recusar, ou recusar em definitivo o que devia aceitar; mudar estado num caminho de ' +
-    'recusa ou de erro; gravar resultado errado sem aviso; derrubar hook, gate ou o fluxo principal.',
-  '- medium: comportamento errado em caso de borda, visivel e recuperavel.',
-  '- low: lacuna de teste sem defeito demonstrado; desempenho sem impacto medido; manutencao.',
-  'Lacuna de teste que esconde um defeito que voce demonstrou leva a severidade do defeito. Cobertura de spec: ' +
-    'requisito P1 sem implementacao e critical; requisito implementado sem teste e low, salvo defeito demonstrado.',
-].join('\n')
-
 // Censo de nos — `filter(Boolean)` descarta agente morto SEM AVISAR, e num
 // fan-out o relatorio continua com cara de completo. Numa fase de verificacao
 // isso e a pior falha possivel: silenciosa e com a forma de uma boa noticia.
@@ -131,7 +113,7 @@ function censoNos(rotulo, rotulos, obtidos) {
 phase('Review')
 const reviews = await parallel(
   DIMENSIONS.map((d) => () =>
-    agent(`${d.prompt}\n\n${RUBRICA_SEVERIDADE}`, {
+    agent(d.prompt, {
       label: `review:${d.key}`,
       phase: 'Review',
       schema: FINDINGS_SCHEMA,

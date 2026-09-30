@@ -1,6 +1,6 @@
 # Spec: o `pass` do verify não sai verde com achado aberto
 
-**Status**: Grilled (rodada 1)
+**Status**: Aprovada (2026-09-30); implementada; US-3 não entrou pela medição
 **Created**: 2026-09-30
 **Updated**: 2026-09-30
 **Branch**: `claude/verify-adjudica-tudo` (base `8cd6884`)
@@ -168,7 +168,13 @@ rodada de medição mostrar que ela muda a severidade dos defeitos conhecidos.
 
 ---
 
-### US-3: rubrica de severidade por consequência (Priority: P1, condicionada a US-4)
+### US-3: rubrica de severidade por consequência (Priority: P1, condicionada a US-4) — NÃO ENTROU
+
+> **Resultado da medição (2026-09-30, [medição §7](verify-adjudica-tudo-medicao.md)):**
+> 1 de 7 defeitos conhecidos re-achados saiu `high`/`critical`, abaixo da
+> metade de L-06. A constante e os testes de AC-3.1, AC-3.2 e AC-3.4 saíram
+> no mesmo commit (REQ-F12); AC-3.3 continua. O texto abaixo fica como registro
+> do que foi medido.
 
 **Como** revisor do Workflow
 **Quero** um critério de severidade pela consequência do defeito
@@ -264,7 +270,7 @@ revisores (5) ──findings──▶ dedupe ──┬── critical/high ─�
   7. Ordem no fim: tabela → checador saindo 0 → evidência de teste final → `complete`.
   8. No DONE, a tabela de destinos é mostrada ao usuário.
 - [ ] **REQ-F9**: o item "Fan-out (Workflow)" do `CLAUDE.md` global ganha a frase de L-03, com a origem datada, no deploy e com OK do usuário. [traces: US-2]
-- [ ] **REQ-F10**: uma constante de rubrica é anexada ao prompt dos cinco revisores. Julga-se pela consequência se o defeito acontecer, não pela chance nem pelo tamanho do conserto; vale a faixa mais alta cuja cláusula se aplica. `critical`: forjar verificação, evidência ou aprovação; perder ou corromper dado persistido. `high`: aceitar o que devia recusar ou recusar em definitivo o que devia aceitar; mudar estado num caminho de recusa ou erro; gravar resultado errado sem aviso; derrubar hook, gate ou fluxo principal. `medium`: comportamento errado em caso de borda, visível e recuperável. `low`: lacuna de teste sem defeito demonstrado, desempenho sem impacto medido, manutenção. Lacuna de teste que esconde defeito demonstrado leva a severidade do defeito; requisito P1 sem implementação é `critical`, implementado sem teste é `low` salvo defeito demonstrado. [traces: US-3]
+- [x] ~~**REQ-F10**~~ (implementado em `62a291b`, medido e removido por REQ-F12 — medição §7): uma constante de rubrica é anexada ao prompt dos cinco revisores. Julga-se pela consequência se o defeito acontecer, não pela chance nem pelo tamanho do conserto; vale a faixa mais alta cuja cláusula se aplica. `critical`: forjar verificação, evidência ou aprovação; perder ou corromper dado persistido. `high`: aceitar o que devia recusar ou recusar em definitivo o que devia aceitar; mudar estado num caminho de recusa ou erro; gravar resultado errado sem aviso; derrubar hook, gate ou fluxo principal. `medium`: comportamento errado em caso de borda, visível e recuperável. `low`: lacuna de teste sem defeito demonstrado, desempenho sem impacto medido, manutenção. Lacuna de teste que esconde defeito demonstrado leva a severidade do defeito; requisito P1 sem implementação é `critical`, implementado sem teste é `low` salvo defeito demonstrado. [traces: US-3]
 - [ ] **REQ-F11**: `tests/wf_run_harness.cjs` grava o prompt de cada chamada de revisão e de adjudicação. [traces: US-1, US-3]
   consumidor: `tests/test_verify_pass_honesto.py` (infra de teste, não capacidade de produção); os testes de REQ-F5 e REQ-F6 o usam mesmo se a rubrica sair.
 - [ ] **REQ-F12**: a rodada de medição de US-4 segue a seção "Medição de B" e decide a permanência de REQ-F10 por L-06. Se a rubrica sair: a constante e os testes de AC-3.1, AC-3.2 e AC-3.4 são removidos no mesmo commit, US-3 fica marcada "não entrou" com o número medido, e AC-3.3 continua. [traces: US-4]
@@ -418,9 +424,9 @@ decidido depois da medição, com o número de promovidos na mão.
 
 ## Success Criteria
 
-- [ ] AC de US-1, US-2 (menos AC-2.17), US-3 e US-4 verificados: testes automatizados para US-1 a US-3; CSV e medição escrita para US-4
+- [ ] AC de US-1, US-2 (menos AC-2.17) e US-4 verificados: testes automatizados para US-1 e US-2, AC-3.3 mantida; CSV e medição escrita para US-4 (US-3 não entrou pela medição)
 - [ ] `checar_triagem.py` com teste para cada código de saída
-- [ ] Metades-controle AC-1.2 e AC-3.2 verdes contra o blob de `8cd6884`
+- [ ] Metade-controle AC-1.2 verde contra o blob de `8cd6884` (AC-3.2 saiu com a rubrica)
 - [ ] `tools/orfaos.py` sem acusar `checar_triagem.py`
 - [ ] Verify desta task com o script do ramo: `pass: true`, ou checador saindo 0 sobre todas as rodadas
 - [ ] AC-2.17 conferida por leitura no deploy

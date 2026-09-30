@@ -83,8 +83,12 @@ congelados no repo e um juiz cego, e só consome o Workflow.
    - [traces: REQ-F1, REQ-F2, REQ-F3, REQ-F4, US-1]
 
 2. **Prompts** (`scripts/workflows/wf-verify-multimodel.js`)
+   - **Nota (2026-09-30):** a rubrica foi implementada (`62a291b`), medida e
+     removida por REQ-F12 — 1 de 7 defeitos re-achados em `high`/`critical`
+     ([medição §7](verify-adjudica-tudo-medicao.md)). Ficam `linhaRaiz` e a
+     instrução ao adjudicador.
    - Responsibility:
-     - `RUBRICA_SEVERIDADE`: constante de texto (sem acento, como os outros prompts), primeira linha fixa `SEVERIDADE (julgue pela consequencia):`, anexada a cada prompt de revisor no momento da chamada (`agent(\`${d.prompt}\n\n${RUBRICA_SEVERIDADE}\`, …)`), não embutida em `DIMENSIONS`.
+     - ~~`RUBRICA_SEVERIDADE`~~ (removida): constante de texto (sem acento, como os outros prompts), primeira linha fixa `SEVERIDADE (julgue pela consequencia):`, anexada a cada prompt de revisor no momento da chamada (`agent(\`${d.prompt}\n\n${RUBRICA_SEVERIDADE}\`, …)`), não embutida em `DIMENSIONS`.
      - `linhaRaiz`: com `args.repo_root`, `Repositorio: <raiz>. Todo caminho abaixo e relativo a ele; leia e rode git la. O escopo sao os arquivos listados: nao compare com outro ramo.`, prefixada ao `scope` e ao prompt do adjudicador. Sem `repo_root`, string vazia.
      - Adjudicador: acrescenta `Severidade alegada errada nao e motivo para refutar: refute so se o defeito nao existe no codigo.`; continua sem `rationale` e sem a rubrica.
      - `spec-coverage`: mantém "P1 ausente=critical"; a rubrica diz que a regra vale para requisito sem implementação.
