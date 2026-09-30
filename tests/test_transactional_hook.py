@@ -2058,3 +2058,296 @@ def test_surrogate_no_emissor_da_recusa_nao_derruba_o_hook(tmp_path: Path):
     registro = json.loads(linhas[0])
     assert registro["agent_id"] == agente
     assert registro["agent_type"] == "Explore"
+
+
+# Escrita real passando por leitura (medido 2026-09-28 e 2026-09-30 em main,
+# 7795a5a e 18ec682, chamando as funcoes de producao)
+#
+# Buraco 1: `_tokenize` tratava nova linha como espaco, entao `_segmentos`
+# fundia a linha seguinte no segmento da primeira. `is_read_only("echo hi\n
+# python gera.py")` dava True: o comando inteiro parecia um `echo`. Qualquer
+# linha escondida atras de uma primeira linha de leitura passava.
+#
+# Buraco 2: `sort` esta em `_SOMENTE_LEITURA`, mas `-o`/`--output` escreve em
+# arquivo. A auditoria das outras entradas achou a mesma classe em `uniq`
+# (segundo operando e a SAIDA), `sed` (`--in-place`, `-i` agrupado, e os
+# comandos `w`/`W`/`e` do roteiro), `rg --pre`, `sort --compress-program`, e
+# nos subcomandos de leitura do git (`--output` em diff/log/show/shortlog/blame,
+# `grep -O`). Cada escrita foi confirmada rodando a ferramenta real.
+#
+# O efeito das duas e o mesmo: a escrita nao sobe `code_revision`, e a
+# evidencia de teste anterior continua parecendo fresca para o portao do Stop.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "echo hi\npython gera.py",
+        "ls\npython - <<'PY'\nopen('gera.py', 'w').write('1')\nPY",
+        "git status\npython gera.py",
+        "cat a.py\r\npython gera.py",
+    ],
+)
+def test_linha_seguinte_nao_se_esconde_atras_de_leitura(comando: str):
+    assert hook.is_read_only(comando) is False, (
+        f"{comando!r}: a segunda linha roda e nao foi vista"
+    )
+
+
+def test_linha_seguinte_nao_se_esconde_atras_de_git_que_nao_muda_a_arvore():
+    assert hook.nao_muda_a_arvore("git add -A\npython gera.py") is False
+    # `git commit` nao e leitura, mas continua nao mudando a arvore.
+    assert hook.is_read_only("git status\ngit commit -m x") is False
+    assert hook.nao_muda_a_arvore("git status\ngit commit -m x") is True
+
+
+def test_nova_linha_separa_o_alvo_do_sed_da_linha_seguinte():
+    """A mesma causa na atribuicao: `ls` virava o arquivo editado."""
+    assert hook.shell_write_targets("sed -i s/a/b/ gera.py\nls") == ["gera.py"]
+
+
+def test_redirecionamento_nao_engole_a_quebra_de_linha():
+    """`>` sem alvo na linha e erro de sintaxe; a linha seguinte segue sendo comando."""
+    assert hook._segmentos("echo x >\npython gera.py") == [["echo", "x"], ["python", "gera.py"]]
+
+
+def test_deslocamento_aritmetico_nao_abre_heredoc():
+    """`<<` dentro de `$((...))` e deslocamento, nao heredoc.
+
+    O corpo de heredoc sai antes da segmentacao — e o que impede o texto de um
+    heredoc de virar comando. Lido como heredoc, o `<<2` engolia as linhas
+    seguintes, e elas sumiam da leitura e da atribuicao.
+    """
+    assert hook.is_read_only("echo $((1<<2))\npython gera.py") is False
+    assert hook.shell_write_targets("echo $((1<<2))\necho x > gera.py") == ["gera.py"]
+    assert hook.is_read_only("echo $[1<<2]\npython gera.py") is False
+
+
+def test_barra_invertida_no_fim_da_linha_nao_emenda_a_seguinte():
+    """Decisao fail-closed: a continuacao barra + nova linha NAO e honrada.
+
+    No bash ela emenda as linhas; no PowerShell a barra e literal e sao dois
+    comandos. O hook ve os dois shells, e emendar esconderia a segunda linha
+    no PowerShell. O custo e o lado seguro: leitura com continuacao conta.
+    """
+    assert hook.is_read_only("ls C:" + chr(92) + "\npython gera.py") is False
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "git status\ngit log --oneline -3",
+        "cat a.py\ngrep -n def b.py\nwc -l c.py",
+        "git status\r\ngit diff",
+        "cat <<'EOF'\nhello\nEOF",
+        # O corpo e dado, nao comando: `python gera.py` aqui nao roda.
+        "grep -n x <<'EOF'\npython gera.py\nEOF",
+    ],
+)
+def test_CONTROLE_leitura_em_varias_linhas_continua_leitura(comando: str):
+    """Metade 2: sem ela, separar por linha seria so contar tudo como escrita."""
+    assert hook.is_read_only(comando) is True, comando
+
+
+def test_CONTROLE_git_em_varias_linhas_continua_sem_mudar_a_arvore():
+    assert hook.nao_muda_a_arvore("git add -A\ngit commit -m x") is True
+
+
+def test_segunda_linha_que_escreve_invalida_evidencia(tmp_path: Path):
+    """O caso pelo caminho de producao: sem isto o portao le `verified` fresco."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "echo hi\npython gera.py"},
+                 tool_response={"exit_code": 0, "output": "hi"}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] > antes["code_revision"]
+    assert depois["verified"] is False
+
+
+def test_CONTROLE_leitura_em_varias_linhas_nao_invalida_evidencia(tmp_path: Path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "git status\ngit log --oneline -3"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"]
+    assert depois["verified"] is True
+
+
+# --- Escrita por opcao de binario "de leitura" ---------------------------------
+
+ESCRITAS_POR_OPCAO = [
+    # sort: -o/--output, agrupado, colado, depois do operando e abreviado
+    ("sort -o gera.py f", ["gera.py"]),
+    ("sort --output=gera.py f", ["gera.py"]),
+    ("sort --output gera.py f", ["gera.py"]),
+    ("sort -uo gera.py f", ["gera.py"]),
+    ("sort -ogera.py f", ["gera.py"]),
+    ("sort f -o gera.py", ["gera.py"]),
+    ("sort --out=gera.py f", ["gera.py"]),
+    # uniq: o segundo operando e o arquivo de SAIDA
+    ("uniq a.txt gera.py", ["gera.py"]),
+    ("uniq -c -f 1 a.txt gera.py", ["gera.py"]),
+    # sed: edicao no lugar em todas as formas, em todos os arquivos
+    ("sed --in-place s/a/b/ gera.py", ["gera.py"]),
+    ("sed -Ei s/a/b/ gera.py", ["gera.py"]),
+    ("sed -i.bak s/a/b/ gera.py", ["gera.py"]),
+    ("sed -i s/a/b/ a.py b.py", ["a.py", "b.py"]),
+    # sed: `w`/`W` no roteiro e a flag `w` do `s`
+    ("sed -n 's/a/b/w gera.py' f", ["gera.py"]),
+    ("sed 'w gera.py' f", ["gera.py"]),
+    ("sed -n '/x/W gera.py' f", ["gera.py"]),
+    ("sed -e p -e 'w gera.py' f", ["gera.py"]),
+    ("sed --expression='1w gera.py' f", ["gera.py"]),
+    # git: `--output` dos subcomandos de leitura que aceitam opcao de diff
+    ("git diff --output=gera.py", ["gera.py"]),
+    ("git log -p --output gera.py", ["gera.py"]),
+    ("git show --output=gera.py HEAD", ["gera.py"]),
+    ("git shortlog --output=gera.py", ["gera.py"]),
+    ("git blame --output=gera.py f", ["gera.py"]),
+]
+
+EXECUCOES_POR_OPCAO = [
+    "sort --compress-program=python f",
+    "sed -n '1e python gera.py' f",
+    "sed 's/a/python gera.py/e' f",
+    "sed -f roteiro.sed f",
+    "rg --pre ./x.sh foo",
+    "rg --pre=./x.sh foo",
+    "git grep -Opython foo",
+    "git grep -nOpython foo",
+    "git grep --open-files-in-pager=python foo",
+    "git grep --open=python foo",
+]
+
+
+@pytest.mark.parametrize("comando, alvos", ESCRITAS_POR_OPCAO, ids=[c for c, _ in ESCRITAS_POR_OPCAO])
+def test_escrita_por_opcao_nao_e_leitura_e_atribui_o_alvo(comando: str, alvos: list[str]):
+    assert hook.is_read_only(comando) is False, comando
+    assert hook.nao_muda_a_arvore(comando) is False, comando
+    assert hook.shell_write_targets(comando) == alvos
+
+
+@pytest.mark.parametrize("comando", EXECUCOES_POR_OPCAO)
+def test_execucao_por_opcao_nao_e_leitura(comando: str):
+    """Programa arbitrario pode escrever; sem alvo atribuivel, fica o placeholder."""
+    assert hook.is_read_only(comando) is False, comando
+    assert hook.nao_muda_a_arvore(comando) is False, comando
+    assert hook.shell_write_targets(comando) == []
+
+
+def test_escrita_por_opcao_sem_alvo_atribuivel_continua_escrita():
+    """A regua recusa `$OUT` como caminho; a escrita nao pode sumir junto."""
+    assert hook.shell_write_targets("sort -o $OUT f") == []
+    assert hook.is_read_only("sort -o $OUT f") is False
+    assert hook.nao_muda_a_arvore("git diff --output=$OUT") is False
+
+
+@pytest.mark.parametrize(
+    "comando",
+    [
+        "sort f",
+        "sort -u -k2 -t, f",
+        "sort -- -o f",               # depois de `--`, `-o` e arquivo de entrada
+        "uniq a.txt",
+        "uniq -c -f 1 a.txt",
+        "uniq a.txt -",               # saida `-` e a saida padrao
+        "sed -n '1,40p' x.py",
+        "sed -n '/def test/,/^$/p' x.py",
+        "sed 's/hello/world/g' x.py",
+        "sed -n '$p' x.py",
+        "sed -E 's/(we)+/x/' x.py",
+        "sed 'y/ew/WE/' x.py",
+        "sed -n '/error/Ip' x.py",
+        "sed '/x/r extra.txt' x.py",
+        "sed -e 's/a/b/' -e 's/c/d/' x.py",
+        "sed -n '/a/{p;q}' x.py",
+        "git log -1 -- --output=x",   # depois de `--` e pathspec
+        "git diff --output-indicator-new=+",
+        "git diff -O ordem.txt",
+        "git grep -e -O foo",
+        "git grep -o foo",
+        "rg --no-pre foo",
+        "rg -e --pre foo",
+    ],
+)
+def test_CONTROLE_opcao_que_so_le_continua_leitura(comando: str):
+    """Metade 2 da auditoria: a regra olha a opcao, nao a presenca do binario."""
+    assert hook.is_read_only(comando) is True, comando
+    assert hook.shell_write_targets(comando) == []
+
+
+def test_sort_o_atribui_o_arquivo_pelo_caminho_de_producao(tmp_path: Path):
+    """Como `tee`: o arquivo escrito entra em `files`, nao o placeholder."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, cwd)
+    _verificada(database, task["task_id"])
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "sort -o gera.py f"},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=raiz,
+    )
+
+    assert database.task(task["task_id"])["verified"] is False
+    assert database.files(task["task_id"]) == ["gera.py"]
+
+
+#: A auditoria de `_SOMENTE_LEITURA`, escrita. Todo binario da lista ou tem
+#: regra em `_ESCRITA_POR_OPCAO`, ou esta aqui com o motivo de nao precisar.
+#: Conferido contra `--help` de coreutils 8.32, grep 3.0 e diffutils 3.12.
+SEM_ESCRITA_POR_OPCAO = {
+    "cat": "so le e imprime",
+    "head": "so le e imprime",
+    "tail": "so le; -f segue o arquivo, nao escreve",
+    "wc": "--files0-from le a lista",
+    "grep": "-f le padroes; nenhuma opcao de saida em arquivo",
+    "ls": "so lista",
+    "pwd": "so imprime",
+    "echo": "so imprime",
+    "printf": "-v atribui a variavel do shell, nao a arquivo",
+    "cut": "--output-delimiter e texto, nao arquivo",
+    "nl": "so le e imprime",
+    "basename": "so imprime",
+    "dirname": "so imprime",
+    "stat": "so le metadados",
+    "diff": "diffutils 3.12 nao tem opcao de saida em arquivo",
+    "cmp": "so compara",
+    "date": "-s acerta o relogio do sistema, nao o checkout; -f e -r leem",
+    "true": "nao faz nada",
+    "false": "nao faz nada",
+    "cd": "muda o diretorio do shell",
+}
+
+
+def test_toda_entrada_de_somente_leitura_foi_auditada():
+    """Quem acrescentar um binario a lista tem de decidir se ele escreve por opcao."""
+    auditados = set(SEM_ESCRITA_POR_OPCAO) | set(hook._ESCRITA_POR_OPCAO)
+    assert set(hook._SOMENTE_LEITURA) <= auditados, (
+        f"sem auditoria: {sorted(set(hook._SOMENTE_LEITURA) - auditados)}"
+    )
+    assert not set(SEM_ESCRITA_POR_OPCAO) & set(hook._ESCRITA_POR_OPCAO)
