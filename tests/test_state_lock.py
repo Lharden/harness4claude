@@ -399,13 +399,13 @@ class TestCustoDoLock:
 
 class TestReentrancySemantics:
     def test_release_only_removes_own_lock(self, harness_dir):
-        """release_state_lock so remove se owner_pid bate com $$."""
+        """release_state_lock so remove o lock que o proprio shell adquiriu."""
         # Cria lockdir manualmente com owner = PID falso
         lockdir = harness_dir / "state.json.lockdir"
         lockdir.mkdir()
         (lockdir / "owner").write_text("999999 12345\n", encoding="utf-8")
 
-        # release_state_lock deve recusar (owner != $$)
+        # release_state_lock deve recusar (este shell nao adquiriu nada)
         script = f"""
             source "{LOCK_SH}"
             release_state_lock
@@ -524,10 +524,23 @@ fi
 exit "$rc"
 """
 
+_SHIM_STAT = """#!/bin/bash
+# Primeira chamada: executa, avisa e espera a vez antes de devolver a resposta.
+# Quem chamou fica com a idade do lockdir na mao e ainda nao agiu.
+PATH="${PATH#*:}"
+saida=$(stat "$@"); rc=$?
+if mkdir "$SHIM_MARKS/stat-pausou" 2>/dev/null; then
+  : > "$SHIM_MARKS/leu-idade"
+  while [[ ! -e "$SHIM_MARKS/segue-stat" ]]; do sleep 0.02; done
+fi
+if [[ -n "$saida" ]]; then printf '%s\\n' "$saida"; fi
+exit "$rc"
+"""
+
 
 def _com_shims(
     env: dict[str, str], tmp_path: Path, nome: str, lockdir: Path,
-    *, destrutivo: bool = True, pausa_mkdir: bool = False,
+    *, destrutivo: bool = True, pausa_mkdir: bool = False, pausa_stat: bool = False,
 ) -> tuple[dict[str, str], Path, Path]:
     """Ambiente de UM processo com os shims de sincronizacao no inicio do PATH.
 
@@ -535,12 +548,16 @@ def _com_shims(
     chamada destrutiva parou, `marcas/segue` a solta e `marcas/depois` diz se o
     lockdir existia logo depois dela. `log` tem, em ordem, uma linha por
     `mkdir` ("mkdir <rc>") e uma pela chamada destrutiva ("destrutivo <rc>").
+    Com `pausa_stat`, `marcas/leu-idade` aparece quando o primeiro `stat`
+    terminou e `marcas/segue-stat` devolve a resposta a quem chamou.
     """
     shim_dir = tmp_path / f"shims-{nome}"
     marcas = tmp_path / f"marcas-{nome}"
     shim_dir.mkdir()
     marcas.mkdir()
     corpos = {"mkdir": _SHIM_MKDIR}
+    if pausa_stat:
+        corpos["stat"] = _SHIM_STAT
     if destrutivo:
         corpos.update({cmd: _SHIM_DESTRUTIVO.replace("@CMD@", cmd) for cmd in ("rm", "rmdir", "mv")})
     for cmd, corpo in corpos.items():
@@ -707,6 +724,51 @@ class TestCorridaDaQuebraDeStale:
             assert _mkdir_depois_do_destrutivo(log_w2) != "0", "W2 pegou o lock com W3 ainda dentro"
         finally:
             (marcas_w2 / "segue").touch()
+            (marcas / "w3_solta").touch()
+            resultados = _colhe(w2, w3)
+        for rc, err in resultados:
+            assert rc == 0, err
+
+    def test_waiter_parado_depois_de_ler_a_idade_nao_remove_o_lock_novo(self, harness_dir, tmp_path):
+        """A troca acontece entre a leitura da idade e o resto da quebra.
+
+        Quem le a idade e so DEPOIS lista o lockdir junta a idade do lock velho
+        com o dono do novo, e remove o dono do novo pelo nome certo.
+        """
+        lockdir = _dono_morto(harness_dir)
+        marcas = harness_dir / "marcas"
+        marcas.mkdir()
+        m = marcas.as_posix()
+        env = _env(harness_dir, **self.ENV)
+        env_w2, marcas_w2, log_w2 = _com_shims(env, tmp_path, "w2", lockdir, pausa_stat=True)
+        (marcas_w2 / "segue").touch()  # a chamada destrutiva so fotografa, sem parar
+
+        w2 = _popen(_script_entra(m, "w2"), env_w2)
+        w3 = None
+        try:
+            # W2 leu a idade do lockdir velho e parou antes de agir.
+            _espera_marca(marcas_w2 / "leu-idade", w2, "W2")
+            w1 = subprocess.run(
+                [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+            )
+            assert w1.returncode == 0, w1.stderr
+            w3 = _popen(_script_segura(m, "w3"), env)
+            _espera_marca(marcas / "w3_segura", w3, "W3")
+            (marcas_w2 / "segue-stat").touch()
+            _espera_marca(marcas_w2 / "depois", w2, "W2")
+            _espera(
+                lambda: _mkdir_depois_do_destrutivo(log_w2) is not None,
+                w2, "W2", "tentar o lock de novo",
+            )
+
+            comando = (marcas_w2 / "pausado").read_text(encoding="utf-8").strip()
+            foto = (marcas_w2 / "depois").read_text(encoding="utf-8").strip()
+            assert foto == "presente", (
+                f"o lock de W3 sumiu: W2 juntou a idade do lock velho com o lock de W3 ({comando})"
+            )
+            assert _mkdir_depois_do_destrutivo(log_w2) != "0", "W2 pegou o lock com W3 ainda dentro"
+        finally:
+            (marcas_w2 / "segue-stat").touch()
             (marcas / "w3_solta").touch()
             resultados = _colhe(w2, w3)
         for rc, err in resultados:
