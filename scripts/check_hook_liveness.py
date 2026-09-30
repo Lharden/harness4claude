@@ -274,7 +274,7 @@ def _sha8_entregues(caminho: Path) -> set[str]:
         for i in range(len(partes)):
             for j in range(i + 1, len(partes) + 1):
                 bloco = "\n\n".join(partes[i:j]).rstrip()
-                vistos.add(hashlib.sha256(bloco.encode("utf-8")).hexdigest()[:8])
+                vistos.add(hashlib.sha256(bloco.encode("utf-8", "surrogatepass")).hexdigest()[:8])
     return vistos
 
 
