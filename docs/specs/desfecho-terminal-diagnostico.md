@@ -1,8 +1,10 @@
 # Desfecho terminal reescrito — diagnóstico
 
-Ramo `fix/desfecho-terminal-nao-muda`, sobre `main` em `18ec682`. Pipeline de
-bug. O hook deixou a sessão sem task (`idle`); o pipeline não foi registrado no
-banco.
+Ramo `fix/desfecho-terminal-nao-muda`. Nasceu sobre `main` em `18ec682`; a
+reprodução e as mutações abaixo foram medidas ali. Rebaseado sem conflito
+sobre `6439d86` (que traz o Stop com trabalho em voo, `d3fc851`) a pedido da
+sessão coordenadora. Pipeline L2-bug (task `t-20260930-144910834352`, aberta
+pelo hook só na mensagem de coordenação; o trabalho anterior correu sem task).
 
 Origem: `docs/specs/sim-nao-fecha-entrega-diagnostico.md` §7, item 1, no ramo
 `fix/sim-nao-fecha-entrega` (`88ad6ff`, ainda fora do `main`). Lá o defeito foi
@@ -191,6 +193,27 @@ MAX_PATH (260) no Windows e o `state_cli` da cópia saía com
 `ModuleNotFoundError`. Os 2 testes de CLI caíam em M2, M3a, M3b e M5 pelo
 caminho, não pela mutação. A segunda rodada usa pastas curtas e sonda
 `state_cli.py --help` em cada cópia antes de rodar; a tabela acima é dela.
+
+### Testes afetados, depois do rebase
+
+A sessão coordenadora pediu só testes afetados, um processo por vez, e a suíte
+inteira apenas no merge, uma de cada vez. Rodados sobre `6439d86` + este ramo,
+num processo: os 16 arquivos que chamam os nove escritores, `state_cli`,
+`branch_state`, `confirm_classification` ou o hook de reclassificação.
+
+- Primeira corrida: **597 passed, 1 failed**.
+  `test_transactional_state.py::test_revision_evidence_and_scope_invariants`
+  esperava "revision" num `complete` repetido sobre task já `done` com revisão
+  velha. Conflito direto com D1 + a ordem desfecho-antes-da-revisão (M5). O
+  invariante do teste é o CAS; ele passou a ser conferido na task viva, e a
+  encerrada confere a recusa por desfecho (`46bf2ae`).
+- Depois do ajuste: `test_transactional_state.py` + `test_desfecho_terminal.py`,
+  **68 passed**.
+
+**Não medido:** a suíte inteira. Ela fica para o merge, pela regra acima. Os
+vermelhos pré-existentes declarados no diagnóstico de origem eram dois: o
+controle do `test_verify_por_tabela` (consertado no `main` em `6bd2962`) e
+`test_deploy_drift`, que depende do deploy do `main` para o cache.
 
 ## Fora do escopo (achados de passagem)
 
