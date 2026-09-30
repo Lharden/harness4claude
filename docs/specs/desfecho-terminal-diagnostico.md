@@ -3,8 +3,10 @@
 Ramo `fix/desfecho-terminal-nao-muda`. Nasceu sobre `main` em `18ec682`; a
 reprodução e as mutações abaixo foram medidas ali. Rebaseado sem conflito
 sobre `6439d86` (que traz o Stop com trabalho em voo, `d3fc851`) a pedido da
-sessão coordenadora. Pipeline L2-bug (task `t-20260930-144910834352`, aberta
-pelo hook só na mensagem de coordenação; o trabalho anterior correu sem task).
+sessão coordenadora, e depois sobre `bedc8cd`, o merge do status derivado dos
+portões (`claude/keen-wu-692338` em `ff403ae`), com conflito resolvido — ver
+"Encaixe com o status derivado". Pipeline L2-bug (tasks abertas pelo hook nas
+mensagens de coordenação; o trabalho anterior correu sem task).
 
 Origem: `docs/specs/sim-nao-fecha-entrega-diagnostico.md` §7, item 1, no ramo
 `fix/sim-nao-fecha-entrega` (`88ad6ff`, ainda fora do `main`). Lá o defeito foi
@@ -210,20 +212,51 @@ num processo: os 16 arquivos que chamam os nove escritores, `state_cli`,
 - Depois do ajuste: `test_transactional_state.py` + `test_desfecho_terminal.py`,
   **68 passed**.
 
-**Não medido:** a suíte inteira. Ela fica para o merge, pela regra acima. Os
-vermelhos pré-existentes declarados no diagnóstico de origem eram dois: o
-controle do `test_verify_por_tabela` (consertado no `main` em `6bd2962`) e
-`test_deploy_drift`, que depende do deploy do `main` para o cache.
+A suíte inteira fica para o merge, uma de cada vez; o resultado entra no
+relato do merge.
+
+### Encaixe com o status derivado
+
+O ramo `claude/keen-wu-692338` põe todo escritor de `status` num helper,
+`_status_derivado(connection, task_id, ciclo)`, que devolve `ciclo` intacto se
+ele é terminal. Combinado com a sessão dona, por mensagem, antes do rebase:
+
+- Nos ramos, os dois `if not _desfecho_registrado(...)` deste conserto saíram:
+  o helper cobre, porque os ramos passam o status atual da dona. Efeito
+  medido: o helper regrava o status que a dona encerrada já tinha e sobe a
+  revisão dela; o teste de ramo confere só o status.
+- `complete`: recusa por desfecho, depois a revisão, depois a recusa por
+  portão pendente do status derivado (que ignora `branch-open`, D2).
+- `confirm_classification` e `reclassify`: a recusa por desfecho vem antes de
+  `_reclassificar_portoes`. Lá o helper recebe `active`/`done` pelo pipeline e
+  reabriria task encerrada com pipeline; só esta recusa impede (a sessão dona
+  confirmou que não tem teste para isso; a cobertura é a matriz daqui).
+- Dois testes do status derivado esperavam que `transition` em task abandonada
+  e `resolve_gate` de `escalation` legado em task `done` **passassem** sem
+  mudar o status. Com D3 eles recusam antes de escrever; o invariante (não
+  ressuscita, a viva segue `active`) continua conferido, e o `escalation`
+  legado é cancelado por `_migrar_status_derivado` na reabertura do banco. A
+  sessão dona concordou.
+- O teste de `resolve_gate` sobre `escalation` em task `done` montava o caso
+  pelo próprio `complete` sem leitura de `gates`; agora grava a linha legada
+  direto, como o código antigo deixava (casos reais no banco, cancelados pela
+  migração na abertura seguinte).
+- No meio do caminho, uma versão do status derivado fazia `complete` recusar
+  `branch-open`, e os dois testes de ramo com dona `done` ganharam `xfail`
+  estrito com causa, ação e dono. Quando `ff403ae` devolveu D2, o `xfail`
+  estrito virou falha (XPASS) — o que ele existe para fazer — e a marca saiu.
+
+Segunda ocorrência real do defeito, relatada pela sessão do status derivado: a
+mensagem de coordenação abriu task nova e marcou a dela como `superseded`, e um
+`state_cli complete` depois a reescreveu para `done`.
 
 ## Fora do escopo (achados de passagem)
 
-1. **`complete` não olha portão pendente.** Task na fase final com `escalation`
-   ou `branch-open` pendente vai a `done` com o portão aberto (o teste do
-   `escalation` depende disso para montar o caso). Com este conserto o
-   `escalation` dessa task fica pendente para sempre, porque `resolve_gate`
-   recusa desfecho. Ação: `complete` recusar com portão pendente, como
-   `transition` já faz desde `1f140d8`; decidir antes se `branch-open` bloqueia
-   o fecho (o ramo sobrevive à task). Dono: próxima passada do ciclo de vida.
+1. **`complete` não olhava portão pendente.** Resolvido pelo status derivado
+   (`ff403ae`): `complete` recusa portão pendente, exceto `branch-open` (D2), e
+   `_migrar_status_derivado` cancela o portão pendente legado de task terminal.
+   A sessão aberta para isto encerrou; o teste de `escalation` legado que ela
+   tinha preparado (`2f1352f`) foi reescrito aqui, no mesmo desenho.
 2. **Task L0 nasce `done`.** É a origem da exceção de D3: `done` significa ao
    mesmo tempo "entregue" e "sem pipeline". Um status próprio para L0 tiraria a
    exceção da regra; é desenho (toca classify, continuação e projeção).

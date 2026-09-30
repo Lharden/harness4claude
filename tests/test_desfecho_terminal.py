@@ -285,21 +285,6 @@ def test_recusa_por_desfecho_vem_antes_da_revisao(tmp_path: Path):
 # --- Metade 2a: o ramo sobrevive a task dona (D2) ----------------------------
 
 
-#: Vermelho declarado. Causa: desde o status derivado (merge 3e49916) `complete`
-#: recusa `branch-open` pendente, entao a task nao chega a `done` com o portao
-#: do ramo aberto — o caso que estes testes montam. Acao: o ramo
-#: `fix/complete-recusa-portao-pendente` devolve a decisao D2 (branch-open nao
-#: bloqueia o fecho; o ramo sobrevive a task dona), confirmada pelo usuario em
-#: 2026-09-30. Dono: a sessao "Fazer complete recusar com portao pendente", que
-#: tira esta marca no mesmo delta. `strict`: quando o caso voltar a passar, a
-#: marca vira falha e nao fica esquecida.
-XFAIL_D2 = pytest.mark.xfail(
-    strict=True,
-    raises=state.StateTransitionError,
-    reason="complete recusa branch-open pendente ate fix/complete-recusa-portao-pendente devolver D2",
-)
-
-
 def _ramo_oferecido(db, task):
     db.create_branch(
         task["task_id"], branch_id="b-1", slug="ramo", name="Ramo", topic="assunto paralelo",
@@ -323,7 +308,7 @@ def _dona_terminal(db, desfecho):
     return dona, db.task(viva["task_id"])
 
 
-@pytest.mark.parametrize("desfecho", ["superseded", pytest.param("done", marks=XFAIL_D2), "abandoned"])
+@pytest.mark.parametrize("desfecho", ["superseded", "done", "abandoned"])
 def test_abrir_ramo_de_task_terminal_nao_ressuscita_a_dona(tmp_path: Path, desfecho):
     """A sequencia de `branch_state.set_status(..., "open")` num ramo ainda sem
     aprovacao: pede o portao, aprova, abre. Antes, `request_branch_approval`
@@ -344,7 +329,6 @@ def test_abrir_ramo_de_task_terminal_nao_ressuscita_a_dona(tmp_path: Path, desfe
     assert db.task(viva["task_id"]) == viva
 
 
-@XFAIL_D2
 def test_parkear_ramo_de_task_concluida_nao_a_reabre(tmp_path: Path):
     db = state.HarnessDatabase(tmp_path)
     dona, viva = _dona_terminal(db, "done")
