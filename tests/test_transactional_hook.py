@@ -1751,3 +1751,133 @@ def test_diretorio_declarado_pela_linha(tmp_path: Path, comando: str, esperado: 
     alvo = esperado.format(a=a, cwd=cwd)
     assert obtido is not None
     assert os.path.normcase(os.path.normpath(obtido)) == os.path.normcase(os.path.normpath(alvo))
+
+
+# --- Surrogate solitario no payload ------------------------------------------
+#
+# `"\ud800"` e JSON valido e `json.load` devolve um `str` com o code point
+# D800 sozinho. Esse `str` nao tem codificacao UTF-8, e o hook so escreve em
+# sumidouros UTF-8: hash, `recusas.jsonl`, sqlite. Reproduzido na revisao
+# adversarial de 2026-09-28 (main 7795a5a), com o hook rodado como processo:
+# `echo x > "C:/tmp/a\ud800"` saia com exit 1 antes de tocar a task. Medido
+# em 2026-09-30 (18ec682): quatro sumidouros caiam, um por teste abaixo.
+
+SURROGATE = "\ud800"
+
+
+def test_surrogate_no_alvo_fora_da_raiz_nao_derruba_o_hook(tmp_path: Path):
+    """O caso da revisao: a recusa derrubava o hook e a escrita sumia do contador."""
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad"
+    fora.mkdir()
+    bucket, database, task = _active_task(tmp_path / "harness", repo)
+
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": f'echo x > "{fora}/a{SURROGATE}"'},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert database.files(task["task_id"]) == ["shell-command"], "a escrita tem de tocar a task"
+    assert database.task(task["task_id"])["code_revision"] == 1
+    linhas = (bucket / hook.ARQUIVO_DE_RECUSAS).read_text(encoding="utf-8").splitlines()
+    assert [json.loads(linha)["motivo"] for linha in linhas] == ["fora-da-raiz"], (
+        "a recusa continua registrada: degradar nao pode virar cegueira"
+    )
+
+
+def test_surrogate_no_alvo_dentro_da_raiz_atribui_o_arquivo(tmp_path: Path):
+    """O sqlite de `touch_files` recusava o caminho e derrubava o hook."""
+    repo = _repo_de_verdade(tmp_path)
+    _, database, task = _active_task(tmp_path / "harness", repo)
+
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": f'cat > "scripts/a{SURROGATE}.py"'},
+                 tool_response={"exit_code": 0, "output": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    vistos = [v.replace("\\", "/") for v in database.files(task["task_id"])]
+    assert len(vistos) == 1 and vistos[0].startswith("scripts/a"), vistos
+    assert "shell-command" not in vistos
+
+
+def test_surrogate_no_comando_de_teste_grava_a_evidencia(tmp_path: Path):
+    """O sqlite de `record_evidence` recusava o comando e a suite verde sumia."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": f'python -m pytest -q "tests/a{SURROGATE}.py"'},
+                 tool_response={"stdout": "3 passed", "stderr": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert database.task(task["task_id"])["verified"] is True
+
+
+def test_surrogate_na_saida_do_teste_grava_a_evidencia(tmp_path: Path):
+    """O hash da saida em `_test_counts` levantava antes de gravar."""
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _, database, task = _active_task(tmp_path / "harness", cwd)
+
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name="Bash",
+                 tool_input={"command": "python -m pytest -q"},
+                 tool_response={"stdout": f"a{SURROGATE}\n3 passed", "stderr": ""}),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert database.task(task["task_id"])["verified"] is True
+
+
+def test_registrar_recusas_aceita_surrogate_sem_perder_a_linha(tmp_path: Path):
+    """O contrato da docstring vale para qualquer chamador, nao so para o hook.
+
+    E a linha volta IDENTICA do disco: engolir o erro e perder o registro seria
+    trocar a queda por cegueira, que e o defeito que o arquivo existe para evitar.
+    """
+    comando = f'echo x > "C:/tmp/a{SURROGATE}"'
+    recusa = {"candidato": f"C:/tmp/a{SURROGATE}", "motivo": "fora-da-raiz"}
+
+    hook._registrar_recusas(tmp_path, "t-1", comando, [], [recusa])
+
+    linhas = (tmp_path / hook.ARQUIVO_DE_RECUSAS).read_text(encoding="utf-8").splitlines()
+    assert len(linhas) == 1
+    registro = json.loads(linhas[0])
+    assert registro["comando"] == comando
+    assert registro["candidato"] == recusa["candidato"]
+    assert registro["comando_hash"]
+
+
+def test_surrogate_no_emissor_da_recusa_nao_derruba_o_hook(tmp_path: Path):
+    """`agent_id` chega ao `recusas.jsonl` por `_emissor`, sem passar pelo comando.
+
+    E o unico campo de texto do payload que vai para o arquivo sem passar por
+    `_texto_codificavel`. A escrita tem de ser total por si so, e a linha volta
+    do disco com o valor original: gravar o escape JSON em vez de perder a linha.
+    """
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad"
+    fora.mkdir()
+    bucket, database, task = _active_task(tmp_path / "harness", repo)
+    agente = f"ag{SURROGATE}"
+
+    hook.handle_payload(
+        _payload("PostToolUse", repo, tool_name="Bash",
+                 tool_input={"command": f'echo x > "{fora}/a"'},
+                 tool_response={"exit_code": 0, "output": ""},
+                 agent_id=agente, agent_type="Explore"),
+        harness_root=tmp_path / "harness",
+    )
+
+    assert database.files(task["task_id"]) == ["shell-command"], "a escrita tem de tocar a task"
+    linhas = (bucket / hook.ARQUIVO_DE_RECUSAS).read_text(encoding="utf-8").splitlines()
+    registro = json.loads(linhas[0])
+    assert registro["agent_id"] == agente
+    assert registro["agent_type"] == "Explore"
