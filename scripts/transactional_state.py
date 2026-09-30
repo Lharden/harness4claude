@@ -1374,7 +1374,21 @@ class HarnessDatabase:
             )
         return self.task(task_id)
 
-    def register_stop_continuation(self, task_id: str, *, limit: int = 2) -> dict[str, Any]:
+    def register_stop_continuation(
+        self, task_id: str, *, limit: int = 2, em_voo=()
+    ) -> dict[str, Any]:
+        """Conta um Stop bloqueado; no limite, abre `escalation`.
+
+        `em_voo` sao os ids de jobs que esta task lancou em segundo plano e que
+        ainda nao terminaram (`trabalho_em_voo.jobs_em_voo`). Com algum em voo o
+        fim de turno nao e tentativa de encerrar — o host vai reinvocar o modelo
+        quando o job acabar —, entao o Stop nao conta para a escalada. O
+        contador fica CONGELADO, nao zera: zerar no fim do job abriria o laco
+        "lanca, espera, para" que nunca chega ao limite. Cada Stop nao cobrado
+        vira uma linha `stop_nao_cobrado` em `events`, lida por
+        `stops_nao_cobrados` (decisao D3 de
+        `docs/specs/portao-stop-em-voo-diagnostico.md`).
+        """
         if limit < 1:
             raise StateTransitionError("stop continuation limit must be positive")
         now = utc_now()
@@ -1389,7 +1403,26 @@ class HarnessDatabase:
             ):
                 raise StateTransitionError("task does not require a stop continuation")
             continuations = int(row["stop_continuations"])
-            if continuations >= limit:
+            jobs = sorted({str(job) for job in em_voo})
+            if jobs:
+                connection.execute(
+                    "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                    "VALUES (?, ?, 'stop_nao_cobrado', ?, ?)",
+                    (
+                        task_id,
+                        row["scope_id"],
+                        json.dumps(
+                            {
+                                "jobs": jobs,
+                                "code_revision": int(row["code_revision"]),
+                                "stop_continuations": continuations,
+                            },
+                            sort_keys=True,
+                        ),
+                        now,
+                    ),
+                )
+            elif continuations >= limit:
                 pending = connection.execute(
                     "SELECT 1 FROM gates WHERE task_id = ? AND gate_type = 'escalation' "
                     "AND status = 'pending'",
@@ -1413,6 +1446,21 @@ class HarnessDatabase:
                     (now, task_id),
                 )
         return self.task(task_id)
+
+    def stops_nao_cobrados(self, task_id: str) -> int:
+        """Quantos Stops desta task deixaram de contar por job em voo.
+
+        Consumidor: a mensagem do portao, que mostra o numero em toda leitura,
+        escalada incluida. Sem teto numerico (D3), a suspensao so e honesta se
+        for visivel a quem le o bloqueio.
+        """
+        with self._connect() as connection:
+            return int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE task_id = ? AND event_type = 'stop_nao_cobrado'",
+                    (task_id,),
+                ).fetchone()[0]
+            )
 
     def complete(self, task_id: str, *, expected_revision: int) -> dict[str, Any]:
         with self._write() as connection:

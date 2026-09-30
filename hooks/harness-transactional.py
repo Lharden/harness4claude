@@ -23,6 +23,7 @@ CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from projecao import gravar_json_atomico  # type: ignore[import-not-found]
+from trabalho_em_voo import jobs_em_voo  # type: ignore[import-not-found]
 from transactional_state import (  # type: ignore[import-not-found]
     HarnessDatabase,
     StateTransitionError,
@@ -199,14 +200,34 @@ AVISO_COMPOSICAO = (
     "pode fabricar saida de teste. Para que conte, rode sozinho: {sugestao}"
 )
 
-#: Background nao tem composicao nenhuma, entao passa por `is_trusted_verification`
-#: — mas o PostToolUse chega antes de existir saida, e evidencia sem caso
-#: coletado nao verifica (contrato Harness4Contract v1). O silencio aqui custou
-#: dois runs de ~7 min repetidos em 2026-09-02.
+#: Evidencia sem caso coletado nao verifica (contrato Harness4Contract v1). O
+#: silencio aqui custou dois runs de ~7 min repetidos em 2026-09-02. A causa
+#: daquele dia — suite em background, PostToolUse antes de existir saida — tem
+#: aviso proprio desde 2026-09-30 (`AVISO_SEGUNDO_PLANO`); o que sobra aqui e
+#: saida em primeiro plano sem contagem que o hook reconheca.
 AVISO_SEM_CASOS = (
     "[harness] evidencia de teste gravada SEM casos coletados, entao nao "
-    "verifica. Causa provavel: o comando rodou em background e a saida ainda "
-    "nao existia. Rode em primeiro plano para que conte."
+    "verifica: a saida nao trazia contagem de testes que o hook reconheca."
+)
+
+#: Lancar a suite em segundo plano nao e resultado. Ate 2026-09-30 o PostToolUse
+#: do lancamento passava por `is_trusted_verification` e gravava uma linha com
+#: `tests_collected=NULL` — que nunca verificou nada (a regua exige
+#: `tests_collected > 0`) e so enchia `evidence`. Caso real: balde `037312e7`,
+#: suite de ~21 min empurrada para o fundo pelo timeout de 10 min da ferramenta.
+#: Ver `docs/specs/portao-stop-em-voo-diagnostico.md`.
+AVISO_SEGUNDO_PLANO = (
+    "[harness] a suite foi para segundo plano (background, job {job}): o "
+    "lancamento NAO e resultado, e nenhuma evidencia foi gravada. Enquanto o job "
+    "roda, o Stop nao cobra continuacao. Quando ele terminar, leia a saida e, se "
+    "nenhum arquivo mudou desde o lancamento, registre a evidencia:\n{comando}"
+)
+
+#: As duas formas de texto com que o host anuncia um job em segundo plano: o
+#: pedido (`run_in_background`) e o empurrado pelo timeout da ferramenta.
+_ANUNCIO_DE_SEGUNDO_PLANO = re.compile(
+    r"running in background with ID:\s*([A-Za-z0-9_-]+)"
+    r"|moved to the background \(ID:\s*([A-Za-z0-9_-]+)\)"
 )
 
 
@@ -950,12 +971,27 @@ def _database_for_payload(
 ARQUIVO_DE_RECUSAS = "recusas.jsonl"
 
 
+def _emissor(payload: dict[str, Any]) -> dict[str, str]:
+    """Quem emitiu o comando, nos campos que o Claude Code poe no payload.
+
+    `agent_id` e `agent_type` so existem dentro de subagente; no principal o
+    dicionario sai vazio. O `session_id` nao serve para esta pergunta: o
+    subagente chega com o do pai (sonda de 2026-09-28, Claude Code 2.1.283).
+    """
+    return {
+        chave: str(payload[chave])
+        for chave in ("agent_id", "agent_type")
+        if payload.get(chave)
+    }
+
+
 def _registrar_recusas(
     bucket: Path,
     task_id: str,
     command: str,
     alvos: list[str],
     recusas: list[dict[str, Any]],
+    emissor: dict[str, str] | None = None,
 ) -> None:
     """Toda recusa do extrator fica escrita, com comando, candidato e motivo.
 
@@ -967,6 +1003,10 @@ def _registrar_recusas(
     O mapa `revisao-que-invalida` so conseguiu medir alguma coisa porque as
     entradas ACEITAS ficavam em `files`. As recusadas nunca ficaram em lugar
     nenhum, e a proxima pergunta seria irrespondivel pelo mesmo motivo.
+
+    `emissor` (ver `_emissor`) entra em cada linha. Na sessao `44b0dfb5` a
+    pergunta "quem emitiu o comando que invalidou?" so teve resposta por
+    correlacao de carimbo de tempo com os transcripts dos subagentes.
 
     Degrada em silencio: falha de escrita aqui nunca pode derrubar o hook.
     """
@@ -984,6 +1024,7 @@ def _registrar_recusas(
                             "comando_hash": digest,
                             "comando": command[:200],
                             "aceitos": alvos,
+                            **(emissor or {}),
                             **recusa,
                             "created_at": agora,
                         },
@@ -995,8 +1036,234 @@ def _registrar_recusas(
         pass
 
 
+#: Comandos que mudam o diretorio do shell. No PowerShell, `cd`, `chdir` e `sl`
+#: sao aliases de `Set-Location`, `pushd` de `Push-Location` e `popd` de
+#: `Pop-Location`. Comparados sem caixa, porque o PowerShell nao distingue.
+_MUDA_DIRETORIO = frozenset({
+    "cd", "chdir", "pushd", "popd", "sl", "set-location", "push-location", "pop-location",
+})
+
+#: As mesmas palavras, procuradas no TEXTO inteiro da linha, aspas e corpo de
+#: heredoc incluidos. Token nao basta: `bash -c "cd ../repo && x"` e um token
+#: so, e `os.chdir("../repo")` so existe no corpo do programa. Hifen conta como
+#: parte da palavra para que `wt-cd-x` num caminho nao dispare.
+_PALAVRA_DE_DIRETORIO = re.compile(
+    r"(?<![\w-])(?:" + "|".join(sorted(_MUDA_DIRETORIO, key=len, reverse=True)) + r")(?![\w-])"
+)
+
+#: `/c/...` e como o Git Bash escreve `C:\...`.
+_DRIVE_MSYS = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+#: Variavel do cmd (`%TEMP%`). A do bash e a do PowerShell comecam por `$`.
+_VARIAVEL_CMD = re.compile(r"%[A-Za-z_][A-Za-z0-9_]*%")
+
+#: O motivo registrado quando um comando nao conta por rodar fora do checkout.
+MOTIVO_FORA = "roda-fora-da-raiz"
+
+
+def _resolver_caminho(token: str, base: str) -> str | None:
+    """O caminho absoluto que `token` nomeia a partir de `base`, ou None.
+
+    None e a resposta para o que so o shell saberia resolver: variavel, `~`,
+    `-` (diretorio anterior), e, no Windows, caminho enraizado sem drive que
+    nao seja a forma MSYS. `/tmp` no Git Bash e um ponto de montagem, e junta-lo
+    ao drive do `cwd` inventaria um lugar.
+
+    A forma MSYS e convertida, e nao recusada, porque recusar a deixaria cair em
+    `C:\\c\\...`: um lugar que nao existe e que e disjunto de tudo — o `cd` para
+    DENTRO do checkout passaria por fora. Os transcripts da `44b0dfb5` tem 41
+    comandos nessa forma.
+    """
+    texto = token.strip()
+    if not texto or texto[0] in "~-" or "$" in texto or "`" in texto:
+        return None
+    if _VARIAVEL_CMD.search(texto):
+        return None
+    if os.name == "nt":
+        msys = _DRIVE_MSYS.match(texto)
+        if msys:
+            texto = f"{msys.group(1)}:{texto[msys.end():] or '/'}"
+        elif texto[0] in "/\\" and not texto.startswith(("//", "\\\\")):
+            return None
+    try:
+        return os.path.normpath(texto if os.path.isabs(texto) else os.path.join(base, texto))
+    except (TypeError, ValueError):
+        return None
+
+
+def _prefixo_de_diretorio(command: str, cwd: str) -> tuple[str | None, list[str]]:
+    """(onde o resto da linha roda, tokens do resto). Ver `diretorio_declarado`."""
+    tokens = _tokenize(sem_corpo_de_heredoc(command))
+    if not cwd:
+        return None, tokens
+    atual: str | None = cwd
+    indice = 0
+    saltos = 0
+    while indice < len(tokens) and tokens[indice].casefold() in _MUDA_DIRETORIO:
+        separador = tokens[indice + 2:indice + 4]
+        if separador[:1] == [";"]:
+            proximo = indice + 3
+        elif separador == ["&", "&"]:
+            proximo = indice + 4
+        else:
+            return None, tokens
+        atual = _resolver_caminho(tokens[indice + 1], atual)
+        if atual is None:
+            return None, tokens
+        indice = proximo
+        saltos += 1
+    resto = tokens[indice:]
+    # Qualquer troca de diretorio alem das iniciais — `cd -`, `popd`, um shell
+    # aninhado, um `os.chdir` no programa — pode levar o resto de volta ao
+    # checkout. Nao da para seguir, entao nao se sabe.
+    if len(_PALAVRA_DE_DIRETORIO.findall(command.casefold())) != saltos:
+        return None, resto
+    return atual, resto
+
+
+def diretorio_declarado(command: str, cwd: str) -> str | None:
+    """Onde o resto da linha roda: o `cwd`, ou o destino dos `cd` com que ela comeca.
+
+    `payload.cwd` e o diretorio PERSISTENTE da sessao. O Bash desta maquina
+    volta a ele depois de toda chamada, e o subagente herda o do pai — entao o
+    agente declara onde roda na propria linha, `cd "<dir>" && ...`, e quem
+    quiser saber onde o comando rodou tem de ler o comando.
+
+    So a forma que da para ler sem executar: `cd <um argumento>` seguido de `&&`
+    ou `;`, repetivel. Qualquer outra coisa e None — "nao se sabe" —, e o
+    chamador cai no comportamento de antes:
+
+    - `cd` no meio da linha, porque o que vem antes dele rodou em outro lugar;
+    - `||`, `|` ou `&` depois do `cd`, porque o resto pode rodar sem ele;
+    - flag (`cd -P`), variavel, `~`, `-`, nova linha colada no argumento.
+    """
+    return _prefixo_de_diretorio(command, cwd)[0]
+
+
+def _arvore_de_trabalho(cwd: str) -> str | None:
+    """O `.git` mais proximo acima do `cwd`, SEM colapsar worktree no dono.
+
+    `find_repo_root` colapsa, e para a atribuicao de escrita isso esta certo.
+    Mas numa sessao aberta num worktree FORA do diretorio do dono, o colapso
+    diria que o proprio `cwd` da sessao esta fora da raiz — e todo comando
+    dela deixaria de contar. `roda_fora_da_raiz` exige distancia das duas.
+    """
+    try:
+        atual = os.path.abspath(cwd)
+    except (OSError, ValueError):
+        return None
+    while True:
+        if os.path.exists(os.path.join(atual, ".git")):
+            return atual
+        pai = os.path.dirname(atual)
+        if pai == atual:
+            return None
+        atual = pai
+
+
+def _normalizar_texto(texto: str) -> str:
+    """Caixa, barra e forma MSYS iguais, para procurar um caminho num texto."""
+    texto = re.sub(r"\\+", "/", texto.casefold())
+    return re.sub(r"(^|[\s\"'=(])/([a-z])(?=/)", r"\1\2:", texto)
+
+
+def _linha_alcanca(command: str, resto: list[str], diretorio: str, raizes: list[str]) -> bool:
+    """A linha pode tocar alguma das raizes? Na duvida, sim.
+
+    Tres portas, e qualquer uma basta:
+
+    - o texto inteiro, corpo de heredoc incluido, cita o caminho de uma raiz —
+      o corpo e o programa, e `open(r"C:\\repo\\x.py", "w")` so aparece ali;
+    - um token, resolvido contra `diretorio`, cai dentro de uma raiz — pega
+      `cp a ../../repo/b`, e o valor depois do `=` tanto de flag
+      (`--saida=../repo/x`) quanto de atribuicao (`SAIDA=../repo/x python y`);
+    - um token tem variavel, `~` ou outra coisa que so o shell resolveria.
+
+    Token que nao pode ser caminho nenhum (`no:cacheprovider`, `HEAD:docs/x`)
+    nao nomeia lugar e e pulado. Destino nulo (`/dev/null`) tambem.
+    """
+    texto = _normalizar_texto(command)
+    formas = {
+        _normalizar_texto(forma)
+        for raiz in raizes
+        for forma in (raiz, os.path.realpath(raiz))
+    }
+    if any(forma in texto for forma in formas):
+        return True
+    for token in resto:
+        if token in _OPERADORES_TOKEN or token in _DESTINOS_NULOS:
+            continue
+        # O token inteiro nao e caminho quando e flag; o valor depois do `=`
+        # pode ser, seja de flag seja de atribuicao — e o `..` de
+        # `SAIDA=../repo/x` so e `..` depois de separado do nome.
+        valores = [] if token.startswith("-") else [token]
+        if "=" in token:
+            valores.append(token.split("=", 1)[1])
+        for valor in filter(None, valores):
+            motivo = nao_pode_ser_caminho(valor)
+            if motivo == "variavel-nao-expandida":
+                return True
+            if motivo:
+                continue
+            destino = _resolver_caminho(valor, diretorio)
+            if destino is None or any(inside_root(destino, raiz) for raiz in raizes):
+                return True
+    return False
+
+
+def roda_fora_da_raiz(payload: dict[str, Any], command: str) -> str | None:
+    """O diretorio onde o comando roda, SE ele comprovadamente roda fora.
+
+    E a pergunta que o placeholder fazia implicitamente e respondia sempre
+    igual: "o programa opaco rodou dentro do checkout?". Ele supunha que sim,
+    porque lia o local no `cwd` do payload. Na sessao `44b0dfb5` isso custou
+    394 toques na task do pai — 330 emitidos por subagente —, e 10 das 14
+    invalidacoes atribuiveis vieram de linhas `cd "<fora do checkout>" && ...`,
+    9 delas para `%TEMP%\\...\\wt-*`.
+
+    Devolve o diretorio so quando as tres coisas valem; em qualquer duvida,
+    None, e o chamador conta como antes:
+
+    1. o local e conhecido (`diretorio_declarado`);
+    2. o local e disjunto do checkout: nem dentro nem ANCESTRAL da raiz do
+       projeto nem da arvore da sessao. Ancestral nao e fora — de `projects/`
+       qualquer `master-harness/x` relativo chega dentro;
+    3. nada na linha alcanca o checkout (`_linha_alcanca`).
+
+    **Identidade nao entra.** Subagente e principal passam pela mesma regua: o
+    subagente trabalha na mesma sessao e no mesmo diretorio, e ignora-lo por
+    `agent_id` deixaria a edicao delegada depois da evidencia passar por fresca.
+
+    **O que continua descoberto, declarado:** programa lancado de fora que
+    escreve no checkout por um caminho que nao esta na linha — lido de
+    arquivo-ponteiro, de variavel de ambiente, montado por dentro. So medir a
+    arvore fecha isso (`portao-mede-atividade-verification.md` §3).
+
+    Fail-closed como `_apenas_dentro_da_raiz`: sem `cwd`, ou fora de repositorio,
+    nao ha checkout e portanto nao ha fora.
+    """
+    cwd = str(payload.get("cwd") or "")
+    if not cwd:
+        return None
+    raizes = [raiz for raiz in dict.fromkeys((find_repo_root(cwd), _arvore_de_trabalho(cwd))) if raiz]
+    if not raizes:
+        return None
+    diretorio, resto = _prefixo_de_diretorio(command, cwd)
+    if diretorio is None:
+        return None
+    for raiz in raizes:
+        if inside_root(diretorio, raiz) or inside_root(raiz, diretorio):
+            return None
+    if _linha_alcanca(command, resto, diretorio, raizes):
+        return None
+    return diretorio
+
+
 def _apenas_dentro_da_raiz(
-    payload: dict[str, Any], alvos: list[str], recusas: list[dict[str, Any]]
+    payload: dict[str, Any],
+    alvos: list[str],
+    recusas: list[dict[str, Any]],
+    base: str | None = None,
 ) -> list[str]:
     """A MESMA pergunta que o caminho do `Edit`/`Write` ja fazia.
 
@@ -1019,14 +1286,20 @@ def _apenas_dentro_da_raiz(
     processo do hook: `cat > scripts/x.py` e relativo a sessao, e `abspath`
     sozinho o ancoraria no lugar errado. O caminho GRAVADO continua sendo o
     original — quem le `files` continua vendo `scripts/x.py`.
+
+    `base`, quando conhecida, e o diretorio que a propria linha declara
+    (`diretorio_declarado`) e vence o `cwd`. Sem ela, `cd "%TEMP%\\...\\l4" &&
+    cat > sim_334.py` gravava `sim_334.py` como arquivo do checkout — 20 toques
+    assim na sessao `44b0dfb5`, todos de arquivo escrito em `%TEMP%`.
     """
     cwd = str(payload.get("cwd") or "")
     raiz = find_repo_root(cwd) if cwd else None
     if not raiz:
         return alvos
+    ancora = base or cwd
     dentro: list[str] = []
     for alvo in alvos:
-        absoluto = alvo if os.path.isabs(alvo) else os.path.join(cwd, alvo)
+        absoluto = alvo if os.path.isabs(alvo) else os.path.join(ancora, alvo)
         if inside_root(absoluto, raiz):
             dentro.append(alvo)
         else:
@@ -1043,17 +1316,38 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
         # As duas metades importam: sem a primeira o contador de arquivos e cego
         # a escrita por shell; sem a segunda, um programa que escreve por dentro
         # passaria por "nao alterou nada".
+        #
+        # A terceira metade: o placeholder supoe que o programa opaco rodou no
+        # checkout. Quando a linha declara que roda FORA e nada nela alcanca o
+        # checkout, a suposicao e falsa e nao ha o que invalidar — e a recusa
+        # fica escrita, com local e emissor (ver `roda_fora_da_raiz`).
         recusas: list[dict[str, Any]] = []
-        alvos = _apenas_dentro_da_raiz(payload, shell_write_targets(command, recusas), recusas)
-        _registrar_recusas(bucket, task["task_id"], command, alvos, recusas)
-        if alvos or not (is_read_only(command) or nao_muda_a_arvore(command)):
+        cwd = str(payload.get("cwd") or "")
+        base = diretorio_declarado(command, cwd) if cwd else None
+        alvos = _apenas_dentro_da_raiz(
+            payload, shell_write_targets(command, recusas), recusas, base=base
+        )
+        conta = bool(alvos) or not (is_read_only(command) or nao_muda_a_arvore(command))
+        # So pergunta onde o comando rodou quando a resposta muda o veredito:
+        # leitura pura ja nao conta, e registrar recusa para ela seria ruido.
+        fora = roda_fora_da_raiz(payload, command) if conta and not alvos else None
+        if fora:
+            recusas.append({"candidato": "shell-command", "motivo": MOTIVO_FORA, "detalhe": fora})
+            conta = False
+        _registrar_recusas(bucket, task["task_id"], command, alvos, recusas, _emissor(payload))
+        if conta:
             task = database.touch_files(
                 task["task_id"],
                 alvos or ["shell-command"],
                 origem="shell" if alvos else "shell-placeholder",
             )
     aviso = ""
-    if is_trusted_verification(command):
+    job = _job_em_segundo_plano(payload) if is_trusted_verification(command) else None
+    if job:
+        aviso = AVISO_SEGUNDO_PLANO.format(
+            job=job, comando=comando_de_evidencia(bucket, task["task_id"], task.get("kind"))
+        )
+    elif is_trusted_verification(command):
         collected, passed, skipped, output_hash = _test_counts(payload)
         task = database.record_evidence(
             task["task_id"],
@@ -1073,6 +1367,39 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     return aviso
 
 
+def _job_em_segundo_plano(payload: dict[str, Any]) -> str | None:
+    """O id do job, se esta resposta e o LANCAMENTO de um comando em segundo plano.
+
+    O `tool_response` do hook e o mesmo objeto que o transcript grava em
+    `toolUseResult` (sha256 igual, medido no diagnostico), com
+    `backgroundTaskId` tanto no pedido quanto no empurrado por timeout. O texto
+    fica como segunda via para resposta que chegue so como string.
+    """
+    resposta = _response(payload)
+    if isinstance(resposta, dict) and isinstance(resposta.get("backgroundTaskId"), str):
+        return resposta["backgroundTaskId"]
+    anuncio = _ANUNCIO_DE_SEGUNDO_PLANO.search(_response_text(payload))
+    if anuncio:
+        return anuncio.group(1) or anuncio.group(2)
+    return None
+
+
+def _jobs_em_voo(payload: dict[str, Any], task: dict[str, Any]) -> list[dict[str, str]]:
+    """Jobs desta task ainda rodando, lidos do transcript do Stop.
+
+    Qualquer falha devolve lista vazia, que e cobrar como antes. Deixar a
+    excecao subir derrubaria o hook, e o host trata hook que morre como erro
+    nao bloqueante: o Stop passaria sem portao nenhum.
+    """
+    try:
+        return jobs_em_voo(
+            payload.get("transcript_path") or payload.get("transcriptPath"),
+            desde=task.get("started_at"),
+        )
+    except Exception:
+        return []
+
+
 def _handle_stop(payload: dict[str, Any], context) -> str:
     if payload.get("stop_hook_active") or payload.get("stopHookActive"):
         return ""
@@ -1084,9 +1411,15 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
     # banco nao podem discordar sobre quando ha continuacao a contar.
     if not cobra_evidencia_nesta_fase(task.get("kind"), task["pipeline"], task["phase"]):
         return ""
-    task = database.register_stop_continuation(task["task_id"], limit=2)
+    # Com job desta task em voo o fim de turno e espera, nao tentativa de
+    # encerrar: o Stop bloqueia igual, mas nao conta para a escalada. Quem
+    # decide contar e o banco; o hook so entrega a lista.
+    em_voo = _jobs_em_voo(payload, task)
+    task = database.register_stop_continuation(
+        task["task_id"], limit=2, em_voo=[job["id"] for job in em_voo]
+    )
     _sync_projection(bucket, projection, task)
-    reason = _motivo_do_gate(bucket, database, task)
+    reason = _motivo_do_gate(bucket, database, task, em_voo)
     return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
 
 
@@ -1184,7 +1517,9 @@ def comando_de_evidencia(bucket: Path, task_id: str, kind: str | None = None) ->
     )
 
 
-def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
+def _motivo_do_gate(
+    bucket: Path, database, task: dict[str, Any], em_voo: list[dict[str, str]] | tuple = ()
+) -> str:
     """A mensagem do bloqueio, dizendo o que o portao LEU.
 
     Ate 2026-09-16 ela nao citava `task_id`, nem o balde, nem o comando que
@@ -1198,6 +1533,11 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     sabia pedir teste, e mandou uma task de docs, numa pasta sem suite, anexar
     "evidencia de teste fresca" tres vezes — a sessao acabou escrevendo 127
     testes sobre o proprio texto.
+
+    Com job em voo (`em_voo`), a mensagem abre dizendo que este Stop NAO foi
+    cobrado e por qual job. E toda leitura, escalada incluida, traz
+    `stops_nao_cobrados=N` quando houver algum: a suspensao nao tem teto
+    numerico (D3), entao tem de estar a vista de quem le o bloqueio.
     """
     tipo = tipo_de_evidencia(task.get("kind"))
     contagem = _conta_evidencia(database, task["task_id"], task["code_revision"], tipo)
@@ -1211,6 +1551,9 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
         f"task_id={task['task_id']} | balde={bucket} | fase={fase} ({posicao}) | "
         f"code_revision={task['code_revision']} | verified={task['verified']} | {contagem}"
     )
+    nao_cobrados = database.stops_nao_cobrados(task["task_id"])
+    if nao_cobrados:
+        leitura = f"{leitura} | stops_nao_cobrados={nao_cobrados}"
     toques = _ultimos_toques(database, task["task_id"])
     if toques:
         leitura = f"{leitura}\n{toques}"
@@ -1231,8 +1574,16 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
             "Leve ao usuario o bloqueio concreto e esta leitura — nao reformule o "
             "diagnostico sem antes conferir os numeros acima."
         )
+    cabecalho = ""
+    if em_voo:
+        jobs = ", ".join(f"{job['id']} ({job['tipo']})" for job in em_voo)
+        cabecalho = (
+            f"HARNESS v3: este Stop NAO foi cobrado — job(s) desta task em voo: {jobs}. "
+            "O host reinvoca o modelo quando terminarem; se voce so esta esperando, "
+            "encerre o turno. A evidencia continua exigida antes da resposta final.\n"
+        )
     if tipo == "docs":
-        return (
+        return cabecalho + (
             "HARNESS v3 verification gate (docs): esta e a fase final do pipeline de "
             "docs; registre a verificacao da doc antes da resposta final.\n"
             f"O que o portao leu: {leitura}\n"
@@ -1246,7 +1597,7 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
             f"{comando}\n"
             f"{AVISO_LINHA_SOZINHA}"
         )
-    return (
+    return cabecalho + (
         "HARNESS v3 verification gate: continue o pipeline do harness-workflow e anexe "
         f"evidencia de teste fresca antes da resposta final.\n"
         f"O que o portao leu: {leitura}\n{regua}\n"

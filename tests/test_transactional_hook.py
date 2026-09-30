@@ -419,10 +419,12 @@ def test_atomic_prefix_nao_corta_dentro_de_aspas():
 
 
 def test_aviso_de_background_quando_nao_ha_casos(tmp_path: Path):
-    """Background nao tem composicao: passa no gate e grava evidencia inutil.
+    """Background nao tem composicao: passa por `is_trusted_verification`.
 
-    O PostToolUse chega antes de existir saida, entao `tests_collected` e None e
-    a evidencia nao verifica. Foi o que custou dois runs de ~7 min em 2026-09-02.
+    O PostToolUse chega antes de existir saida. Ate 2026-09-30 isso gravava uma
+    evidencia com `tests_collected` None, que nao verifica; o silencio custou
+    dois runs de ~7 min em 2026-09-02. Hoje nao grava nada e avisa por que
+    (`test_portao_em_voo.py::test_suite_lancada_em_background_nao_grava_evidencia`).
     """
     cwd = tmp_path / "repo"
     cwd.mkdir()
@@ -1480,3 +1482,272 @@ def test_escrita_com_redirecionamento_continua_contando(tmp_path: Path):
         "escrita real em arquivo deixou de invalidar evidencia"
     )
     assert depois["verified"] is False
+
+
+# ---------------------------------------------------------------------------
+# Comando que roda fora do checkout (incidente 2026-09-28, sessao 44b0dfb5)
+# ---------------------------------------------------------------------------
+# Subagente chega ao hook com o `session_id` do pai, `agent_id` preenchido e o
+# `cwd` do PAI — medido por sonda no Claude Code 2.1.283. O Bash volta ao cwd
+# da sessao depois de toda chamada, entao o agente declara onde roda na propria
+# linha: `cd "<worktree>" && ...`. O hook ignorava esse `cd`, presumia que o
+# comando opaco tinha rodado no checkout e subia `code_revision` do pai: 330
+# dos 394 toques da task vieram de subagente, e 10 das 14 invalidacoes
+# atribuiveis por um `cd` para fora do checkout. Diagnostico em
+# `docs/specs/portao-subagente-fora-da-raiz-diagnostico.md`.
+
+
+def _subagente(**extra):
+    """Os campos que o Claude Code acrescenta ao payload dentro de subagente."""
+    return {"agent_id": "adf27e37f442fae62", "agent_type": "general-purpose", **extra}
+
+
+def _cenario(tmp_path: Path):
+    """Checkout real, um worktree irmao FORA dele, e evidencia fresca."""
+    repo = _repo_de_verdade(tmp_path)
+    fora = tmp_path / "scratchpad" / "wt-s1-l5a"
+    fora.mkdir(parents=True)
+    raiz = tmp_path / "harness"
+    bucket, database, task = _active_task(raiz, repo)
+    _verificada(database, task["task_id"])
+    assert database.task(task["task_id"])["verified"] is True
+    return repo, fora, raiz, bucket, database, task
+
+
+def _roda(raiz: Path, cwd: Path, comando: str, *, emissor: dict, tool: str = "Bash") -> None:
+    hook.handle_payload(
+        _payload("PostToolUse", cwd, tool_name=tool,
+                 tool_input={"command": comando},
+                 tool_response={"exit_code": 0, "output": ""}, **emissor),
+        harness_root=raiz,
+    )
+
+
+def _recusas(bucket: Path) -> list[dict]:
+    arquivo = bucket / hook.ARQUIVO_DE_RECUSAS
+    if not arquivo.is_file():
+        return []
+    linhas = arquivo.read_text(encoding="utf-8").splitlines()
+    return [json.loads(linha) for linha in linhas if linha.strip()]
+
+
+#: Formas colhidas dos transcripts da `44b0dfb5`, com o caminho trocado pelo
+#: worktree do cenario.
+_FORMAS_FORA = {
+    "suite-no-worktree": 'cd "{fora}" && python -m pytest -q -p no:cacheprovider 2>&1 | tail -5',
+    "merge-no-worktree": 'cd "{fora}" && git merge --no-ff -m "merge L2a" fix/l2a',
+    "script-no-worktree": 'cd "{fora}" && python sim_334.py',
+    "dois-cd": 'cd "{fora}" && cd docs && python gera.py',
+    "powershell": 'cd "{fora}"; python gera.py',
+}
+
+
+@pytest.mark.parametrize("emissor", [_subagente(), {}], ids=["subagente", "principal"])
+@pytest.mark.parametrize("forma", sorted(_FORMAS_FORA))
+def test_comando_que_roda_fora_do_checkout_nao_invalida_evidencia(
+    tmp_path: Path, forma: str, emissor: dict
+):
+    """O incidente: a evidencia do pai invalidada por comando em worktree fora.
+
+    Vale para o principal tambem — identidade nao e o criterio, e sim onde o
+    comando roda. Subagente so faz isso com mais frequencia.
+    """
+    repo, fora, raiz, _bucket, database, task = _cenario(tmp_path)
+    antes = database.task(task["task_id"])
+    tool = "PowerShell" if forma == "powershell" else "Bash"
+
+    _roda(raiz, repo, _FORMAS_FORA[forma].format(fora=fora), emissor=emissor, tool=tool)
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] == antes["code_revision"], (
+        f"{forma}: comando em {fora} subiu code_revision do checkout {repo}.\n"
+        f"  toques: {database.touches(task['task_id'], limite=3)}"
+    )
+    assert depois["verified"] is True
+
+
+def test_alvo_relativo_e_resolvido_no_diretorio_do_cd(tmp_path: Path):
+    """A segunda falha da mesma causa.
+
+    `sim_334.py` escrito em `%TEMP%` virava arquivo do checkout, porque o alvo
+    relativo era juntado ao `cwd` do payload e nao ao diretorio do `cd`.
+    """
+    repo, fora, raiz, bucket, database, task = _cenario(tmp_path)
+    comando = f'cd "{fora}" && cat > sim_334.py <<' + "'EOF'\nprint(1)\nEOF"
+
+    _roda(raiz, repo, comando, emissor=_subagente())
+
+    assert database.files(task["task_id"]) == []
+    assert database.task(task["task_id"])["verified"] is True
+    motivos = {r["candidato"]: r["motivo"] for r in _recusas(bucket)}
+    assert motivos.get("sim_334.py") == "fora-da-raiz", motivos
+
+
+def test_comando_fora_fica_registrado_com_local_e_agente(tmp_path: Path):
+    """Nao contar sem registrar trocaria ruido por cegueira.
+
+    A linha diz onde o comando rodou e quem o emitiu — a pergunta que o
+    incidente so conseguiu responder por correlacao de carimbo de tempo.
+    """
+    repo, fora, raiz, bucket, _database, _task = _cenario(tmp_path)
+
+    _roda(raiz, repo, f'cd "{fora}" && python sim_334.py', emissor=_subagente())
+
+    registro = next(r for r in _recusas(bucket) if r["motivo"] == "roda-fora-da-raiz")
+    assert os.path.samefile(registro["detalhe"], fora)
+    assert registro["agent_id"] == "adf27e37f442fae62"
+    assert registro["agent_type"] == "general-purpose"
+
+
+#: A outra metade. Cada forma e uma escrita real no checkout, ou uma linha em
+#: que o hook nao consegue provar que nao e. Se uma delas parar de invalidar,
+#: o conserto virou afrouxamento. Todas emitidas por subagente: e a pergunta.
+_FORMAS_QUE_CONTAM = {
+    "sed-no-checkout": 'sed -i "s/a/b/" "{repo}/x.py"',
+    "cd-para-dentro": 'cd "{repo}/scripts" && python gera.py',
+    "fora-citando-a-raiz-no-programa": 'cd "{fora}" && python -c "open(r\'{repo}/x.py\', \'w\')"',
+    "fora-copiando-para-dentro": 'cd "{fora}" && cp a.py "{repo}/b.py"',
+    "fora-subindo-por-ponto-ponto": 'cd "{fora}" && cp a.py ../../repo/b.py',
+    "fora-flag-com-caminho-relativo": 'cd "{fora}" && python gera.py --saida=../../repo/x.py',
+    "heredoc-citando-a-raiz": (
+        'cd "{fora}" && python - <<' + "'PY'\n" + 'open(r"{repo}/x.py", "w").write("1")\nPY'
+    ),
+    "ancestral-do-checkout": 'cd "{ancestral}" && python gera.py',
+    "cd-por-variavel": 'cd "$WT" && python gera.py',
+    "variavel-no-resto": 'cd "{fora}" && python gera.py "$SAIDA"',
+    "cd-com-ou": 'cd "{fora}" || exit 1; python gera.py',
+    "cd-no-meio-da-linha": 'git status && cd "{fora}" && python gera.py',
+    "cd-e-pipe": 'cd "{fora}" | python gera.py',
+    "cd-com-flag": 'cd -P "{fora}" && python gera.py',
+    "cd-menos-volta-ao-checkout": 'cd "{fora}" && python x.py && cd - && python gera.py',
+    "popd-volta-ao-checkout": 'pushd "{fora}" && python x.py && popd && python gera.py',
+    "shell-aninhado-entra-no-checkout": 'cd "{fora}" && bash -c "cd ../../repo && python gera.py"',
+    "programa-muda-de-diretorio": (
+        'cd "{fora}" && python - <<' + "'PY'\n"
+        + 'import os; os.chdir("../../repo"); open("x.py", "w")\nPY'
+    ),
+    "git-C-para-dentro": 'cd "{fora}" && git -C ../../repo checkout main',
+    "atribuicao-de-variavel-para-dentro": 'cd "{fora}" && SAIDA=../../repo/x.py python gera.py',
+}
+
+
+@pytest.mark.parametrize("forma", sorted(_FORMAS_QUE_CONTAM))
+def test_subagente_que_pode_mudar_o_checkout_continua_invalidando(tmp_path: Path, forma: str):
+    repo, fora, raiz, _bucket, database, task = _cenario(tmp_path)
+    (repo / "scripts").mkdir()
+    antes = database.task(task["task_id"])
+    comando = _FORMAS_QUE_CONTAM[forma].format(repo=repo, fora=fora, ancestral=tmp_path)
+
+    _roda(raiz, repo, comando, emissor=_subagente())
+
+    depois = database.task(task["task_id"])
+    assert depois["code_revision"] > antes["code_revision"], (
+        f"{forma} deixou de invalidar a evidencia do pai:\n  {comando!r}"
+    )
+    assert depois["verified"] is False
+
+
+def test_sessao_em_worktree_fora_do_dono_continua_contando_o_proprio_worktree(tmp_path: Path):
+    """`find_repo_root` colapsa worktree no dono.
+
+    Numa sessao aberta num worktree FORA do diretorio do dono, o proprio `cwd`
+    pareceria fora da raiz, e todo comando da sessao deixaria de contar. A
+    arvore de trabalho da sessao entra na comparacao por isso.
+    """
+    dono = _repo_de_verdade(tmp_path)
+    (dono / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = tmp_path / "externo" / "wt"
+    (wt / "sub").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {dono / '.git' / 'worktrees' / 'wt'}\n", encoding="utf-8")
+    assert os.path.samefile(hook.find_repo_root(str(wt)), dono), "pre-condicao: o colapso acontece"
+    raiz = tmp_path / "harness"
+    _bucket, database, task = _active_task(raiz, wt)
+    _verificada(database, task["task_id"])
+    antes = database.task(task["task_id"])
+
+    _roda(raiz, wt, f'cd "{wt / "sub"}" && python gera.py', emissor=_subagente())
+
+    assert database.task(task["task_id"])["code_revision"] > antes["code_revision"]
+
+
+def _msys(caminho: Path) -> str:
+    """`C:\\x\\y` na forma do Git Bash: `/c/x/y`."""
+    texto = str(caminho).replace("\\", "/")
+    return f"/{texto[0].lower()}{texto[2:]}"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a forma MSYS so existe no Git Bash do Windows")
+def test_cd_em_forma_msys_para_fora_nao_invalida(tmp_path: Path):
+    repo, fora, raiz, _bucket, database, task = _cenario(tmp_path)
+    antes = database.task(task["task_id"])
+
+    _roda(raiz, repo, f"cd {_msys(fora)} && python sim_334.py", emissor=_subagente())
+
+    assert database.task(task["task_id"])["code_revision"] == antes["code_revision"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a forma MSYS so existe no Git Bash do Windows")
+@pytest.mark.parametrize("forma", ["direto", "pelo-ancestral"])
+def test_cd_em_forma_msys_para_dentro_continua_invalidando(tmp_path: Path, forma: str):
+    """Sem a conversao, `/c/...` vira `C:\\c\\...` no Windows — um lugar que
+    nao existe e que e disjunto de tudo — e o `cd` para dentro passaria por
+    fora. Os transcripts da `44b0dfb5` tem 41 comandos nessa forma.
+
+    `pelo-ancestral` e a forma que so a conversao pega: o texto nunca cita a
+    raiz inteira, e a busca no texto nao tem o que achar. A mutacao que junta
+    `/c/...` ao drive do `cwd` sobreviveu a `direto` sozinho.
+    """
+    repo, _fora, raiz, _bucket, database, task = _cenario(tmp_path)
+    antes = database.task(task["task_id"])
+    comando = {
+        "direto": f"cd {_msys(repo)}/docs && python gera.py",
+        "pelo-ancestral": f"cd {_msys(tmp_path)} && cd repo/docs && python gera.py",
+    }[forma]
+
+    _roda(raiz, repo, comando, emissor=_subagente())
+
+    assert database.task(task["task_id"])["code_revision"] > antes["code_revision"]
+
+
+def test_sem_cwd_no_payload_nada_roda_fora(tmp_path: Path):
+    """Fail-closed, a mesma decisao de `_apenas_dentro_da_raiz`: sem `cwd` nao
+    ha projeto declarado, e sem projeto nao ha fora."""
+    fora = tmp_path / "fora"
+    fora.mkdir()
+    assert hook.roda_fora_da_raiz({}, f'cd "{fora}" && python gera.py') is None
+
+
+@pytest.mark.parametrize(
+    ("comando", "esperado"),
+    [
+        ('cd "{a}" && x', "{a}"),
+        ("cd {a}; x", "{a}"),
+        ('cd "{a}" && cd sub && x', "{a}/sub"),
+        ('pushd "{a}" && x', "{a}"),
+        ('Set-Location "{a}"; x', "{a}"),
+        ('sl "{a}"; x', "{a}"),
+        ("x", "{cwd}"),
+        ('cd "{a}" || x', None),
+        ('cd "{a}" | x', None),
+        ('x && cd "{a}" && y', None),
+        ('cd "{a}" && x && cd - && y', None),
+        ('pushd "{a}" && x && popd && y', None),
+        ('cd "{a}" && bash -c "cd .. && y"', None),
+        ('cd "$WT" && x', None),
+        ("cd ~ && x", None),
+        ("cd - && x", None),
+        ('cd -P "{a}" && x', None),
+        ('cd "{a}"\nx', None),
+    ],
+)
+def test_diretorio_declarado_pela_linha(tmp_path: Path, comando: str, esperado: str | None):
+    """Onde o resto da linha roda. `None` e "nao se sabe", e o chamador conta."""
+    cwd = tmp_path / "sessao"
+    a = tmp_path / "a"
+    obtido = hook.diretorio_declarado(comando.format(a=a), str(cwd))
+    if esperado is None:
+        assert obtido is None
+        return
+    alvo = esperado.format(a=a, cwd=cwd)
+    assert obtido is not None
+    assert os.path.normcase(os.path.normpath(obtido)) == os.path.normcase(os.path.normpath(alvo))
