@@ -12,6 +12,11 @@
 # Stale-lock: se lockdir existe ha mais de STATE_LOCK_STALE_SECS, e
 # considerado abandonado e e removido automaticamente.
 #
+# Dono: quem segura o lock tem, dentro do lockdir, um arquivo de nome unico
+# (owner.<pid>.<ms>.<aleatorio>). Nenhuma remocao usa so o nome do lockdir:
+# cada uma apaga as entradas que viu, pelo nome delas, e o lockdir com `rm -d`,
+# que falha se ele nao estiver vazio. Lockdir vazio nao tem dono.
+#
 # Variaveis de configuracao (export ANTES de source para customizar):
 #   HARNESS_DIR              default: ~/.claude/harness
 #   STATE_LOCK_TIMEOUT_SECS  default: 5      (max espera por lock)
@@ -24,7 +29,8 @@
 : "${STATE_LOCK_POLL_MS:=50}"
 
 STATE_LOCK_DIR="$HARNESS_DIR/state.json.lockdir"
-STATE_LOCK_OWNER_FILE="$STATE_LOCK_DIR/owner"
+# Arquivo de dono da aquisicao deste shell; vazio enquanto ele nao segura o lock.
+STATE_LOCK_OWNER_FILE=""
 
 # Relogio sem fork. No Git Bash do Windows cada `$(...)` custa 0,1-0,3s (medido:
 # `$(date)` 0,28s, `$(:)` 0,13s, builtin ~0), e o laco de aquisicao forkava ~9
@@ -66,13 +72,71 @@ _state_lock_dir_age_secs() {
   echo $(( _STATE_LOCK_NOW_MS / 1000 - mtime ))
 }
 
+# Entradas do lockdir, em _STATE_LOCK_ENTRIES, sem fork. O glob roda com as
+# opcoes de quem fez source: `set -f` o desligaria e `failglob` abortaria o laco
+# no primeiro padrao sem casamento, entao as duas saem aqui e voltam no fim.
+_state_lock_entries() {
+  _STATE_LOCK_ENTRIES=()
+  local f sem_glob=0 failglob=0
+  if [[ $- == *f* ]]; then sem_glob=1; set +f; fi
+  if shopt -q failglob; then failglob=1; shopt -u failglob; fi
+  for f in "$STATE_LOCK_DIR"/* "$STATE_LOCK_DIR"/.[!.]* "$STATE_LOCK_DIR"/..?*; do
+    if [[ -e "$f" || -L "$f" ]]; then _STATE_LOCK_ENTRIES+=("$f"); fi
+  done
+  if (( failglob )); then shopt -s failglob; fi
+  if (( sem_glob )); then set -f; fi
+  return 0
+}
+
+# Quebra o lock abandonado sem tocar em nenhum que tenha nascido depois.
+#
+# A idade e a remocao nao sao uma operacao so: entre as duas, o lockdir velho
+# pode ter sido quebrado por outro waiter e pego por um terceiro. Ate
+# 2026-09-30 a remocao era `rm -rf` no nome do lockdir e apagava o lock do
+# terceiro (tests/test_state_lock.py::TestCorridaDaQuebraDeStale). Agora sai so
+# o que foi VISTO, cada entrada pelo proprio nome, e o lockdir com `-d`: o dono
+# de um lock novo tem um nome que ninguem viu, e o `rm -d` falha no lockdir dele.
+#
+# As entradas sao lidas ANTES da idade. Na ordem inversa, um lockdir trocado
+# entre as duas leituras juntaria a idade do velho com o dono do novo.
 _state_lock_remove_if_stale() {
+  _state_lock_entries
   local age
   age=$(_state_lock_dir_age_secs "$STATE_LOCK_DIR")
   if [[ "$age" -ge 0 && "$age" -ge "$STATE_LOCK_STALE_SECS" ]]; then
-    rm -rf "$STATE_LOCK_DIR" 2>/dev/null || return 1
+    rm -df ${_STATE_LOCK_ENTRIES[@]+"${_STATE_LOCK_ENTRIES[@]}"} "$STATE_LOCK_DIR" 2>/dev/null
+    return
+  fi
+  return 1
+}
+
+# Grava o dono no lockdir recem-criado e so fica com o lock se for o UNICO dono.
+#
+# Entre o `mkdir` e esta gravacao o lockdir esta vazio, e lockdir vazio pode
+# sair a qualquer momento: o `rm -d` de uma quebra atrasada, ou do release de
+# quem ja perdeu o lock, vale nele, porque vazio nao tem dono. Se o nosso saiu e
+# outro processo criou outro, a gravacao cai no lockdir do outro. Quem grava le
+# o lockdir depois de gravar; de dois que gravam no mesmo, pelo menos um ve o
+# arquivo do outro, e esse remove so o proprio arquivo e tenta de novo.
+_state_lock_claim() {
+  local own="$STATE_LOCK_DIR/owner.$$.${_STATE_LOCK_NOW_MS}.${RANDOM}"
+  if ! { printf '%s %s\n' "$$" "$(( _STATE_LOCK_NOW_MS / 1000 ))" > "$own"; } 2>/dev/null; then
+    return 1
+  fi
+  _state_lock_entries
+  local f meu=0 alheio=0
+  for f in ${_STATE_LOCK_ENTRIES[@]+"${_STATE_LOCK_ENTRIES[@]}"}; do
+    case "${f##*/}" in
+      owner|owner.*)
+        if [[ "${f##*/}" == "${own##*/}" ]]; then meu=1; else alheio=1; fi
+        ;;
+    esac
+  done
+  if (( meu && ! alheio )); then
+    STATE_LOCK_OWNER_FILE="$own"
     return 0
   fi
+  rm -df "$own" "$STATE_LOCK_DIR" 2>/dev/null
   return 1
 }
 
@@ -88,8 +152,9 @@ acquire_state_lock() {
   while true; do
     if mkdir "$STATE_LOCK_DIR" 2>/dev/null; then
       _state_lock_tick
-      printf '%s %s\n' "$$" "$(( _STATE_LOCK_NOW_MS / 1000 ))" > "$STATE_LOCK_OWNER_FILE" 2>/dev/null
-      return 0
+      if _state_lock_claim; then
+        return 0
+      fi
     fi
     _state_lock_tick
     if (( _STATE_LOCK_NOW_MS >= next_stale_check_ms )); then
@@ -104,20 +169,21 @@ acquire_state_lock() {
   done
 }
 
+# Solta o lock deste shell: remove o proprio arquivo de dono, pelo nome, e o
+# lockdir so se ficar vazio. Quem perdeu o lock por prazo (outro o quebrou e
+# entrou) nao acha mais o proprio arquivo, e o `rm -d` falha no lockdir do
+# sucessor. Ate 2026-09-30 o release conferia o pid do `owner` e depois fazia
+# `rm -rf` no nome, e uma quebra entre as duas coisas custava o lock do outro.
 release_state_lock() {
-  if [[ -f "$STATE_LOCK_OWNER_FILE" ]]; then
-    local owner_pid=""
-    read -r owner_pid _ < "$STATE_LOCK_OWNER_FILE" 2>/dev/null
-    if [[ -n "$owner_pid" && "$owner_pid" != "$$" ]]; then
-      return 0
-    fi
-  fi
-  rm -rf "$STATE_LOCK_DIR" 2>/dev/null || true
+  [[ -n "$STATE_LOCK_OWNER_FILE" ]] || return 0
+  rm -df "$STATE_LOCK_OWNER_FILE" "$STATE_LOCK_DIR" 2>/dev/null || true
+  STATE_LOCK_OWNER_FILE=""
 }
 
 # Entry-point CLI para uso em testes:
 #   bash state-lock.sh acquire           -> 0 se conseguiu, 1 se timeout
-#   bash state-lock.sh release           -> sempre 0
+#   bash state-lock.sh release           -> sempre 0 (so solta o que o proprio
+#                                           processo adquiriu: no CLI, nada)
 #   bash state-lock.sh is-locked         -> 0 se locked, 1 se livre
 #   bash state-lock.sh age-secs          -> idade em segundos (-1 se nao existe)
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

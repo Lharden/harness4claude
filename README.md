@@ -324,15 +324,20 @@ Design choices:
 - **Fail-closed**: on lock timeout (5s default), the hook exits silently
   rather than classifying with stale data. Worst case: the user loses one
   pipeline turn. Best case: zero state corruption.
-- **Owner-aware**: `release_state_lock` only removes the lockdir if the
-  current PID matches the owner recorded in `state.json.lockdir/owner`.
-  Prevents one process from accidentally releasing another's lock.
+- **Owner-aware**: each holder writes an owner file with a unique name
+  (`state.json.lockdir/owner.<pid>.<ms>.<random>`) and keeps the lock only
+  if it is the sole owner in the lockdir. Nothing is removed by the lockdir
+  name alone: release and stale-breaking delete only the entries they saw,
+  by name, and the lockdir itself with `rm -d`, which fails unless it is
+  empty. A waiter that judged an old lockdir stale cannot delete a lock
+  taken after that check, and a holder that lost its lock to the stale
+  timeout cannot delete its successor's.
 
 CLI for manual use and testing:
 
 ```bash
 bash scripts/state-lock.sh acquire   # exit 0 on success, 1 on timeout
-bash scripts/state-lock.sh release
+bash scripts/state-lock.sh release   # releases only what this same process acquired
 bash scripts/state-lock.sh is-locked # exit 0 if locked, 1 if free
 bash scripts/state-lock.sh age-secs  # mtime age of the lockdir
 ```
