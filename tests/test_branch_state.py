@@ -1068,8 +1068,9 @@ class _Pontos:
       com a idade na mao e ainda nao agiu.
 
     `eventos` guarda, em ordem, cada `mkdir` do lockdir (se deu certo), cada
-    chamada destrutiva com a foto do lockdir logo depois dela, e a volta de
-    cada pausa.
+    chamada destrutiva com a foto do lockdir logo depois dela, e os marcos: a
+    volta de cada pausa e o `armar()` de quem vai soltar o lock. O que o teste
+    julga e o que veio depois do primeiro marco.
     """
 
     def __init__(self, palco: _Palco, nome: str, *, pausa_destrutiva: bool = False,
@@ -1092,7 +1093,12 @@ class _Pontos:
         self._pausas.add(qual)
         self.palco.marca(f"{self.nome}_{avisa}")
         self.palco.espera_marca(f"{self.nome}_{espera}")
-        self._registra(("retomou", qual))
+        self._registra(("marco", f"retomou {qual}"))
+
+    def armar(self) -> None:
+        """Chamado pela propria thread logo antes de soltar o lock."""
+        self.armada = True
+        self._registra(("marco", "armou"))
 
     def chamada(self, nome, real, alvo, args, kwargs):
         if nome == "stat":
@@ -1120,20 +1126,20 @@ class _Pontos:
         finally:
             self._registra(("destrutiva", chamada, self.palco.foto()))
 
-    def _depois_da_pausa(self) -> list[tuple]:
+    def _depois_do_marco(self) -> list[tuple]:
         with self.palco.cv:
             eventos = list(self.eventos)
         for i, evento in enumerate(eventos):
-            if evento[0] == "retomou":
+            if evento[0] == "marco":
                 return eventos[i + 1:]
         return []
 
-    def destrutivas_depois_da_pausa(self) -> list[tuple[str, list[str] | None]]:
-        return [(ev[1], ev[2]) for ev in self._depois_da_pausa() if ev[0] == "destrutiva"]
+    def destrutivas_depois_do_marco(self) -> list[tuple[str, list[str] | None]]:
+        return [(ev[1], ev[2]) for ev in self._depois_do_marco() if ev[0] == "destrutiva"]
 
-    def mkdir_depois_da_pausa(self) -> bool | None:
-        """Se o primeiro `mkdir` do lockdir tentado depois da pausa deu certo; None se nao houve."""
-        return next((ev[1] for ev in self._depois_da_pausa() if ev[0] == "mkdir"), None)
+    def mkdir_depois_do_marco(self) -> bool | None:
+        """Se o primeiro `mkdir` do lockdir tentado depois do marco deu certo; None se nao houve."""
+        return next((ev[1] for ev in self._depois_do_marco() if ev[0] == "mkdir"), None)
 
 
 class TestCorridaDaQuebraDeStale:
@@ -1189,14 +1195,14 @@ class TestCorridaDaQuebraDeStale:
                 palco.marca(f"{nome}_segura")
                 palco.espera_marca(f"{nome}_solta")
                 if pontos is not None:
-                    pontos.armada = True
+                    pontos.armar()
         return corpo
 
     @staticmethod
     def _lock_intacto(quem: str, pontos: _Pontos, dono: str, do_dono: list[str] | None) -> None:
-        """Nenhuma chamada destrutiva de `quem` depois da pausa mexeu no lock de `dono`."""
+        """Nenhuma chamada destrutiva de `quem` depois do marco mexeu no lock de `dono`."""
         assert do_dono is not None, f"{dono} avisou que segura o lock e o lockdir nao existe"
-        for chamada, foto in pontos.destrutivas_depois_da_pausa():
+        for chamada, foto in pontos.destrutivas_depois_do_marco():
             assert foto is not None and set(do_dono) <= set(foto), (
                 f"o lock de {dono} sumiu: {chamada} de {quem} deixou o lockdir "
                 f"{'ausente' if foto is None else foto}; {dono} tinha {do_dono}"
@@ -1220,10 +1226,10 @@ class TestCorridaDaQuebraDeStale:
             do_w3 = palco.foto()
             # W2 segue com a remocao que decidiu antes.
             palco.marca("w2_segue")
-            palco.espera(lambda: w2.mkdir_depois_da_pausa() is not None, "W2 tentar o lock de novo")
+            palco.espera(lambda: w2.mkdir_depois_do_marco() is not None, "W2 tentar o lock de novo")
 
             self._lock_intacto("W2", w2, "W3", do_w3)
-            assert w2.mkdir_depois_da_pausa() is False, "W2 pegou o lock com W3 ainda dentro"
+            assert w2.mkdir_depois_do_marco() is False, "W2 pegou o lock com W3 ainda dentro"
         finally:
             palco.encerra()
         palco.confere()
@@ -1248,10 +1254,10 @@ class TestCorridaDaQuebraDeStale:
             palco.espera_marca("w3_segura")
             do_w3 = palco.foto()
             palco.marca("w2_segue_stat")
-            palco.espera(lambda: w2.mkdir_depois_da_pausa() is not None, "W2 tentar o lock de novo")
+            palco.espera(lambda: w2.mkdir_depois_do_marco() is not None, "W2 tentar o lock de novo")
 
             self._lock_intacto("W2", w2, "W3", do_w3)
-            assert w2.mkdir_depois_da_pausa() is False, "W2 pegou o lock com W3 ainda dentro"
+            assert w2.mkdir_depois_do_marco() is False, "W2 pegou o lock com W3 ainda dentro"
         finally:
             palco.encerra()
         palco.confere()
@@ -1273,19 +1279,19 @@ class TestCorridaDaQuebraDeStale:
             palco.espera_marca("a_criou")
             # A remocao atrasada de W2 chega no lockdir recem-nascido de A.
             palco.marca("w2_segue")
-            palco.espera(lambda: w2.destrutivas_depois_da_pausa(), "a remocao atrasada de W2")
+            palco.espera(lambda: w2.destrutivas_depois_do_marco(), "a remocao atrasada de W2")
             # B pega o lock e fica com ele.
             palco.participante("b", self._segura(palco, bs, alvo, "b"))
             palco.espera_marca("b_segura")
             # A volta e grava o dono: no lockdir de B.
             palco.marca("a_segue_mkdir")
             palco.espera(
-                lambda: "a_entrou" in palco.marcas or a.mkdir_depois_da_pausa() is not None,
+                lambda: "a_entrou" in palco.marcas or a.mkdir_depois_do_marco() is not None,
                 "A entrar ou tentar o lock de novo",
             )
 
             assert "a_entrou" not in palco.marcas, "A e B ficaram os dois com o lock"
-            assert a.mkdir_depois_da_pausa() is False, "A pegou o lock com B ainda dentro"
+            assert a.mkdir_depois_do_marco() is False, "A pegou o lock com B ainda dentro"
         finally:
             palco.encerra()
         palco.confere()
@@ -1316,7 +1322,41 @@ class TestCorridaDaQuebraDeStale:
         palco.confere()
 
     def test_dono_que_perdeu_o_lock_por_prazo_nao_remove_o_do_sucessor(self, bs, tmp_path, monkeypatch):
-        """O dono passou do prazo e outro quebrou o lock; o release atrasado do primeiro nao apaga o do segundo."""
+        """O dono passou do prazo, outro quebrou e pegou o lock, e so entao o primeiro solta.
+
+        E o caso comum do dono vencido: ele ainda estava trabalhando. O release
+        inteiro roda com o lock do sucessor no lugar, e quem apaga o que acha no
+        lockdir, em vez do que e seu, apaga o dono do sucessor.
+        """
+        alvo = self._alvo(bs, tmp_path, monkeypatch)
+        lockdir = Path(alvo + ".lockdir")
+        palco = _Palco(monkeypatch, lockdir)
+        h = _Pontos(palco, "h", armada=False)
+        try:
+            palco.participante("h", self._segura(palco, bs, alvo, "h", h), h)
+            palco.espera_marca("h_segura")
+            # H passou do prazo e continua trabalhando: o lock dele e stale para quem espera.
+            velho = time.time() - 3600
+            os.utime(lockdir, (velho, velho))
+            # W quebra o lock vencido de H e fica com ele.
+            palco.participante("w", self._segura(palco, bs, alvo, "w"))
+            palco.espera_marca("w_segura")
+            do_w = palco.foto()
+            # H termina e solta, com o lock de W no lugar.
+            palco.marca("h_solta")
+            palco.espera_marca("h_saiu")
+
+            self._lock_intacto("H", h, "W", do_w)
+        finally:
+            palco.encerra()
+        palco.confere()
+
+    def test_release_que_comecou_antes_da_quebra_nao_remove_o_lock_do_sucessor(self, bs, tmp_path, monkeypatch):
+        """O release de H comeca com o lock ainda dele e para antes de remover; W quebra e pega; H segue.
+
+        E o formato do release que confere o dono e depois remove pelo nome: a
+        conferencia vale para o lock de H, a remocao cai no de W.
+        """
         alvo = self._alvo(bs, tmp_path, monkeypatch)
         lockdir = Path(alvo + ".lockdir")
         palco = _Palco(monkeypatch, lockdir)
