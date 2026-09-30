@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from branch_state import LockUnavailable, _Lock  # type: ignore[import-not-found]
 from migrate_state import (  # type: ignore[import-not-found]
     load_json,
     recompute_aggregates,
@@ -227,29 +228,39 @@ def _registro(
 
 
 def record(harness_dir: Path, task: dict) -> dict:
-    """Acrescenta/atualiza a task em signals.json (idempotente) e recalcula aggregates."""
+    """Acrescenta/atualiza a task em signals.json (idempotente) e recalcula aggregates.
+
+    Levanta `LockUnavailable` se o lock nao vier: gravar sem ele apagaria o que
+    o dono do lock estiver gravando.
+    """
     signals_path = harness_dir / "signals.json"
-    signals = load_json(signals_path) or {
-        "version": 3,
-        "harness_version": "v3",
-        "tasks": [],
-        "aggregates": {},
-    }
-    tasks = [t for t in signals.get("tasks", []) if t.get("task_id") != task["task_id"]]
-    tasks.append(task)
-    signals["version"] = 3
-    signals["harness_version"] = "v3"
-    signals["tasks"] = tasks
-    signals["aggregates"] = recompute_aggregates(tasks, signals.get("aggregates"))
-    # Escrita atomica: tmp -> flush+fsync -> os.replace. Evita signals.json
-    # corrompido se o processo morrer no meio do dump (consistente com a escrita
-    # de state.json em harness-classify.sh). os.replace e rename atomico.
-    tmp = signals_path.parent / f"{signals_path.name}.tmp-{os.getpid()}"
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(signals, fh, indent=2, ensure_ascii=False)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, signals_path)
+    # O mesmo `_Lock` de `branch_state.signal` e `migrate_state.run`: os tres
+    # reescrevem o documento inteiro, e ate 2026-09-30 so `signal` o tomava.
+    # Lock que um so escritor respeita nao exclui ninguem — a task gravada aqui,
+    # ou o contador de `branch` gravado la, sumia sem erro
+    # (tests/test_signals_escritores.py).
+    with _Lock(str(signals_path), required=True):
+        signals = load_json(signals_path) or {
+            "version": 3,
+            "harness_version": "v3",
+            "tasks": [],
+            "aggregates": {},
+        }
+        tasks = [t for t in signals.get("tasks", []) if t.get("task_id") != task["task_id"]]
+        tasks.append(task)
+        signals["version"] = 3
+        signals["harness_version"] = "v3"
+        signals["tasks"] = tasks
+        signals["aggregates"] = recompute_aggregates(tasks, signals.get("aggregates"))
+        # Escrita atomica: tmp -> flush+fsync -> os.replace. Evita signals.json
+        # corrompido se o processo morrer no meio do dump (consistente com a escrita
+        # de state.json em harness-classify.sh). os.replace e rename atomico.
+        tmp = signals_path.parent / f"{signals_path.name}.tmp-{os.getpid()}"
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(signals, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, signals_path)
     return signals
 
 
@@ -412,7 +423,11 @@ def main() -> int:
         # Fora do banco nao ha o que encerrar nele: `abandon_task` levantaria
         # "task not found" depois de a telemetria ja ter sido gravada.
         banco = None
-    signals = record(args.signals_dir or args.harness_dir, task)
+    try:
+        signals = record(args.signals_dir or args.harness_dir, task)
+    except LockUnavailable as exc:
+        logger.error("nada registrado em signals.json: %s. Rode de novo.", exc)
+        return 1
     if args.abandoned and banco is not None and expect:
         # O abandono tem de chegar a autoridade: a continuacao pergunta ao banco,
         # e uma task abandonada so na telemetria voltava como CONTINUING no
