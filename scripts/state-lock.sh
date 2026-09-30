@@ -26,8 +26,25 @@
 STATE_LOCK_DIR="$HARNESS_DIR/state.json.lockdir"
 STATE_LOCK_OWNER_FILE="$STATE_LOCK_DIR/owner"
 
-_state_lock_now_secs() {
-  date +%s
+# Relogio sem fork. No Git Bash do Windows cada `$(...)` custa 0,1-0,3s (medido:
+# `$(date)` 0,28s, `$(:)` 0,13s, builtin ~0), e o laco de aquisicao forkava ~9
+# vezes por volta: com N waiters a maquina entope, o holder e o handoff atrasam e
+# o timeout estoura sem defeito de exclusao mutua. Por isso o laco so forka o
+# que nao tem builtin (`mkdir`, `sleep`) e a checagem de stale (`stat`) roda no
+# maximo 1x por segundo.
+#
+# Escreve em `_STATE_LOCK_NOW_MS` (milissegundos desde a epoca). Ordem:
+# $EPOCHREALTIME (bash >= 5), printf %()T (bash >= 4.2, resolucao de 1s),
+# `date` (bash antigo; unico caso que forka).
+_state_lock_tick() {
+  if [[ -n "${EPOCHREALTIME:-}" ]]; then
+    local us="${EPOCHREALTIME/[.,]/}"
+    _STATE_LOCK_NOW_MS=$(( 10#$us / 1000 ))
+  elif printf -v _STATE_LOCK_NOW_MS '%(%s)T' -1 2>/dev/null; then
+    _STATE_LOCK_NOW_MS=$(( _STATE_LOCK_NOW_MS * 1000 ))
+  else
+    _STATE_LOCK_NOW_MS=$(( $(date +%s) * 1000 ))
+  fi
 }
 
 _state_lock_dir_age_secs() {
@@ -45,7 +62,8 @@ _state_lock_dir_age_secs() {
     echo "-1"
     return
   fi
-  echo $(( $(_state_lock_now_secs) - mtime ))
+  _state_lock_tick
+  echo $(( _STATE_LOCK_NOW_MS / 1000 - mtime ))
 }
 
 _state_lock_remove_if_stale() {
@@ -59,18 +77,27 @@ _state_lock_remove_if_stale() {
 }
 
 acquire_state_lock() {
-  mkdir -p "$HARNESS_DIR" 2>/dev/null
-  local deadline
-  deadline=$(( $(_state_lock_now_secs) + STATE_LOCK_TIMEOUT_SECS ))
-  local poll_secs="0.${STATE_LOCK_POLL_MS}"
+  [[ -d "$HARNESS_DIR" ]] || mkdir -p "$HARNESS_DIR" 2>/dev/null
+  _state_lock_tick
+  local deadline_ms=$(( _STATE_LOCK_NOW_MS + STATE_LOCK_TIMEOUT_SECS * 1000 ))
+  local next_stale_check_ms=0
+  # ms -> segundos decimais. "0.${MS}" lia 50 como 0.50 s e 5 como 0.5 s.
+  local poll_secs
+  printf -v poll_secs '%d.%03d' $(( STATE_LOCK_POLL_MS / 1000 )) $(( STATE_LOCK_POLL_MS % 1000 ))
 
   while true; do
     if mkdir "$STATE_LOCK_DIR" 2>/dev/null; then
-      printf '%s %s\n' "$$" "$(_state_lock_now_secs)" > "$STATE_LOCK_OWNER_FILE" 2>/dev/null
+      _state_lock_tick
+      printf '%s %s\n' "$$" "$(( _STATE_LOCK_NOW_MS / 1000 ))" > "$STATE_LOCK_OWNER_FILE" 2>/dev/null
       return 0
     fi
-    _state_lock_remove_if_stale && continue
-    if [[ "$(_state_lock_now_secs)" -ge "$deadline" ]]; then
+    _state_lock_tick
+    if (( _STATE_LOCK_NOW_MS >= next_stale_check_ms )); then
+      next_stale_check_ms=$(( _STATE_LOCK_NOW_MS + 1000 ))
+      _state_lock_remove_if_stale && continue
+      _state_lock_tick
+    fi
+    if (( _STATE_LOCK_NOW_MS >= deadline_ms )); then
       return 1
     fi
     sleep "$poll_secs" 2>/dev/null || sleep 1
@@ -79,8 +106,8 @@ acquire_state_lock() {
 
 release_state_lock() {
   if [[ -f "$STATE_LOCK_OWNER_FILE" ]]; then
-    local owner_pid
-    owner_pid=$(awk 'NR==1{print $1}' "$STATE_LOCK_OWNER_FILE" 2>/dev/null)
+    local owner_pid=""
+    read -r owner_pid _ < "$STATE_LOCK_OWNER_FILE" 2>/dev/null
     if [[ -n "$owner_pid" && "$owner_pid" != "$$" ]]; then
       return 0
     fi
