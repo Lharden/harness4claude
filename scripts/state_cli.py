@@ -59,15 +59,16 @@ def _sync(home: Path, db: HarnessDatabase, task: dict) -> None:
     )
     if dona is not None:
         # A operacao valeu no banco; so a projecao ficou com quem e dono dela.
-        # Dito aqui porque o `record_signal --expect-task` desta task vai recusar
-        # em seguida, e o remedio antigo para essa recusa — restaurar o
-        # state.json a mao — agora seria roubar a projecao da task viva. ASCII de
-        # proposito: no Windows o stderr sai em cp1252 e o travessao vira 0x97.
+        # Dito aqui porque o remedio antigo — restaurar o state.json a mao para
+        # o `record_signal` aceitar — agora seria roubar a projecao da task viva.
+        # Desde 2026-09-30 o `record_signal --expect-task` le a task do banco pelo
+        # id e nao precisa da projecao. ASCII de proposito: no Windows o stderr
+        # sai em cp1252 e o travessao vira 0x97.
         print(
             f"aviso: state.json segue com a task {dona}; a operacao em "
             f"{task['task_id']} ficou so no harness.db. Nao edite o state.json a mao: "
-            f"record_signal --expect-task {task['task_id']} vai recusar, e o desfecho "
-            f"dela ja esta no banco.",
+            f"record_signal --expect-task {task['task_id']} registra esta task pelo "
+            f"banco.",
             file=sys.stderr,
         )
 

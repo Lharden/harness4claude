@@ -500,8 +500,9 @@ class TestProjecaoDeUmaTaskSo:
     def test_task_substituida_nao_rouba_a_projecao_da_viva(self, tmp_path, por):
         """B2/B2b. Com trabalho novo vivo — entregue ou nao —, a projecao e dele:
         o PostToolUse acha a task pelo `task_id` daqui, e desvia-lo manda toque e
-        prova para a entrega morta. E o DONE da substituida recusa em vez de
-        gravar o meta da viva."""
+        prova para a entrega morta. E o DONE da substituida registra a propria
+        task, com o meta dela, lido do banco pelo id — sem tocar a projecao da
+        viva (`docs/specs/sinal-da-task-substituida-diagnostico.md`)."""
         a, projecao_b = _entrega_substituida(tmp_path, por=por)
 
         res = _evidence(tmp_path, a["task_id"])
@@ -509,9 +510,17 @@ class TestProjecaoDeUmaTaskSo:
         assert res.returncode == 0, res.stdout + res.stderr
         assert _ler(tmp_path) == projecao_b
         assert projecao_b["task_id"] in res.stderr, "o aviso tem de nomear a dona da projecao"
+        viva_antes = HarnessDatabase(tmp_path).task(projecao_b["task_id"])
         res = _record_signal(tmp_path, tmp_path / "sinais", a["task_id"])
-        assert res.returncode == 2, res.stdout + res.stderr
-        assert not (tmp_path / "sinais" / "signals.json").exists(), "nada pode ser gravado"
+        assert res.returncode == 0, res.stdout + res.stderr
+        [gravada] = json.loads((tmp_path / "sinais" / "signals.json").read_text(encoding="utf-8"))["tasks"]
+        db = HarnessDatabase(tmp_path)
+        assert gravada["task_id"] == a["task_id"]
+        assert gravada["classification_meta"] == db.classification(a["task_id"]), \
+            "o sinal da substituida tem de levar o meta dela, nao o da viva"
+        assert gravada["classification"] == db.task(a["task_id"])["legacy_level"]
+        assert _ler(tmp_path) == projecao_b, "o registro nao pode escrever na projecao da viva"
+        assert db.task(projecao_b["task_id"]) == viva_antes, "a viva nao pode mudar"
 
     def test_troca_de_task_durante_a_decisao_nao_e_sobrescrita(self, tmp_path):
         """B6. Entre ler a projecao e grava-la, outro escritor pos uma terceira
