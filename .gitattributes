@@ -15,3 +15,8 @@
 # `tools/orfaos.py` existe para acusar, so que numa capacidade, nao numa funcao.
 *.js   text eol=lf
 *.cjs  text eol=lf
+# Insumo real gravado pelo host (arquivo de saida de job em segundo plano e
+# linhas de transcript). O teste confere o sha256 do arquivo e os numeros que
+# a funcao de producao tira dele: com `core.autocrlf=true` um clone no Windows
+# ganharia CRLF e deixaria de ser o insumo medido. Byte a byte, sem conversao.
+tests/fixtures/evidencia_em_segundo_plano/** -text
