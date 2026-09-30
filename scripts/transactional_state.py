@@ -445,7 +445,7 @@ class HarnessDatabase:
                     status,
                     json.dumps(pipeline),
                     0 if pipeline else -1,
-                    hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                    hashlib.sha256(prompt.encode("utf-8", "surrogatepass")).hexdigest(),
                     now,
                     now,
                 ),

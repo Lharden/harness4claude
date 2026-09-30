@@ -195,7 +195,7 @@ def _slug(raiz: str) -> str:
     """
     base = os.path.basename(raiz.rstrip("/\\")) or "root"
     base = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-") or "root"
-    digest = hashlib.sha256(os.path.normcase(raiz).encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha256(os.path.normcase(raiz).encode("utf-8", "surrogatepass")).hexdigest()[:8]
     return f"{base[:40]}-{digest}"
 
 
@@ -303,7 +303,7 @@ def de_sessao(host: str, session_id: str | None) -> str | None:
     if not limpo:
         return None
     legivel = re.sub(r"[^A-Za-z0-9._-]+", "-", limpo).strip("-._") or "session"
-    digest = hashlib.sha256(limpo.encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha256(limpo.encode("utf-8", "surrogatepass")).hexdigest()[:8]
     return f"{host}:{legivel[:40]}-{digest}"
 
 

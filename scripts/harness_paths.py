@@ -158,7 +158,7 @@ def session_slug(session_id: str | None) -> str | None:
     if not cleaned:
         return None
     readable = re.sub(r"[^A-Za-z0-9._-]+", "-", cleaned).strip("-._") or "session"
-    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha256(cleaned.encode("utf-8", "surrogatepass")).hexdigest()[:8]
     return f"{readable[:40]}-{digest}"
 
 
