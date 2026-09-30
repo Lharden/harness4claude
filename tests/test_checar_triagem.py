@@ -422,6 +422,30 @@ def test_dado_real_da_rodada_1_com_a_triagem_medida_sai_0(tmp_path):
     assert "wf_6bd9e71a-c4f #19" in texto
 
 
+# ------------------------------------------------------- AC-2.16: skill ----
+
+SKILL = ROOT / "skills" / "harness-workflow" / "SKILL.md"
+
+
+def test_skill_manda_copiar_a_saida_e_rodar_o_checador():
+    """O checador so vale se a fase de verify mandar roda-lo. E essa linha, com o
+    caminho `scripts/checar_triagem.py`, que `tools/orfaos.py` le como raiz."""
+    texto = SKILL.read_text(encoding="utf-8")
+    assert (
+        'python "<PLUGIN_ROOT>/scripts/checar_triagem.py" --plano "docs/closure-plan.md" --saidas "<STATE_DIR>/verify"'
+        in texto
+    )
+    assert "<STATE_DIR>/verify/<run id>.json" in texto
+    assert "## Destino dos achados não adjudicados" in texto
+    assert "repo_root" in texto
+
+
+def test_skill_nao_manda_mais_para_done_so_com_pass_de_critico_alto():
+    """A linha que levou tres rodadas verdes com defeito real a DONE."""
+    texto = SKILL.read_text(encoding="utf-8")
+    assert "Se `pass: true` (sem findings critical/high)" not in texto
+
+
 # ------------------------------------------------------------------ CLI ----
 
 
