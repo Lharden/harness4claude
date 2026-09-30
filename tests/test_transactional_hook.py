@@ -419,10 +419,12 @@ def test_atomic_prefix_nao_corta_dentro_de_aspas():
 
 
 def test_aviso_de_background_quando_nao_ha_casos(tmp_path: Path):
-    """Background nao tem composicao: passa no gate e grava evidencia inutil.
+    """Background nao tem composicao: passa por `is_trusted_verification`.
 
-    O PostToolUse chega antes de existir saida, entao `tests_collected` e None e
-    a evidencia nao verifica. Foi o que custou dois runs de ~7 min em 2026-09-02.
+    O PostToolUse chega antes de existir saida. Ate 2026-09-30 isso gravava uma
+    evidencia com `tests_collected` None, que nao verifica; o silencio custou
+    dois runs de ~7 min em 2026-09-02. Hoje nao grava nada e avisa por que
+    (`test_portao_em_voo.py::test_suite_lancada_em_background_nao_grava_evidencia`).
     """
     cwd = tmp_path / "repo"
     cwd.mkdir()

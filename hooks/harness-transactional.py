@@ -23,6 +23,7 @@ CLI_DE_ESTADO = (SCRIPTS / "state_cli.py").as_posix()
 from harness_paths import ensure_state_dir, find_repo_root  # type: ignore[import-not-found]
 from post_tool_policy import inside_root  # type: ignore[import-not-found]
 from projecao import gravar_json_atomico  # type: ignore[import-not-found]
+from trabalho_em_voo import jobs_em_voo  # type: ignore[import-not-found]
 from transactional_state import (  # type: ignore[import-not-found]
     HarnessDatabase,
     StateTransitionError,
@@ -199,14 +200,34 @@ AVISO_COMPOSICAO = (
     "pode fabricar saida de teste. Para que conte, rode sozinho: {sugestao}"
 )
 
-#: Background nao tem composicao nenhuma, entao passa por `is_trusted_verification`
-#: — mas o PostToolUse chega antes de existir saida, e evidencia sem caso
-#: coletado nao verifica (contrato Harness4Contract v1). O silencio aqui custou
-#: dois runs de ~7 min repetidos em 2026-09-02.
+#: Evidencia sem caso coletado nao verifica (contrato Harness4Contract v1). O
+#: silencio aqui custou dois runs de ~7 min repetidos em 2026-09-02. A causa
+#: daquele dia — suite em background, PostToolUse antes de existir saida — tem
+#: aviso proprio desde 2026-09-30 (`AVISO_SEGUNDO_PLANO`); o que sobra aqui e
+#: saida em primeiro plano sem contagem que o hook reconheca.
 AVISO_SEM_CASOS = (
     "[harness] evidencia de teste gravada SEM casos coletados, entao nao "
-    "verifica. Causa provavel: o comando rodou em background e a saida ainda "
-    "nao existia. Rode em primeiro plano para que conte."
+    "verifica: a saida nao trazia contagem de testes que o hook reconheca."
+)
+
+#: Lancar a suite em segundo plano nao e resultado. Ate 2026-09-30 o PostToolUse
+#: do lancamento passava por `is_trusted_verification` e gravava uma linha com
+#: `tests_collected=NULL` — que nunca verificou nada (a regua exige
+#: `tests_collected > 0`) e so enchia `evidence`. Caso real: balde `037312e7`,
+#: suite de ~21 min empurrada para o fundo pelo timeout de 10 min da ferramenta.
+#: Ver `docs/specs/portao-stop-em-voo-diagnostico.md`.
+AVISO_SEGUNDO_PLANO = (
+    "[harness] a suite foi para segundo plano (background, job {job}): o "
+    "lancamento NAO e resultado, e nenhuma evidencia foi gravada. Enquanto o job "
+    "roda, o Stop nao cobra continuacao. Quando ele terminar, leia a saida e, se "
+    "nenhum arquivo mudou desde o lancamento, registre a evidencia:\n{comando}"
+)
+
+#: As duas formas de texto com que o host anuncia um job em segundo plano: o
+#: pedido (`run_in_background`) e o empurrado pelo timeout da ferramenta.
+_ANUNCIO_DE_SEGUNDO_PLANO = re.compile(
+    r"running in background with ID:\s*([A-Za-z0-9_-]+)"
+    r"|moved to the background \(ID:\s*([A-Za-z0-9_-]+)\)"
 )
 
 
@@ -1321,7 +1342,12 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
                 origem="shell" if alvos else "shell-placeholder",
             )
     aviso = ""
-    if is_trusted_verification(command):
+    job = _job_em_segundo_plano(payload) if is_trusted_verification(command) else None
+    if job:
+        aviso = AVISO_SEGUNDO_PLANO.format(
+            job=job, comando=comando_de_evidencia(bucket, task["task_id"], task.get("kind"))
+        )
+    elif is_trusted_verification(command):
         collected, passed, skipped, output_hash = _test_counts(payload)
         task = database.record_evidence(
             task["task_id"],
@@ -1341,6 +1367,39 @@ def _handle_post_tool(payload: dict[str, Any], context) -> str:
     return aviso
 
 
+def _job_em_segundo_plano(payload: dict[str, Any]) -> str | None:
+    """O id do job, se esta resposta e o LANCAMENTO de um comando em segundo plano.
+
+    O `tool_response` do hook e o mesmo objeto que o transcript grava em
+    `toolUseResult` (sha256 igual, medido no diagnostico), com
+    `backgroundTaskId` tanto no pedido quanto no empurrado por timeout. O texto
+    fica como segunda via para resposta que chegue so como string.
+    """
+    resposta = _response(payload)
+    if isinstance(resposta, dict) and isinstance(resposta.get("backgroundTaskId"), str):
+        return resposta["backgroundTaskId"]
+    anuncio = _ANUNCIO_DE_SEGUNDO_PLANO.search(_response_text(payload))
+    if anuncio:
+        return anuncio.group(1) or anuncio.group(2)
+    return None
+
+
+def _jobs_em_voo(payload: dict[str, Any], task: dict[str, Any]) -> list[dict[str, str]]:
+    """Jobs desta task ainda rodando, lidos do transcript do Stop.
+
+    Qualquer falha devolve lista vazia, que e cobrar como antes. Deixar a
+    excecao subir derrubaria o hook, e o host trata hook que morre como erro
+    nao bloqueante: o Stop passaria sem portao nenhum.
+    """
+    try:
+        return jobs_em_voo(
+            payload.get("transcript_path") or payload.get("transcriptPath"),
+            desde=task.get("started_at"),
+        )
+    except Exception:
+        return []
+
+
 def _handle_stop(payload: dict[str, Any], context) -> str:
     if payload.get("stop_hook_active") or payload.get("stopHookActive"):
         return ""
@@ -1352,9 +1411,15 @@ def _handle_stop(payload: dict[str, Any], context) -> str:
     # banco nao podem discordar sobre quando ha continuacao a contar.
     if not cobra_evidencia_nesta_fase(task.get("kind"), task["pipeline"], task["phase"]):
         return ""
-    task = database.register_stop_continuation(task["task_id"], limit=2)
+    # Com job desta task em voo o fim de turno e espera, nao tentativa de
+    # encerrar: o Stop bloqueia igual, mas nao conta para a escalada. Quem
+    # decide contar e o banco; o hook so entrega a lista.
+    em_voo = _jobs_em_voo(payload, task)
+    task = database.register_stop_continuation(
+        task["task_id"], limit=2, em_voo=[job["id"] for job in em_voo]
+    )
     _sync_projection(bucket, projection, task)
-    reason = _motivo_do_gate(bucket, database, task)
+    reason = _motivo_do_gate(bucket, database, task, em_voo)
     return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
 
 
@@ -1452,7 +1517,9 @@ def comando_de_evidencia(bucket: Path, task_id: str, kind: str | None = None) ->
     )
 
 
-def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
+def _motivo_do_gate(
+    bucket: Path, database, task: dict[str, Any], em_voo: list[dict[str, str]] | tuple = ()
+) -> str:
     """A mensagem do bloqueio, dizendo o que o portao LEU.
 
     Ate 2026-09-16 ela nao citava `task_id`, nem o balde, nem o comando que
@@ -1466,6 +1533,11 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
     sabia pedir teste, e mandou uma task de docs, numa pasta sem suite, anexar
     "evidencia de teste fresca" tres vezes — a sessao acabou escrevendo 127
     testes sobre o proprio texto.
+
+    Com job em voo (`em_voo`), a mensagem abre dizendo que este Stop NAO foi
+    cobrado e por qual job. E toda leitura, escalada incluida, traz
+    `stops_nao_cobrados=N` quando houver algum: a suspensao nao tem teto
+    numerico (D3), entao tem de estar a vista de quem le o bloqueio.
     """
     tipo = tipo_de_evidencia(task.get("kind"))
     contagem = _conta_evidencia(database, task["task_id"], task["code_revision"], tipo)
@@ -1479,6 +1551,9 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
         f"task_id={task['task_id']} | balde={bucket} | fase={fase} ({posicao}) | "
         f"code_revision={task['code_revision']} | verified={task['verified']} | {contagem}"
     )
+    nao_cobrados = database.stops_nao_cobrados(task["task_id"])
+    if nao_cobrados:
+        leitura = f"{leitura} | stops_nao_cobrados={nao_cobrados}"
     toques = _ultimos_toques(database, task["task_id"])
     if toques:
         leitura = f"{leitura}\n{toques}"
@@ -1499,8 +1574,16 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
             "Leve ao usuario o bloqueio concreto e esta leitura — nao reformule o "
             "diagnostico sem antes conferir os numeros acima."
         )
+    cabecalho = ""
+    if em_voo:
+        jobs = ", ".join(f"{job['id']} ({job['tipo']})" for job in em_voo)
+        cabecalho = (
+            f"HARNESS v3: este Stop NAO foi cobrado — job(s) desta task em voo: {jobs}. "
+            "O host reinvoca o modelo quando terminarem; se voce so esta esperando, "
+            "encerre o turno. A evidencia continua exigida antes da resposta final.\n"
+        )
     if tipo == "docs":
-        return (
+        return cabecalho + (
             "HARNESS v3 verification gate (docs): esta e a fase final do pipeline de "
             "docs; registre a verificacao da doc antes da resposta final.\n"
             f"O que o portao leu: {leitura}\n"
@@ -1514,7 +1597,7 @@ def _motivo_do_gate(bucket: Path, database, task: dict[str, Any]) -> str:
             f"{comando}\n"
             f"{AVISO_LINHA_SOZINHA}"
         )
-    return (
+    return cabecalho + (
         "HARNESS v3 verification gate: continue o pipeline do harness-workflow e anexe "
         f"evidencia de teste fresca antes da resposta final.\n"
         f"O que o portao leu: {leitura}\n{regua}\n"
