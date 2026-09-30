@@ -29,10 +29,15 @@ def test_revision_evidence_and_scope_invariants(tmp_path: Path):
         task["task_id"], evidence_type="test", command="pytest", exit_code=0,
         tests_collected=3, tests_passed=3, output_hash="out",
     )
+    # CAS na task viva. Na task ja `done` a recusa e o desfecho, que vem antes
+    # da revisao (tests/test_desfecho_terminal.py): la "revision mismatch"
+    # mandaria reler e tentar de novo uma task que nao fecha mais.
+    with pytest.raises(state.StateTransitionError, match="revision"):
+        db.complete(task["task_id"], expected_revision=0)
     done = db.complete(task["task_id"], expected_revision=task["revision"])
 
     assert done["status"] == "done"
-    with pytest.raises(state.StateTransitionError, match="revision"):
+    with pytest.raises(state.StateTransitionError, match="desfecho registrado"):
         db.complete(task["task_id"], expected_revision=0)
 
 
