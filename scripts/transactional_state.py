@@ -26,6 +26,11 @@ HUMAN_GATES = {"approve-spec", "approve-plan", "answer-clarifications", "escalat
 #: entao uma reclassificacao que zera `phase_index` os cancela — preserva-los
 #: travava a entrada na fase que os resolveria. Estes sobrevivem a ela.
 PORTOES_SEM_FASE = frozenset({"escalation", "branch-open"})
+#: O ramo oferecido nao segura o fechamento da task e nao morre com ela
+#: (decisao do usuario, 2026-09-30): `complete` e a reclassificacao para L0 nao
+#: recusam por ele, a migracao nao o cancela, e `resolve_branch_decision` o
+#: resolve com a dona ja terminal.
+PORTAO_QUE_SOBREVIVE_A_DONA = "branch-open"
 #: Onde moram os CLIs que a recusa de `transition` manda rodar. Derivado deste
 #: arquivo, como `CLI_DE_ESTADO` no hook: e o CLI que acompanha o banco que
 #: recusou, nao o que um marcador externo aponta.
@@ -407,12 +412,13 @@ class HarnessDatabase:
         reparos, na ordem em que um depende do outro, um evento por task:
 
         1. portao pendente de task terminal com pipeline -> `cancelled`
-           (`terminal-migration`): a decisao ja nao tem task viva a segurar;
+           (`terminal-migration`): a decisao ja nao tem task viva a segurar.
+           Menos `branch-open`: a oferta de ramo sobrevive a dona
+           (`PORTAO_QUE_SOBREVIVE_A_DONA`) e fica pendente;
         2. task viva sem pipeline -> `done`, o status com que toda L0 nasce;
         3. task viva cujo `status` discorda de `gates` -> o derivado.
 
-        Task L0 `done` com `branch-open` pendente e estado valido (o ramo
-        oferecido numa conversa L0) e fica. SELECT antes, como a migracao de
+        SELECT antes, como a migracao de
         `verified`: so linha a reparar pede UPDATE. Idempotente.
         """
         vivos = ",".join(f"'{s}'" for s in ACTIVE_STATUSES)
@@ -422,13 +428,15 @@ class HarnessDatabase:
 
         portoes_terminais = connection.execute(
             f"SELECT DISTINCT t.task_id, t.scope_id FROM tasks t JOIN gates g ON g.task_id = t.task_id "
-            f"WHERE g.status = 'pending' AND t.status IN ({terminais}) AND t.pipeline_json != '[]'"
+            f"WHERE g.status = 'pending' AND g.gate_type <> ? "
+            f"AND t.status IN ({terminais}) AND t.pipeline_json != '[]'",
+            (PORTAO_QUE_SOBREVIVE_A_DONA,),
         ).fetchall()
         for task in portoes_terminais:
             connection.execute(
                 "UPDATE gates SET status = 'cancelled', decision = 'terminal-migration', resolved_at = ? "
-                "WHERE task_id = ? AND status = 'pending'",
-                (agora, task["task_id"]),
+                "WHERE task_id = ? AND status = 'pending' AND gate_type <> ?",
+                (agora, task["task_id"], PORTAO_QUE_SOBREVIVE_A_DONA),
             )
             eventos.append((task["task_id"], task["scope_id"], "migracao-portao-terminal"))
 
@@ -1078,19 +1086,23 @@ class HarnessDatabase:
         Cancelado, o pipeline novo o reabre ao chegar na fase. Os de
         `PORTOES_SEM_FASE` sao decisao humana que nao depende de fase e ficam.
 
-        Para L0 (pipeline vazio) a task fecha, e fechar por cima de decisao
-        humana em aberto e o que `complete` tambem recusa: recusa antes de
-        qualquer escrita, com a linha que resolve.
+        Para L0 (pipeline vazio) a task fecha, e fechar por cima de um
+        `escalation` em aberto e o que `complete` tambem recusa: recusa antes
+        de qualquer escrita, com a linha que resolve. O ramo oferecido nao
+        segura o fechamento (`PORTAO_QUE_SOBREVIVE_A_DONA`) e fica pendente.
         """
         pendentes = connection.execute(
             "SELECT id, gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
             "ORDER BY id DESC",
             (row["task_id"],),
         ).fetchall()
-        sem_fase = [gate for gate in pendentes if gate["gate_type"] in PORTOES_SEM_FASE]
-        if not pipeline and sem_fase:
+        seguram = [
+            gate for gate in pendentes
+            if gate["gate_type"] in PORTOES_SEM_FASE and gate["gate_type"] != PORTAO_QUE_SOBREVIVE_A_DONA
+        ]
+        if not pipeline and seguram:
             raise StateTransitionError(
-                self._recusa_por_portao(connection, row, sem_fase, operacao="reclassificacao para L0")
+                self._recusa_por_portao(connection, row, seguram, operacao="reclassificacao para L0")
             )
         de_fase = [gate["id"] for gate in pendentes if gate["gate_type"] not in PORTOES_SEM_FASE]
         connection.executemany(
@@ -1671,8 +1683,8 @@ class HarnessDatabase:
             # reais ficaram `done` com `escalation` pendente para sempre.
             pendentes = connection.execute(
                 "SELECT gate_type, subject_id FROM gates WHERE task_id = ? AND status = 'pending' "
-                "ORDER BY id DESC",
-                (task_id,),
+                "AND gate_type <> ? ORDER BY id DESC",
+                (task_id, PORTAO_QUE_SOBREVIVE_A_DONA),
             ).fetchall()
             if pendentes:
                 raise StateTransitionError(

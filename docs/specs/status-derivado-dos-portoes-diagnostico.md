@@ -160,26 +160,34 @@ os quatro status vivos. Nenhum escritor grava `suggested`.
   é o deadlock do caso 4; o pipeline novo reabre os portões dele ao entrar nas
   fases. `escalation` e `branch-open` são preservados e a task fica
   `awaiting_gate`. Tipos misturados: decide-se por linha.
-- **D2 — fechar com portão pendente, recusar.** `complete` recusa com qualquer
-  portão pendente, pela mesma `_recusa_por_portao` de `transition` (que imprime
-  a linha que resolve e é executada pelo teste). Reclassificar para L0
-  (pipeline vazio) com `escalation`/`branch-open` pendente também recusa, antes
-  de qualquer escrita. `confirm_classification.py` já trata a exceção com
-  `erro:` e exit 2 sem gravar `state.json`.
+- **D2 — fechar com portão pendente, recusar — menos pelo ramo.** `complete`
+  recusa com portão pendente, pela mesma `_recusa_por_portao` de `transition`
+  (que imprime a linha que resolve e é executada pelo teste). Reclassificar
+  para L0 (pipeline vazio) com `escalation` pendente também recusa, antes de
+  qualquer escrita. `confirm_classification.py` já trata a exceção com `erro:`
+  e exit 2 sem gravar `state.json`.
+  **Revisão de 2026-09-30, antes do merge:** o usuário decidiu, na sessão
+  "Fazer complete recusar com portão pendente" e confirmado aqui, que
+  `branch-open` **não** segura o fechamento e **não** morre com a task dona
+  (D2 de `docs/specs/desfecho-terminal-diagnostico.md`).
+  `PORTAO_QUE_SOBREVIVE_A_DONA = "branch-open"`: `complete` e a reclassificação
+  para L0 não recusam por ele, e `resolve_branch_decision` o resolve com a dona
+  já `done`.
 - **D3 — portão sobre task terminal: grava, status fica.** `open_gate`,
   `create_branch`, `request_branch_approval`, `resolve_branch_decision`,
   `_resolve_escalation` e `transition` passam o status atual ao helper, então
   terminal fica terminal. Some o `IntegrityError` do caso 6 e a L0 `active`
-  fantasma. Invariante resultante: **task com pipeline em status terminal não
-  tem portão pendente** (garantido por D2); task L0 (`pipeline=[]`, `done`)
-  pode ter `branch-open` pendente, que é o ramo oferecido numa conversa L0.
+  fantasma. Invariante resultante: **task em status terminal não tem portão
+  pendente além de `branch-open`** (garantido por D2); o ramo oferecido, numa
+  conversa L0 ou numa task já entregue, espera a decisão sem reabrir a dona.
   O caso 3 fica `awaiting_gate` na fase `tdd`: aprovar `approve-spec` é decisão
   explícita do usuário e avança; o `branch-open` é independente e segura a
   próxima `transition`.
 - **Migração — em `_ensure_schema`**, no molde da `identity-migration`,
   idempotente, com `SELECT` antes para não pedir trava a cada abertura, e um
   evento por task tocada: (1) portão pendente de task terminal com pipeline →
-  `cancelled`, `decision='terminal-migration'`; (2) task viva com `pipeline=[]`
+  `cancelled`, `decision='terminal-migration'`, **exceto `branch-open`**, que
+  fica pendente (revisão do D2); (2) task viva com `pipeline=[]`
   → `done`; (3) task viva com `status` em desacordo com `gates` → derivado.
   Alcança cada balde quando ele for aberto de novo; bancos de outras máquinas
   migram quando o código novo chegar a elas.

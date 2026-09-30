@@ -78,18 +78,21 @@ def _portoes(db, task_id="t-1"):
 
 def _invariante(db):
     """Task viva: `awaiting_gate` sse ha portao pendente. Task terminal com
-    pipeline: nenhum portao pendente."""
+    pipeline: nenhum portao pendente alem de `branch-open`, que sobrevive a
+    dona por decisao do usuario."""
     with sqlite3.connect(db.path) as raw:
         linhas = raw.execute(
             "SELECT t.task_id, t.status, t.pipeline_json, "
-            "EXISTS(SELECT 1 FROM gates g WHERE g.task_id = t.task_id AND g.status = 'pending') "
+            "EXISTS(SELECT 1 FROM gates g WHERE g.task_id = t.task_id AND g.status = 'pending'), "
+            "EXISTS(SELECT 1 FROM gates g WHERE g.task_id = t.task_id AND g.status = 'pending' "
+            "AND g.gate_type <> 'branch-open') "
             "FROM tasks t"
         ).fetchall()
-    for task_id, status, pipeline, pendente in linhas:
+    for task_id, status, pipeline, pendente, pendente_sem_ramo in linhas:
         if status in VIVOS:
             assert (status == "awaiting_gate") == bool(pendente), (task_id, status, pendente)
         elif pipeline != "[]":
-            assert not pendente, (task_id, status, "terminal com portao pendente")
+            assert not pendente_sem_ramo, (task_id, status, "terminal com portao pendente")
 
 
 def _linhas_de_comando(mensagem: str) -> list[str]:
@@ -241,17 +244,35 @@ def test_complete_recusa_com_escalation_pendente_e_a_linha_destrava(tmp_path: Pa
     _invariante(db)
 
 
-def test_complete_recusa_com_ramo_pendente(tmp_path: Path):
+def test_complete_nao_e_bloqueado_por_ramo_e_o_ramo_sobrevive(tmp_path: Path):
+    """Decisao do usuario (2026-09-30): o ramo oferecido nao segura a entrega,
+    e a oferta nao morre com ela — `resolve_branch_decision` a resolve com a
+    dona ja `done`."""
     db = state.HarnessDatabase(tmp_path)
     _task(db, ["verify"])
     _ramo(db)
     task = _evidencia(db)
 
+    feita = db.complete("t-1", expected_revision=task["revision"])
+
+    assert (feita["status"], feita["pending_gate"]) == ("done", "branch-open:b-1")
+    db.resolve_branch_decision("b-1", "park")
+    assert (db.task("t-1")["status"], db.task("t-1")["pending_gate"]) == ("done", None)
+    _invariante(db)
+
+
+def test_complete_com_ramo_e_escalation_recusa_pelo_escalation(tmp_path: Path):
+    db = state.HarnessDatabase(tmp_path)
+    _task(db, ["verify"])
+    _ramo(db)
+    db.open_gate("t-1", "escalation")
+    task = _evidencia(db)
+
     with pytest.raises(state.StateTransitionError) as erro:
         db.complete("t-1", expected_revision=task["revision"])
 
-    assert "branch-open:b-1" in str(erro.value)
-    assert "branch_state.py" in str(erro.value)
+    assert "escalation" in str(erro.value)
+    assert "branch-open" not in str(erro.value)
     assert db.task("t-1")["status"] == "awaiting_gate"
 
 
@@ -273,6 +294,17 @@ def test_confirmar_para_l0_recusa_com_escalation_e_a_linha_destrava(tmp_path: Pa
 
     task = db.confirm_classification("t-1", tier="L0", kind="question", pipeline=[], source="semantic", confidence=0.9)
     assert (task["status"], task["pending_gate"]) == ("done", None)
+
+
+def test_confirmar_para_l0_com_ramo_pendente_fecha_e_preserva_o_ramo(tmp_path: Path):
+    """O ramo nao segura o fechamento, igual ao `complete`."""
+    db = state.HarnessDatabase(tmp_path)
+    _task(db)
+    _ramo(db)
+
+    task = db.confirm_classification("t-1", tier="L0", kind="question", pipeline=[], source="semantic", confidence=0.9)
+
+    assert (task["status"], task["pending_gate"]) == ("done", "branch-open:b-1")
 
 
 def test_confirmar_para_l0_cancela_portao_de_fase_sem_recusar(tmp_path: Path):
@@ -418,6 +450,8 @@ def _banco_legado(home: Path) -> None:
             UPDATE tasks SET status = 'done' WHERE task_id = 't-done';
             INSERT INTO gates(task_id, gate_type, status, created_at) VALUES ('t-done', 'escalation', 'pending', 'x');
             INSERT INTO gates(task_id, gate_type, status, created_at) VALUES ('t-done', 'approve-spec', 'pending', 'x');
+            INSERT INTO gates(task_id, gate_type, subject_id, status, created_at)
+                VALUES ('t-done', 'branch-open', 'b-8', 'pending', 'x');
             UPDATE tasks SET status = 'active' WHERE task_id = 't-l0viva';
             INSERT INTO gates(task_id, gate_type, status, created_at) VALUES ('t-active', 'escalation', 'pending', 'x');
             UPDATE tasks SET status = 'active' WHERE task_id = 't-active';
@@ -442,6 +476,7 @@ def test_migracao_repara_os_estados_medidos_e_deixa_evento(tmp_path: Path):
     assert [(g, s, d) for g, _, s, d in _portoes(db, "t-done")] == [
         ("escalation", "cancelled", "terminal-migration"),
         ("approve-spec", "cancelled", "terminal-migration"),
+        ("branch-open", "pending", None),
     ]
     assert db.task("t-done")["status"] == "done"
     assert db.task("t-l0viva")["status"] == "done"
