@@ -137,11 +137,16 @@ def test_medium_low_nunca_geram_agent_de_adjudicacao(tmp_path):
     }
 
 
-def test_pass_invariante_lote_so_medium_low(tmp_path):
-    """Um lote so com medium/low (sem critico/alto, sem no morto) aprova,
-    exatamente como aprovava antes desta mudanca (0 findings bloqueantes)."""
+def test_lote_so_medium_low_nao_aprova(tmp_path):
+    """Um lote so com medium/low nao aprova: o achado nao adjudicado segue
+    aberto, e `pass: true` com achado aberto foi o defeito medido em
+    docs/specs/verify-adjudica-tudo-medicao.md (25 de 49 eram defeito real).
+
+    Ate 2026-09-30 este teste se chamava `test_pass_invariante_lote_so_medium_low`
+    e afirmava `pass: true` (AC-3 de verify-por-tabela-spec-light, superada por
+    verify-adjudica-tudo-spec). O corte da adjudicacao continua: ver o teste acima."""
     out = _run(WF_FILE, SOMENTE_MEDIUM_LOW, tmp_path)
-    assert out["result"]["pass"] is True
+    assert out["result"]["pass"] is False
     assert out["result"]["critical_count"] == 0
 
 

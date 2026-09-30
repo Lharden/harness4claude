@@ -8,15 +8,26 @@ export const meta = {
 }
 
 // args esperado (passado pelo harness-workflow):
-//   { task_id, changed_files: [paths], spec_path, base_ref }
+//   { task_id, changed_files: [paths], spec_path, base_ref, repo_root? }
 const input = args || {}
 const changedFiles = Array.isArray(input.changed_files) ? input.changed_files : []
 const specPath = input.spec_path || null
 const baseRef = input.base_ref || 'HEAD'
 
-const scope = changedFiles.length
-  ? `Arquivos alterados:\n${changedFiles.map((f) => `- ${f}`).join('\n')}`
-  : `Use \`git diff ${baseRef}\` para descobrir os arquivos alterados.`
+// `repo_root` existe porque o diretorio da sessao pode nao ser o codigo revisado:
+// sem ele, revisor e adjudicador resolvem caminho relativo no cwd da sessao. Na
+// medicao de verify-adjudica-tudo esse cwd era o worktree da mae com os consertos
+// ja aplicados. Vai para o prompt dos revisores E do adjudicador.
+const repoRoot = typeof input.repo_root === 'string' && input.repo_root ? input.repo_root : null
+const linhaRaiz = repoRoot
+  ? `Repositorio: ${repoRoot}. Todo caminho abaixo e relativo a ele; leia e rode git la. O escopo sao os arquivos listados: nao compare com outro ramo.\n`
+  : ''
+
+const scope =
+  linhaRaiz +
+  (changedFiles.length
+    ? `Arquivos alterados:\n${changedFiles.map((f) => `- ${f}`).join('\n')}`
+    : `Use \`git diff ${baseRef}\` para descobrir os arquivos alterados.`)
 const specLine = specPath ? `Spec de referencia: ${specPath} (leia-a primeiro).` : 'Sem spec formal (tarefa bug/refactor).'
 
 // Schema de retorno de cada reviewer
@@ -156,10 +167,12 @@ phase('Adjudicate')
 const adjudicated = await parallel(
   adjudicaveis.map((f) => () =>
     agent(
-      `Tente REFUTAR esta alegacao de review. Se nao conseguir refutar com evidencia, ela e real.\n\n` +
+      linhaRaiz +
+        `Tente REFUTAR esta alegacao de review. Se nao conseguir refutar com evidencia, ela e real.\n\n` +
         `Alegacao: ${f.title}\nArquivo: ${f.file}${f.line ? `:${f.line}` : ''}\nSeveridade alegada: ${f.severity}\n\n` +
         `Voce NAO recebe o raciocinio de quem levantou a alegacao — isso e proposital. ` +
-        `Leia o codigo real e julgue por ele. Default para is_real=true apenas se a evidencia sustentar.`,
+        `Leia o codigo real e julgue por ele. Default para is_real=true apenas se a evidencia sustentar. ` +
+        `Severidade alegada errada nao e motivo para refutar: refute so se o defeito nao existe no codigo.`,
       { label: `adjudicate:${f.file}`, phase: 'Adjudicate', schema: VERDICT_SCHEMA, agentType: 'juiz-alto-risco' },
     ).then((v) => ({ ...f, verdict: v })),
   ),
@@ -179,34 +192,47 @@ log(
 // Finding nao julgado NAO e finding liberado: no morto bloqueia a aprovacao.
 const nosMortos = [...censoReview.mortos, ...censoAdj.mortos]
 
+// `pass` so sai verde sem achado aberto. Ate 2026-09-30 ele contava so
+// critico/alto confirmado, e tres rodadas seguidas responderam `pass: true` com
+// 49 medium/low abertos, 25 deles defeito real (docs/specs/verify-adjudica-tudo-medicao.md).
+// O corte da adjudicacao fica: o achado nao adjudicado vai para a triagem da
+// skill, com destino escrito conferido por scripts/checar_triagem.py.
+const pass = criticals.length === 0 && nosMortos.length === 0 && naoAdjudicaveis.length === 0
+
+// `n` e a posicao na lista: e o numero que a tabela de destino do closure-plan cita.
+const saida = [
+  ...confirmed.map((f) => ({
+    title: f.title,
+    severity: f.severity,
+    file: f.file,
+    line: f.line ?? null,
+    rationale: f.rationale,
+    confidence: f.verdict.confidence,
+    adjudicado: true,
+  })),
+  ...naoAdjudicaveis.map((f) => ({
+    title: f.title,
+    severity: f.severity,
+    file: f.file,
+    line: f.line ?? null,
+    rationale: f.rationale,
+    confidence: null,
+    adjudicado: false,
+  })),
+].map((f, i) => ({ n: i + 1, ...f }))
+
 return {
-  pass: criticals.length === 0 && nosMortos.length === 0,
+  pass,
   critical_count: criticals.length,
   nos_mortos: nosMortos,
   nao_adjudicados: naoAdjudicaveis.length,
-  findings: [
-    ...confirmed.map((f) => ({
-      title: f.title,
-      severity: f.severity,
-      file: f.file,
-      line: f.line ?? null,
-      rationale: f.rationale,
-      confidence: f.verdict.confidence,
-      adjudicado: true,
-    })),
-    ...naoAdjudicaveis.map((f) => ({
-      title: f.title,
-      severity: f.severity,
-      file: f.file,
-      line: f.line ?? null,
-      rationale: f.rationale,
-      confidence: null,
-      adjudicado: false,
-    })),
-  ],
+  findings: saida,
   summary:
     `${confirmed.length} findings confirmados (${criticals.length} bloqueantes) de ${adjudicaveis.length} adjudicaveis` +
-    (naoAdjudicaveis.length ? `, ${naoAdjudicaveis.length} medium/low nao adjudicados` : '') +
+    (naoAdjudicaveis.length
+      ? `, ${naoAdjudicaveis.length} aguardam triagem (nao adjudicados): cada um precisa de destino escrito ` +
+        `no closure-plan, conferido por scripts/checar_triagem.py — ver a secao verify da skill harness-workflow`
+      : '') +
     `.` +
     (nosMortos.length ? ` COBERTURA INCOMPLETA: ${nosMortos.length} no(s) sem retorno — ${nosMortos.join(', ')}.` : ''),
 }

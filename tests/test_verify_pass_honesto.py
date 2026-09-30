@@ -1,0 +1,192 @@
+"""O `pass` do wf-verify-multimodel so sai verde sem achado aberto.
+
+Spec: docs/specs/verify-adjudica-tudo-spec.md (US-1, US-3). Medido em
+docs/specs/verify-adjudica-tudo-medicao.md: tres rodadas com `pass: true` e 49
+achados medium/low abertos, 25 deles defeito real. O `pass` contava so
+critico/alto confirmado, e ninguem rotulou nada de critico/alto.
+
+Roda o corpo real do Workflow via `tests/wf_run_harness.cjs`, com os
+primitivos do host mockados.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
+WF_FILE = ROOT / "scripts" / "workflows" / "wf-verify-multimodel.js"
+TESTS_DIR = Path(__file__).parent
+HARNESS = TESTS_DIR / "wf_run_harness.cjs"
+
+NODE = shutil.which("node")
+
+
+def _run(wf_file: Path, scenario: dict, tmp_path: Path) -> dict:
+    assert NODE is not None  # a fixture abaixo pula o teste antes, sem node
+    scenario_file = tmp_path / "scenario.json"
+    scenario_file.write_text(json.dumps(scenario), encoding="utf-8")
+    result = subprocess.run(
+        [NODE, str(HARNESS), str(wf_file), str(scenario_file)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, f"harness falhou:\n{result.stdout}\n{result.stderr}"
+    return json.loads(result.stdout)
+
+
+@pytest.fixture(autouse=True)
+def _skip_sem_node():
+    if not NODE:
+        pytest.skip("node nao disponivel no PATH")
+
+
+def _achado(titulo: str, severidade: str, arquivo: str = "a.py", linha: int = 1) -> dict:
+    return {"title": titulo, "severity": severidade, "file": arquivo, "line": linha, "rationale": "racional"}
+
+
+def _cenario(**por_dimensao) -> dict:
+    """Cenario com as cinco dimensoes; as nao citadas voltam sem achado."""
+    reviews = {d: {"findings": []} for d in ("spec-coverage", "correctness", "security", "edge-cases", "regressions")}
+    for dim, achados in por_dimensao.items():
+        reviews[dim.replace("_", "-")] = {"findings": achados}
+    return {"reviews": reviews}
+
+
+# ---------------------------------------------------------------------------
+# T1: o harness grava o prompt, senao nenhum teste de prompt tem o que ler
+# ---------------------------------------------------------------------------
+
+
+def test_harness_grava_o_prompt_de_revisao_e_de_adjudicacao(tmp_path):
+    out = _run(WF_FILE, _cenario(correctness=[_achado("bug real", "critical")]), tmp_path)
+    assert len(out["calls"]["review"]) == 5
+    for call in out["calls"]["review"]:
+        assert isinstance(call.get("prompt"), str) and call["prompt"], call["label"]
+    assert len(out["calls"]["adjudicate"]) == 1
+    assert "REFUT" in out["calls"]["adjudicate"][0]["prompt"]
+
+
+# ---------------------------------------------------------------------------
+# US-1: `pass` honesto
+# ---------------------------------------------------------------------------
+
+SO_MEDIUM_LOW = _cenario(
+    correctness=[_achado("nome de variavel poderia ser melhor", "low", "a.py", 10)],
+    edge_cases=[_achado("lista vazia nao testada explicitamente", "medium", "b.py", 20)],
+)
+
+
+def test_lote_so_medium_low_nao_aprova(tmp_path):
+    """AC-1.1. As tres rodadas medidas tinham 11-23 achados assim, e `pass: true`."""
+    out = _run(WF_FILE, SO_MEDIUM_LOW, tmp_path)
+    assert out["result"]["pass"] is False
+    assert out["result"]["critical_count"] == 0
+    assert out["result"]["nao_adjudicados"] == 2
+
+
+def test_sem_achado_aprova(tmp_path):
+    """AC-1.3."""
+    out = _run(WF_FILE, _cenario(), tmp_path)
+    assert out["result"]["pass"] is True
+
+
+def test_high_refutado_aprova(tmp_path):
+    """AC-1.4. Refutado nao bloqueia nem vira pendente: o `pass` ainda sai verde."""
+    cenario = _cenario(security=[_achado("injecao alegada", "high", "c.py", 3)])
+    cenario["verdicts"] = {"c.py": {"is_real": False, "confidence": 0.9, "reason": "refutado"}}
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert out["result"]["pass"] is True
+    assert out["result"]["nao_adjudicados"] == 0
+
+
+def test_cada_achado_traz_n_da_posicao(tmp_path):
+    """AC-1.6. A coluna `#` da tabela de destino aponta esse numero."""
+    cenario = _cenario(
+        correctness=[_achado("bug confirmado", "high", "d.py", 1)],
+        edge_cases=[_achado("borda um", "medium", "e.py", 2), _achado("borda dois", "low", "f.py", 3)],
+    )
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert [f["n"] for f in out["result"]["findings"]] == [1, 2, 3]
+
+
+def test_summary_nomeia_o_checador_e_a_secao(tmp_path):
+    """AC-1.7. Sessao com o texto antigo da skill le no retorno o que fazer."""
+    summary = _run(WF_FILE, SO_MEDIUM_LOW, tmp_path)["result"]["summary"]
+    assert "2 aguardam triagem" in summary
+    assert "checar_triagem.py" in summary
+    assert "harness-workflow" in summary
+
+
+def test_severidade_fora_do_conjunto_conta_como_nao_adjudicada(tmp_path):
+    """AC-1.8. Erra bloqueando: severidade estranha nao some do `pass`."""
+    out = _run(WF_FILE, _cenario(regressions=[_achado("rotulo estranho", "info")]), tmp_path)
+    assert out["calls"]["adjudicate"] == []
+    assert out["result"]["nao_adjudicados"] == 1
+    assert out["result"]["pass"] is False
+
+
+def test_adjudicador_nao_refuta_por_severidade(tmp_path):
+    """AC-1.9 / REQ-F6. Com a rubrica promovendo a `high`, um refutador que
+    derrubasse por "nao e high" faria o defeito sumir: nem bloqueia nem vai a
+    triagem (grill #24, #33)."""
+    out = _run(WF_FILE, _cenario(correctness=[_achado("bug real", "high")]), tmp_path)
+    assert "nao e motivo para refutar" in out["calls"]["adjudicate"][0]["prompt"]
+
+
+def test_repo_root_chega_a_todo_prompt(tmp_path):
+    """REQ-F5. Sem isto os agentes leem o cwd da sessao, que na medicao e o
+    worktree da mae com os consertos ja aplicados (ASSUMPTION-004)."""
+    cenario = _cenario(correctness=[_achado("bug real", "critical")])
+    cenario["args"] = {"changed_files": ["scripts/x.py"], "repo_root": "C:/wt/medicao"}
+    out = _run(WF_FILE, cenario, tmp_path)
+    prompts = [c["prompt"] for c in out["calls"]["review"]] + [c["prompt"] for c in out["calls"]["adjudicate"]]
+    assert len(prompts) == 6
+    for p in prompts:
+        assert "Repositorio: C:/wt/medicao" in p
+        assert "nao compare com outro ramo" in p
+
+
+def test_sem_repo_root_o_prompt_nao_fala_de_repositorio(tmp_path):
+    """REQ-F5, metade sem o argumento."""
+    out = _run(WF_FILE, _cenario(correctness=[_achado("bug real", "critical")]), tmp_path)
+    prompts = [c["prompt"] for c in out["calls"]["review"]] + [c["prompt"] for c in out["calls"]["adjudicate"]]
+    assert all("Repositorio:" not in p for p in prompts)
+
+
+# ---------------------------------------------------------------------------
+# Metade-controle: o mesmo cenario no codigo de antes desta task
+# ---------------------------------------------------------------------------
+
+# Blob de scripts/workflows/wf-verify-multimodel.js em 8cd6884 (base do ramo),
+# fixado por hash de blob do git pelo mesmo motivo de test_verify_por_tabela.py:
+# `git show main:` reprova por construcao depois do merge, e o CI faz checkout raso.
+OLD_FILE = TESTS_DIR / "data" / "wf-verify-multimodel-antes-de-verify-adjudica-tudo.js"
+OLD_BLOB = "248189ecd315a5e1110e4b1705aa6376c526c931"
+
+
+def _git_blob_sha1(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
+
+
+def _old_wf_file() -> Path:
+    blob = _git_blob_sha1(OLD_FILE.read_bytes())
+    assert blob == OLD_BLOB, (
+        f"{OLD_FILE.name} virou o blob {blob}, nao e mais o {OLD_BLOB} de 8cd6884. Restaure (Git Bash, na raiz):\n"
+        f"  git cat-file blob {OLD_BLOB} > tests/data/{OLD_FILE.name}"
+    )
+    return OLD_FILE
+
+
+def test_CONTROLE_codigo_de_antes_aprovava_lote_so_medium_low(tmp_path):
+    """AC-1.2. Sem esta metade, `test_lote_so_medium_low_nao_aprova` nao
+    distingue a mudanca de um cenario que ja reprovava."""
+    out = _run(_old_wf_file(), SO_MEDIUM_LOW, tmp_path)
+    assert out["result"]["pass"] is True
+    assert out["result"]["nao_adjudicados"] == 2
