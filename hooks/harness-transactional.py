@@ -535,6 +535,12 @@ _GIT_OPCAO_COM_VALOR = frozenset({
 
 def _subcomando_git(partes: list[str]) -> str | None:
     """O subcomando de `git ...`, depois das opcoes globais e dos valores delas."""
+    indice = _posicao_do_subcomando_git(partes)
+    return partes[indice] if indice is not None else None
+
+
+def _posicao_do_subcomando_git(partes: list[str]) -> int | None:
+    """Indice do subcomando em `partes`. `_escrita_do_git` le as opcoes depois dele."""
     indice = 1
     while indice < len(partes):
         parte = partes[indice]
@@ -543,7 +549,7 @@ def _subcomando_git(partes: list[str]) -> str | None:
         elif parte.startswith('-'):
             indice += 1
         else:
-            return parte
+            return indice
     return None
 
 
@@ -1130,10 +1136,12 @@ def _escrita_do_git(argumentos: list[str]) -> tuple[list[str], bool]:
     `--output` nao aceita abreviacao (git 2.55 recusa `--outp`), e
     `--output-indicator-new` e outra opcao. Depois de `--` e pathspec.
     """
-    posicao = next((k for k, argumento in enumerate(argumentos) if not argumento.startswith('-')), None)
+    # A mesma leitura de `_subcomando_git`: `git -C sub diff` tem o `sub` como
+    # valor de `-C`, e confundi-lo com o subcomando esconderia o `--output`.
+    posicao = _posicao_do_subcomando_git(['git', *argumentos])
     if posicao is None:
         return [], False
-    subcomando, resto = argumentos[posicao], argumentos[posicao + 1:]
+    subcomando, resto = argumentos[posicao - 1], argumentos[posicao:]
     if subcomando == 'grep':
         opcoes, _ = _opcoes_gnu(
             resto, com_valor='ABCefm', valor_colado='O', longas=_LONGAS_DO_GIT_GREP

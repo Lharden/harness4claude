@@ -2226,6 +2226,9 @@ ESCRITAS_POR_OPCAO = [
     ("git show --output=gera.py HEAD", ["gera.py"]),
     ("git shortlog --output=gera.py", ["gera.py"]),
     ("git blame --output=gera.py f", ["gera.py"]),
+    # opcao global com valor antes do subcomando (ver `_subcomando_git`)
+    ("git -C sub diff --output=gera.py", ["gera.py"]),
+    ("git -c core.pager=cat log --output gera.py", ["gera.py"]),
 ]
 
 EXECUCOES_POR_OPCAO = [
@@ -2239,6 +2242,7 @@ EXECUCOES_POR_OPCAO = [
     "git grep -nOpython foo",
     "git grep --open-files-in-pager=python foo",
     "git grep --open=python foo",
+    "git -C sub grep -Opython foo",
 ]
 
 
