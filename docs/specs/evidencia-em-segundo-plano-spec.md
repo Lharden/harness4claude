@@ -223,15 +223,25 @@ lançamento fica no estado indicado, e o Stop decide como hoje:
   evidência.
 - **AC-3.5**: trailer `[exited with code M]` do arquivo com M ≠ código do
   resumo → `rejeitado:codigo-diverge`, nenhuma evidência.
-- **AC-3.6**: `<tool-use-id>` da notificação diferente do lançamento, ou
-  lançamento com `tool_use_id` nulo → notificação não aceita; `pendente`.
+- **AC-3.6**: `<tool-use-id>` da notificação diferente do lançamento →
+  notificação não aceita; `pendente`. Lançamento registrado sem `tool_use_id`
+  ou sem `transcript_path` nasce `rejeitado:sem-tool-use-id` /
+  `rejeitado:sem-transcript` (revisado pelo verify #9, #14: antes ficava
+  pendente para sempre e parecia mudança de formato do host).
 - **AC-3.7**: notificação de J só dentro de entrada `assistant`, de
   `toolUseResult` (ex.: `cat` de um `.jsonl`), de subagente (`isSidechain`),
   de `queue-operation`, de `attachment` que não seja `queued_command` com
   `commandMode == "task-notification"`, ou de `user` sem `origin.kind ==
   "task-notification"` → não aceita; `pendente`.
-- **AC-3.8**: `<output-file>` cujo nome não é `J.output`, ou cujo diretório não
-  é `…\<sessão de T>\tasks` → `rejeitado:arquivo-estranho`.
+- **AC-3.8**: `<output-file>` cujo nome não é `J.output`, ou fora de um
+  diretório `tasks` → `rejeitado:arquivo-estranho`. Em pasta de outra sessão
+  ou outro projeto (sessão retomada) → aceito.
+- **AC-3.13**: arquivo sem trailer `[exited with code N]` (vazio, truncado) →
+  `rejeitado:sem-trailer`; um verde já gravado continua verde.
+- **AC-3.14**: `description` com "exit code 0" no texto e término `failed with
+  exit code 1` → código 1.
+- **AC-3.15**: `description` que carrega um bloco `<task-notification>` inteiro
+  para outro job J2 → J2 continua `pendente`.
 - **AC-3.9**: saída sem contagem reconhecível (ex.: `no tests ran`) →
   evidência em N' com `tests_collected` 0 ou `NULL`, `verified=0`, `capturado`.
 - **AC-3.10**: transcript ausente ou ilegível, arquivo existente mas sem
@@ -340,10 +350,13 @@ Stop --> jobs_em_voo(transcript) --> register_stop_continuation(em_voo) --> bloq
   estado e evento juntos; a transição sai de `pendente` só uma vez (UPDATE
   condicionado ao estado).
   consumidor: REQ-F7 (Stop e `complete`). [traces: US-1..US-4]
-- [ ] **REQ-F4**: Código de saída vem do resumo — `(exit code N` e `with exit
-  code N`. Status tem de ser `completed` ou `failed`; `failed` com 0 rejeita.
-  Trailer do arquivo presente e diferente, rejeita. Sem código, rejeita.
-  [traces: US-1, US-3]
+- [ ] **REQ-F4**: Código de saída vem do resumo, casado **no fim** do resumo —
+  `(exit code N…)` e `with exit code N` — porque o começo carrega a
+  `description` do modelo. Status tem de ser `completed` ou `failed`; `failed`
+  com 0 rejeita. **Trailer `[exited with code N]` obrigatório e igual ao
+  código** (sem trailer: `rejeitado:sem-trailer`; diferente:
+  `codigo-diverge`). Sem código, rejeita. Revisado 2026-09-30 pelo verify
+  (#10, #12, #15): ASSUMPTION-014. [traces: US-1, US-3]
 - [ ] **REQ-F5**: Contagens saem do texto do arquivo de saída pela MESMA função
   que conta a resposta em primeiro plano: a lógica de `_test_counts` vira uma
   função sobre texto, e `_test_counts` passa a chamá-la. Nenhuma cópia.
@@ -362,10 +375,14 @@ Stop --> jobs_em_voo(transcript) --> register_stop_continuation(em_voo) --> bloq
   listam os lançamentos da task com id, N', estado e motivo. Cada resolução
   grava `events.lancamento_resolvido`. `AVISO_SEGUNDO_PLANO` anuncia a captura
   automática, a revisão N' e a condição da receita manual. [traces: US-5]
-- [ ] **REQ-F9**: `<output-file>` tem nome `J.output` e fica num diretório
-  `tasks` cujo pai tem o nome da sessão de T (o nome do arquivo de transcript
-  sem `.jsonl`); fora disso, rejeita. Lê no máximo a cauda (teto no design) —
-  o sumário do pytest e o trailer estão no fim. [traces: US-3]
+- [ ] **REQ-F9**: `<output-file>` tem nome `J.output` num diretório `tasks`;
+  fora disso, rejeita. ~~Pai com o nome da sessão de T~~ — retirado em
+  2026-09-30 (verify #19): rejeitava 65 de 654 términos reais (sessão
+  retomada); ver ASSUMPTION-015. Lê no máximo a cauda (64 KiB) — o sumário do
+  pytest e o trailer estão no fim. [traces: US-3]
+- [ ] **REQ-F11**: Texto de entrada com mais de um `<task-notification>` não
+  vale para nenhum job (verify #11: bloco forjado pela `description`).
+  ASSUMPTION-013. [traces: US-3]
 - [ ] **REQ-F10**: Ordem de término. Vários pendentes com notificação aceita são
   processados em ordem crescente de término. Uma captura cujo término é
   anterior ao `created_at` de alguma evidência do mesmo tipo já gravada na
@@ -437,6 +454,9 @@ transcript da própria sessão.
 - **Sessão retomada, bifurcada ou limpa**: balde novo, banco novo; o lançamento
   fica `pendente` no balde antigo. Vale a receita manual.
 - Job sem notificação terminal aceita no transcript (61 de 680, 9%): `pendente`.
+- `.output` sem trailer (3 de 231 medidos): `rejeitado:sem-trailer`.
+- `description` que contém `<task-notification>`: a notificação do próprio job
+  tem dois blocos e não vale (REQ-F11) — fica `pendente`.
 - **Receita manual** (`state_cli evidence`): continua gravando na revisão
   corrente e confiando no modelo, como hoje. Decidido 2026-09-30 (grill #2).
 - Arquivo de saída alterado por outro processo entre o término e a leitura: a
@@ -508,6 +528,19 @@ transcript da própria sessão.
 - **ASSUMPTION-011**: `code_revision` nunca repete valor dentro de uma task —
   única escrita é `+1` em `touch_files` (`transactional_state.py:1239`) ·
   decidido 2026-09-30 por inferência (código) · justifica: AC-2.4, REQ-F6
+- **ASSUMPTION-013**: texto legítimo do host carrega um só bloco de
+  notificação — medido 2471 de 2471 (`medir_blocos.py`, 2026-09-30); com um só
+  bloco, `task-id`, `tool-use-id`, `output-file` e `status` (anteriores ao
+  `summary`) são do host · decidido 2026-09-30 por inferência (medição, verify
+  #11) · justifica: REQ-F11, AC-3.15, REQ-F9
+- **ASSUMPTION-014**: o host grava o trailer `[exited with code N]` no fim do
+  `.output` — medido 228 de 231 existentes; os 3 sem trailer ficam `rejeitado`
+  (custo aceito) · decidido 2026-09-30 por inferência (medição, verify #15) ·
+  justifica: REQ-F4, AC-3.13
+- **ASSUMPTION-015**: a pasta do `.output` não precisa bater com o transcript —
+  medido: 65 de 654 términos reais em pasta de outra sessão, 12 em outro
+  projeto (`medir_lugar.py`) · decidido 2026-09-30 por inferência (medição,
+  verify #19) · justifica: REQ-F9, AC-3.8
 - **ASSUMPTION-012**: pendente de task morta nunca é lido de novo (a captura só
   olha a task do chamador), então não precisa expirar; pendente da task viva é
   relido junto da leitura que `jobs_em_voo` já faz · decidido 2026-09-30 por

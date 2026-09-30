@@ -91,7 +91,11 @@ _TAG = {
     nome: re.compile(rf"<{nome}>(.*?)</{nome}>", re.DOTALL)
     for nome in ("tool-use-id", "output-file", "status", "summary")
 }
-_CODIGO = re.compile(r"\(exit code (-?\d+)|with exit code (-?\d+)")
+#: O codigo e o do FIM do resumo. O resumo e `Background command "<description>"
+#: completed (exit code N...)`, e a `description` e texto do modelo: casar a
+#: primeira ocorrencia deixava "suite (exit code 0 esperado)" decidir o codigo
+#: (verify #10, #12). O sufixo do host e sempre o ultimo trecho.
+_CODIGO = re.compile(r"(?:\(exit code (-?\d+)[^()]*\)|with exit code (-?\d+))\s*$")
 _TRAILER = re.compile(r"\[exited with code (-?\d+)\]\s*$")
 _STATUS_COM_CODIGO = frozenset({"completed", "failed"})
 _FIM_DOS_TEMPOS = "9999-12-31T00:00:00+00:00"
@@ -173,7 +177,13 @@ def notificacoes_de(
                 continue
             quando = entrada.get("timestamp") if isinstance(entrada.get("timestamp"), str) else None
             for texto in _textos(entrada):
-                if "<task-notification>" not in texto:
+                # Um bloco so por texto. A `description` do modelo vai dentro do
+                # `<summary>`, e com ela um bloco inteiro pode ser forjado para
+                # outro job (verify #11). Medido: 2471 de 2471 textos do host
+                # com notificacao tem exatamente um bloco. Com um so, tudo o que
+                # vem antes do summary — task-id, tool-use-id, output-file,
+                # status — e escrito pelo host.
+                if texto.count("<task-notification>") != 1:
                     continue
                 for bloco in _BLOCO.findall(texto):
                     status = _tag("status", bloco)
@@ -209,16 +219,21 @@ def _codigo(resumo: str) -> int | None:
     return int(achado.group(1) if achado.group(1) is not None else achado.group(2))
 
 
-def _arquivo_no_lugar(arquivo: str, job: str, transcript_path: str) -> bool:
-    """`<projeto>/<sessao>/tasks/<job>.output`, com projeto e sessao os do transcript.
+def _arquivo_no_lugar(arquivo: str, job: str) -> bool:
+    """`.../tasks/<job>.output`: o nome e o diretorio que o host usa.
 
-    Medido no caso real: `projects\\<projeto>\\<sessao>.jsonl` <->
-    `%TEMP%\\claude\\<projeto>\\<sessao>\\tasks\\<job>.output`.
+    A primeira versao exigia tambem que as pastas de sessao e de projeto fossem
+    as do transcript, e rejeitava em definitivo 65 de 654 terminos reais: sessao
+    retomada grava a saida sob o id novo, e em 12 o projeto diverge (verify #19,
+    medido com esta funcao). Nem o `sessionId` da entrada acerta sempre (597).
+    O caminho vem de um campo que o host escreve antes do `<summary>`, e com um
+    bloco so por texto o modelo nao o alcanca; o nome fica como conferencia.
     """
-    saida, transcript = Path(arquivo), Path(transcript_path)
-    partes = [saida.name, saida.parent.name, saida.parent.parent.name, saida.parent.parent.parent.name]
-    esperado = [f"{job}.output", "tasks", transcript.stem, transcript.parent.name]
-    return [os.path.normcase(p) for p in partes] == [os.path.normcase(p) for p in esperado]
+    saida = Path(arquivo)
+    return (
+        os.path.normcase(saida.name) == os.path.normcase(f"{job}.output")
+        and os.path.normcase(saida.parent.name) == "tasks"
+    )
 
 
 def ler_cauda(caminho: str | Path, limite: int = LIMITE_DA_CAUDA) -> str:
@@ -250,7 +265,9 @@ def julgar(
     if not notificacoes:
         return Veredito("pendente")
     termino = min((n.terminou_em for n in notificacoes), key=_ordem)
-    distintos = {(n.status, _codigo(n.resumo)) for n in notificacoes}
+    # O arquivo entra na comparacao: copias que so divergem no caminho faziam o
+    # desfecho depender da ordem em que apareciam no transcript (verify #13).
+    distintos = {(n.status, _codigo(n.resumo), n.arquivo) for n in notificacoes}
     if len(distintos) > 1:
         return Veredito("rejeitado", "notificacao-diverge", terminou_em=termino)
     notificacao = notificacoes[0]
@@ -259,8 +276,7 @@ def julgar(
         return Veredito("rejeitado", "sem-codigo", terminou_em=termino)
     if notificacao.status == "failed" and codigo == 0:
         return Veredito("rejeitado", "status-inconsistente", terminou_em=termino)
-    transcript = lancamento.get("transcript_path") or ""
-    if not notificacao.arquivo or not _arquivo_no_lugar(notificacao.arquivo, lancamento["job_id"], transcript):
+    if not notificacao.arquivo or not _arquivo_no_lugar(notificacao.arquivo, lancamento["job_id"]):
         return Veredito("rejeitado", "arquivo-estranho", terminou_em=termino)
     try:
         cauda = ler(notificacao.arquivo)
@@ -268,8 +284,14 @@ def julgar(
         return Veredito("rejeitado", "sem-arquivo", terminou_em=termino)
     except OSError:
         return Veredito("pendente")
+    # Trailer obrigatorio (verify #15): arquivo vazio ou truncado virava `aceito`
+    # com exit 0 e contagem nula, e desverificava um verde. Medido: 228 de 231
+    # `.output` existentes tem trailer. Com ele, codigo e contagens vem do
+    # arquivo que o host gravou; o resumo so confirma.
     trailer = _TRAILER.search(cauda)
-    if trailer and int(trailer.group(1)) != codigo:
+    if not trailer:
+        return Veredito("rejeitado", "sem-trailer", terminou_em=termino)
+    if int(trailer.group(1)) != codigo:
         return Veredito("rejeitado", "codigo-diverge", terminou_em=termino)
     coletados, passaram, pulados, digest = contar_testes(cauda)
     return Veredito(

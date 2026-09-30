@@ -185,7 +185,8 @@ transação inteira (outra captura chegou antes — AC-1.4, grill #44/#48).
 
 **Motivos** (`motivo`, só em `rejeitado` e `superado`): `sem-codigo`,
 `sem-arquivo`, `arquivo-estranho`, `codigo-diverge`, `notificacao-diverge`,
-`status-inconsistente`; `superado` grava o id da evidência mais nova que o
+`status-inconsistente`, `sem-trailer`, e — já no registro, sem esperar
+notificação — `sem-tool-use-id`, `sem-transcript`; `superado` grava o id da evidência mais nova que o
 superou (`por-evidence-<id>`).
 
 **Invariantes**:
@@ -231,12 +232,21 @@ Ordem fixa; a primeira regra que decide encerra:
 3. `status` ∉ {`completed`, `failed`} ou resumo sem código →
    `rejeitado:sem-codigo`.
 4. `failed` com código 0 → `rejeitado:status-inconsistente`.
-5. `<output-file>` com nome ≠ `J.output`, ou diretório ≠
-   `…/<projeto de T>/<sessão de T>/tasks` → `rejeitado:arquivo-estranho`.
+5. `<output-file>` com nome ≠ `J.output` ou fora de um diretório `tasks` →
+   `rejeitado:arquivo-estranho`. (A versão anterior exigia também pasta de
+   sessão e projeto iguais às do transcript; o verify #19 mediu 65/654
+   rejeições falsas por sessão retomada — retirado.)
 6. Arquivo inexistente (`FileNotFoundError`) → `rejeitado:sem-arquivo`.
    Outro `OSError` (permissão, arquivo preso) → `pendente`.
-7. Trailer presente e diferente do código → `rejeitado:codigo-diverge`.
+7. Sem trailer → `rejeitado:sem-trailer`; trailer ≠ código →
+   `rejeitado:codigo-diverge` (trailer obrigatório desde o verify #15).
 8. Senão → `aceito` com `contar_testes(cauda)` e `sha256(cauda)`.
+
+Antes da regra 1, em `notificacoes_de`: texto com mais de um
+`<task-notification>` não vale para ninguém (verify #11; 2471/2471 textos
+legítimos têm um só). O código do resumo é casado no FIM do summary (verify
+#10, #12), porque o começo é a `description` do modelo. Na regra 2, o conjunto
+de divergência inclui o `<output-file>` (verify #13).
 
 Em `resolver_lancamento`, sob o lock:
 

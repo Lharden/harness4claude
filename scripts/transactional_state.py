@@ -1843,11 +1843,39 @@ class HarnessDatabase:
             row = self._locked_task(connection, task_id)
             if row["status"] in TERMINAL_STATUSES:
                 return
-            connection.execute(
+            # Sem o id da chamada ou sem o transcript, nenhuma notificacao casa:
+            # o lancamento nasce resolvido, com o motivo, em vez de ficar
+            # pendente para sempre e parecer mudanca de formato do host (verify
+            # #9, #14).
+            motivo = "sem-tool-use-id" if not tool_use_id else ("sem-transcript" if not transcript_path else None)
+            agora = utc_now()
+            inseriu = connection.execute(
                 "INSERT OR IGNORE INTO lancamentos(task_id, job_id, tool_use_id, command, "
-                "transcript_path, code_revision, lancado_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (task_id, job_id, tool_use_id, command, transcript_path, row["code_revision"], utc_now()),
-            )
+                "transcript_path, code_revision, lancado_em, estado, motivo, resolvido_em) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    task_id, job_id, tool_use_id, command, transcript_path, row["code_revision"], agora,
+                    "rejeitado" if motivo else "pendente", motivo, agora if motivo else None,
+                ),
+            ).rowcount
+            if motivo and inseriu:
+                connection.execute(
+                    "INSERT OR IGNORE INTO scopes(scope_id, created_at) VALUES (?, ?)", (row["scope_id"], agora)
+                )
+                connection.execute(
+                    "INSERT INTO events(task_id, scope_id, event_type, payload_json, created_at) "
+                    "VALUES (?, ?, 'lancamento_resolvido', ?, ?)",
+                    (
+                        task_id,
+                        row["scope_id"],
+                        json.dumps(
+                            {"job": job_id, "estado": "rejeitado", "motivo": motivo,
+                             "code_revision": int(row["code_revision"]), "evidence_id": None},
+                            sort_keys=True,
+                        ),
+                        agora,
+                    ),
+                )
 
     def lancamentos(self, task_id: str, *, estado: str | None = None) -> list[dict[str, Any]]:
         with self._connect() as connection:
