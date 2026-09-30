@@ -1027,8 +1027,8 @@ def test_comando_de_inspecao_nao_invalida_evidencia(tmp_path: Path):
 # de `git` como subcomando. Em `git -C <dir> log` esse token e `<dir>`, e a
 # leitura caia no placeholder: 28 toques `shell-placeholder` na sessao
 # `44b0dfb5` vieram de `git -C <caminho> log|status|diff|show|...`. Nos
-# transcripts dela (principal + subagentes) ha 180 linhas `git <opcao com
-# valor> ...`, e as 180 contavam como toque.
+# transcripts dela (principal + subagentes, medidos em 2026-09-30) ha 181
+# linhas `git <opcao com valor> ...`, e as 181 eram classificadas como toque.
 #
 # O mesmo erro tinha a direcao perigosa: em `git -C log checkout main` o `log`
 # e o diretorio, e o checkout passava por leitura.
@@ -1053,12 +1053,17 @@ def test_comando_de_inspecao_nao_invalida_evidencia(tmp_path: Path):
         "git --attr-source HEAD diff",
         "git --config-env a.b=HOME log",
         "git -C x -c color.ui=never --no-pager log",
-        "git -C x status 2>&1 | head -5",
     ],
 )
 def test_opcao_global_com_valor_nao_e_subcomando(comando: str):
     assert hook.is_read_only(comando) is True, comando
     assert hook.nao_muda_a_arvore(comando) is True, comando
+
+
+def test_opcao_global_com_valor_em_linha_composta():
+    """So `is_read_only`: `nao_muda_a_arvore` exige git em todo segmento."""
+    assert hook.is_read_only("git -C x status 2>&1 | head -5")
+    assert hook.is_read_only("git -C x log --oneline -3 && git -C x diff --stat")
 
 
 def test_opcao_global_com_valor_antes_de_add_e_commit():

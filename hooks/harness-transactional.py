@@ -441,6 +441,47 @@ _GIT_SOMENTE_LEITURA = frozenset({
 _GIT_NAO_MUDA_ARVORE = frozenset({'add', 'commit'})
 
 
+#: Opcoes globais do git que consomem o token SEGUINTE como valor. Medido no git
+#: 2.55.0: `git <opcao> <valor> version` e aceito para cada uma destas. As que
+#: nao levam valor (`--no-pager`, `--no-optional-locks`, `-p`, `--bare`...) e a
+#: forma `--opcao=valor` ja sao um token so com `-` e nao precisam de lista.
+#:
+#: Ate 2026-09-30 o subcomando era "o primeiro token sem `-`", e em
+#: `git -C <dir> log` esse token era `<dir>`. Nos transcripts da sessao
+#: `44b0dfb5` (principal + subagentes, medidos em 2026-09-30), as 181 linhas
+#: `git <opcao com valor> ...` eram classificadas como toque, leitura inclusive.
+#: Na direcao oposta, `git -C log checkout main` passava por leitura.
+#:
+#: Opcao com valor que nao esteja aqui continua do lado seguro: o valor vira o
+#: subcomando, nao esta em lista nenhuma, e o comando conta.
+#:
+#: EXCECAO CONHECIDA, declarada em vez de escondida: `-c` e `--config-env`
+#: trocam configuracao, e ha chave que faz um subcomando de leitura executar
+#: programa (`core.fsmonitor` em `status`, `diff.external` em `diff`). A mesma
+#: chave no `.git/config` ja tem esse poder sobre `git status` puro; em linha
+#: ela chega sem escrita contada antes. Nas 181 linhas medidas, as unicas
+#: chaves em `-c` sao `core.autocrlf` e `http.sslCAInfo`, e nenhuma executa
+#: programa. Nao esta coberto, e esta escrito.
+_GIT_OPCAO_COM_VALOR = frozenset({
+    '-C', '-c', '--git-dir', '--work-tree', '--namespace', '--attr-source',
+    '--config-env',
+})
+
+
+def _subcomando_git(partes: list[str]) -> str | None:
+    """O subcomando de `git ...`, depois das opcoes globais e dos valores delas."""
+    indice = 1
+    while indice < len(partes):
+        parte = partes[indice]
+        if parte in _GIT_OPCAO_COM_VALOR:
+            indice += 2
+        elif parte.startswith('-'):
+            indice += 1
+        else:
+            return parte
+    return None
+
+
 def nao_muda_a_arvore(command: str) -> bool:
     """O comando escreve, mas nao no codigo que a suite mede."""
     if not command or shell_write_targets(command) or _redireciona_para_arquivo(command):
@@ -451,8 +492,7 @@ def nao_muda_a_arvore(command: str) -> bool:
     for partes in segmentos:
         if _binario(partes[0]) != 'git':
             return False
-        resto = [p for p in partes[1:] if not p.startswith('-')]
-        if not resto or resto[0] not in (_GIT_NAO_MUDA_ARVORE | _GIT_SOMENTE_LEITURA):
+        if _subcomando_git(partes) not in (_GIT_NAO_MUDA_ARVORE | _GIT_SOMENTE_LEITURA):
             return False
     return True
 
@@ -553,8 +593,7 @@ def is_read_only(command: str) -> bool:
     for partes in segmentos:
         binario = _binario(partes[0])
         if binario == 'git':
-            resto = [p for p in partes[1:] if not p.startswith('-')]
-            if not resto or resto[0] not in _GIT_SOMENTE_LEITURA:
+            if _subcomando_git(partes) not in _GIT_SOMENTE_LEITURA:
                 return False
             continue
         if binario == 'find':
