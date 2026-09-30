@@ -68,6 +68,8 @@ BASH_REQUIRED_CLASSES = {
         "TestStaleHandling",
         "TestWriteRaceProtection",
         "TestReentrancySemantics",
+        "TestCorridaDaQuebraDeStale",
+        "TestOpcoesDeGlobDeQuemFazSource",
     },
 }
 

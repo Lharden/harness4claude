@@ -399,13 +399,13 @@ class TestCustoDoLock:
 
 class TestReentrancySemantics:
     def test_release_only_removes_own_lock(self, harness_dir):
-        """release_state_lock so remove se owner_pid bate com $$."""
+        """release_state_lock so remove o lock que o proprio shell adquiriu."""
         # Cria lockdir manualmente com owner = PID falso
         lockdir = harness_dir / "state.json.lockdir"
         lockdir.mkdir()
         (lockdir / "owner").write_text("999999 12345\n", encoding="utf-8")
 
-        # release_state_lock deve recusar (owner != $$)
+        # release_state_lock deve recusar (este shell nao adquiriu nada)
         script = f"""
             source "{LOCK_SH}"
             release_state_lock
@@ -477,3 +477,418 @@ class TestCaminhoSemDisputaNaoLancaProcessos:
         )
         assert result.returncode == 0, result.stderr
         assert spy.read_text(encoding="utf-8").split() == ["mkdir", "rm"]
+
+
+# ---------------------------------------------------------------------------
+# Corrida de verificar-e-remover na quebra de lock stale
+# ---------------------------------------------------------------------------
+#
+# A checagem de idade e a remocao nao sao uma operacao so. Entre as duas, o
+# lockdir velho pode ter sido quebrado por outro waiter e pego por um terceiro:
+# quem remove pelo NOME, com a decisao tomada sobre o lockdir anterior, apaga o
+# lock do terceiro. Os testes abrem essa janela por construcao, sem relogio:
+# shims no PATH de UM processo param a primeira chamada destrutiva dele (`rm`,
+# `rmdir` ou `mv`, o que a implementacao usar) ou a volta do primeiro `mkdir`
+# que deu certo, e so soltam quando o teste cria o arquivo de "segue". O shim
+# fotografa o lockdir logo depois do comando destrutivo.
+
+_SHIM_DESTRUTIVO = """#!/bin/bash
+# Primeira chamada destrutiva deste processo: avisa, espera a vez, executa e
+# fotografa o lockdir logo depois. As demais passam direto.
+PATH="${PATH#*:}"
+if mkdir "$SHIM_MARKS/destrutivo" 2>/dev/null; then
+  echo "@CMD@ $*" > "$SHIM_MARKS/pausado.tmp"
+  mv "$SHIM_MARKS/pausado.tmp" "$SHIM_MARKS/pausado"
+  while [[ ! -e "$SHIM_MARKS/segue" ]]; do sleep 0.02; done
+  @CMD@ "$@"; rc=$?
+  if [[ -d "$LOCKDIR" ]]; then foto=presente; else foto=ausente; fi
+  echo "$foto" > "$SHIM_MARKS/depois.tmp"
+  mv "$SHIM_MARKS/depois.tmp" "$SHIM_MARKS/depois"
+  echo "destrutivo $rc" >> "$SHIM_LOG"
+  exit "$rc"
+fi
+exec @CMD@ "$@"
+"""
+
+_SHIM_MKDIR = """#!/bin/bash
+# Registra cada tentativa ("mkdir <rc>"). Com SHIM_PAUSA_MKDIR, a primeira que
+# deu certo avisa e espera a vez antes de voltar: o lockdir existe e o dono
+# ainda nao gravou nada nele.
+PATH="${PATH#*:}"
+mkdir "$@"; rc=$?
+echo "mkdir $rc" >> "$SHIM_LOG"
+if [[ $rc == 0 && -n "${SHIM_PAUSA_MKDIR:-}" ]] && mkdir "$SHIM_MARKS/mkdir-pausou" 2>/dev/null; then
+  : > "$SHIM_MARKS/criou"
+  while [[ ! -e "$SHIM_MARKS/segue-mkdir" ]]; do sleep 0.02; done
+fi
+exit "$rc"
+"""
+
+_SHIM_STAT = """#!/bin/bash
+# Primeira chamada: executa, avisa e espera a vez antes de devolver a resposta.
+# Quem chamou fica com a idade do lockdir na mao e ainda nao agiu.
+PATH="${PATH#*:}"
+saida=$(stat "$@"); rc=$?
+if mkdir "$SHIM_MARKS/stat-pausou" 2>/dev/null; then
+  : > "$SHIM_MARKS/leu-idade"
+  while [[ ! -e "$SHIM_MARKS/segue-stat" ]]; do sleep 0.02; done
+fi
+if [[ -n "$saida" ]]; then printf '%s\\n' "$saida"; fi
+exit "$rc"
+"""
+
+
+def _com_shims(
+    env: dict[str, str], tmp_path: Path, nome: str, lockdir: Path,
+    *, destrutivo: bool = True, pausa_mkdir: bool = False, pausa_stat: bool = False,
+) -> tuple[dict[str, str], Path, Path]:
+    """Ambiente de UM processo com os shims de sincronizacao no inicio do PATH.
+
+    Devolve (env, marcas, log). `marcas/pausado` aparece quando a primeira
+    chamada destrutiva parou, `marcas/segue` a solta e `marcas/depois` diz se o
+    lockdir existia logo depois dela. `log` tem, em ordem, uma linha por
+    `mkdir` ("mkdir <rc>") e uma pela chamada destrutiva ("destrutivo <rc>").
+    Com `pausa_stat`, `marcas/leu-idade` aparece quando o primeiro `stat`
+    terminou e `marcas/segue-stat` devolve a resposta a quem chamou.
+    """
+    shim_dir = tmp_path / f"shims-{nome}"
+    marcas = tmp_path / f"marcas-{nome}"
+    shim_dir.mkdir()
+    marcas.mkdir()
+    corpos = {"mkdir": _SHIM_MKDIR}
+    if pausa_stat:
+        corpos["stat"] = _SHIM_STAT
+    if destrutivo:
+        corpos.update({cmd: _SHIM_DESTRUTIVO.replace("@CMD@", cmd) for cmd in ("rm", "rmdir", "mv")})
+    for cmd, corpo in corpos.items():
+        shim = shim_dir / cmd
+        shim.write_text(corpo, encoding="utf-8", newline="\n")
+        shim.chmod(0o755)
+    log = marcas / "eventos.log"
+    env = dict(env, SHIM_MARKS=marcas.as_posix(), SHIM_LOG=log.as_posix(), LOCKDIR=lockdir.as_posix())
+    if pausa_mkdir:
+        env["SHIM_PAUSA_MKDIR"] = "1"
+    env["PATH"] = f"{shim_dir}{os.pathsep}{env['PATH']}"
+    return env, marcas, log
+
+
+def _eventos(log: Path) -> list[str]:
+    """Linhas completas do log de eventos (a ultima pode estar sendo escrita)."""
+    if not log.exists():
+        return []
+    return log.read_text(encoding="utf-8").split("\n")[:-1]
+
+
+def _mkdirs(log: Path) -> list[str]:
+    """rc de cada `mkdir` do processo, em ordem."""
+    return [ev.split()[1] for ev in _eventos(log) if ev.startswith("mkdir ")]
+
+
+def _mkdir_depois_do_destrutivo(log: Path) -> str | None:
+    """rc do primeiro `mkdir` tentado depois da chamada destrutiva, ou None."""
+    eventos = _eventos(log)
+    for i, ev in enumerate(eventos):
+        if ev.startswith("destrutivo "):
+            return next((d.split()[1] for d in eventos[i + 1:] if d.startswith("mkdir ")), None)
+    return None
+
+
+def _espera(cond, proc: subprocess.Popen, quem: str, o_que: str, prazo: float = 60) -> None:
+    """Espera `cond()` valer. O sleep so espaca a consulta; nada depende dele."""
+    deadline = time.monotonic() + prazo
+    while not cond():
+        if proc.poll() is not None:
+            assert cond(), f"{quem} saiu com rc={proc.returncode} antes de {o_que}"
+            return
+        assert time.monotonic() < deadline, f"{quem} nunca chegou a {o_que}"
+        time.sleep(0.02)
+
+
+def _dono_morto(harness_dir: Path, preambulo: str = "") -> Path:
+    """Lockdir de um dono que pegou o lock e morreu sem soltar, ha uma hora.
+
+    O dono e o proprio lock (acquire num processo que sai sem release), entao o
+    lockdir fica no formato que a implementacao grava, qualquer que seja ele.
+    """
+    script = f"""
+        {preambulo}
+        source "{LOCK_SH}"
+        acquire_state_lock || exit 1
+        exit 0
+    """
+    r = subprocess.run(
+        [BASH, "-c", script], env=_env(harness_dir), capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, f"dono morto nao pegou o lock: {r.stderr}"
+    lockdir = harness_dir / "state.json.lockdir"
+    assert lockdir.is_dir(), "o dono morto nao deixou o lockdir"
+    velho = time.time() - 3600
+    os.utime(lockdir, (velho, velho))
+    return lockdir
+
+
+def _script_entra(m: str, nome: str) -> str:
+    """Waiter no molde dos hooks: adquire, marca que entrou e solta no EXIT."""
+    return f"""
+        set -euo pipefail
+        source "{LOCK_SH}"
+        acquire_state_lock || exit 1
+        trap release_state_lock EXIT
+        : > "{m}/{nome}_entrou"
+    """
+
+
+def _script_segura(m: str, nome: str) -> str:
+    """Dono no molde dos hooks: adquire, avisa e so solta quando o teste mandar."""
+    return f"""
+        set -euo pipefail
+        source "{LOCK_SH}"
+        acquire_state_lock || exit 1
+        trap release_state_lock EXIT
+        : > "{m}/{nome}_segura"
+        while [[ ! -e "{m}/{nome}_solta" ]]; do sleep 0.05; done
+    """
+
+
+def _popen(script: str, env: dict[str, str]) -> subprocess.Popen:
+    return subprocess.Popen(
+        [BASH, "-c", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+
+def _colhe(*procs: subprocess.Popen | None) -> list[tuple[int, str]]:
+    """(rc, stderr) de cada processo; quem nao sai em 60 s e morto."""
+    saida = []
+    for p in procs:
+        if p is None:
+            continue
+        try:
+            _, err = p.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            _, err = p.communicate()
+        saida.append((p.returncode, err))
+    return saida
+
+
+class TestCorridaDaQuebraDeStale:
+    """Quem quebra um lock stale so remove o lock que julgou stale.
+
+    O defeito existia no main antes do conserto de carga: dois waiters diante
+    do mesmo lockdir velho concluem os dois "stale"; o primeiro quebra e o lock
+    passa para um terceiro; o segundo, com a decisao tomada sobre o lockdir
+    anterior, remove o lockdir do terceiro. A exclusao mutua acaba: o segundo
+    entra com o terceiro ainda dentro.
+
+    STATE_LOCK_STALE_SECS=300 com o dono morto ha uma hora: o lock velho e
+    stale, e um lock novo so ficaria stale depois de cinco minutos, muito alem
+    da duracao do teste sob qualquer carga. O timeout so guarda contra deadlock.
+    """
+
+    ENV = {"STATE_LOCK_STALE_SECS": "300", "STATE_LOCK_TIMEOUT_SECS": "60"}
+
+    def test_waiter_atrasado_nao_remove_o_lock_que_um_terceiro_pegou(self, harness_dir, tmp_path):
+        lockdir = _dono_morto(harness_dir)
+        marcas = harness_dir / "marcas"
+        marcas.mkdir()
+        m = marcas.as_posix()
+        env = _env(harness_dir, **self.ENV)
+        env_w2, marcas_w2, log_w2 = _com_shims(env, tmp_path, "w2", lockdir)
+
+        w2 = _popen(_script_entra(m, "w2"), env_w2)
+        w3 = None
+        try:
+            # W2 julgou o lockdir velho stale e parou antes de remover.
+            _espera_marca(marcas_w2 / "pausado", w2, "W2")
+            # W1 tambem julga stale, quebra o lock velho, entra e sai.
+            w1 = subprocess.run(
+                [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+            )
+            assert w1.returncode == 0, w1.stderr
+            # Um terceiro pega o lock e fica com ele.
+            w3 = _popen(_script_segura(m, "w3"), env)
+            _espera_marca(marcas / "w3_segura", w3, "W3")
+            # W2 segue com a remocao que decidiu antes.
+            (marcas_w2 / "segue").touch()
+            _espera_marca(marcas_w2 / "depois", w2, "W2")
+            _espera(
+                lambda: _mkdir_depois_do_destrutivo(log_w2) is not None,
+                w2, "W2", "tentar o lock de novo",
+            )
+
+            comando = (marcas_w2 / "pausado").read_text(encoding="utf-8").strip()
+            foto = (marcas_w2 / "depois").read_text(encoding="utf-8").strip()
+            assert foto == "presente", (
+                f"o lock de W3 sumiu: W2 removeu o lockdir que W3 acabou de pegar ({comando})"
+            )
+            assert _mkdir_depois_do_destrutivo(log_w2) != "0", "W2 pegou o lock com W3 ainda dentro"
+        finally:
+            (marcas_w2 / "segue").touch()
+            (marcas / "w3_solta").touch()
+            resultados = _colhe(w2, w3)
+        for rc, err in resultados:
+            assert rc == 0, err
+
+    def test_waiter_parado_depois_de_ler_a_idade_nao_remove_o_lock_novo(self, harness_dir, tmp_path):
+        """A troca acontece entre a leitura da idade e o resto da quebra.
+
+        Quem le a idade e so DEPOIS lista o lockdir junta a idade do lock velho
+        com o dono do novo, e remove o dono do novo pelo nome certo.
+        """
+        lockdir = _dono_morto(harness_dir)
+        marcas = harness_dir / "marcas"
+        marcas.mkdir()
+        m = marcas.as_posix()
+        env = _env(harness_dir, **self.ENV)
+        env_w2, marcas_w2, log_w2 = _com_shims(env, tmp_path, "w2", lockdir, pausa_stat=True)
+        (marcas_w2 / "segue").touch()  # a chamada destrutiva so fotografa, sem parar
+
+        w2 = _popen(_script_entra(m, "w2"), env_w2)
+        w3 = None
+        try:
+            # W2 leu a idade do lockdir velho e parou antes de agir.
+            _espera_marca(marcas_w2 / "leu-idade", w2, "W2")
+            w1 = subprocess.run(
+                [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+            )
+            assert w1.returncode == 0, w1.stderr
+            w3 = _popen(_script_segura(m, "w3"), env)
+            _espera_marca(marcas / "w3_segura", w3, "W3")
+            (marcas_w2 / "segue-stat").touch()
+            _espera_marca(marcas_w2 / "depois", w2, "W2")
+            _espera(
+                lambda: _mkdir_depois_do_destrutivo(log_w2) is not None,
+                w2, "W2", "tentar o lock de novo",
+            )
+
+            comando = (marcas_w2 / "pausado").read_text(encoding="utf-8").strip()
+            foto = (marcas_w2 / "depois").read_text(encoding="utf-8").strip()
+            assert foto == "presente", (
+                f"o lock de W3 sumiu: W2 juntou a idade do lock velho com o lock de W3 ({comando})"
+            )
+            assert _mkdir_depois_do_destrutivo(log_w2) != "0", "W2 pegou o lock com W3 ainda dentro"
+        finally:
+            (marcas_w2 / "segue-stat").touch()
+            (marcas / "w3_solta").touch()
+            resultados = _colhe(w2, w3)
+        for rc, err in resultados:
+            assert rc == 0, err
+
+    def test_lock_que_nasce_durante_a_quebra_nao_fica_com_dois_donos(self, harness_dir, tmp_path):
+        """O terceiro criou o lockdir e ainda nao gravou o dono quando a remocao atrasada chega."""
+        lockdir = _dono_morto(harness_dir)
+        marcas = harness_dir / "marcas"
+        marcas.mkdir()
+        m = marcas.as_posix()
+        env = _env(harness_dir, **self.ENV)
+        env_w2, marcas_w2, _ = _com_shims(env, tmp_path, "w2", lockdir)
+        env_a, marcas_a, log_a = _com_shims(env, tmp_path, "a", lockdir, destrutivo=False, pausa_mkdir=True)
+
+        w2 = _popen(_script_entra(m, "w2"), env_w2)
+        a = b = None
+        try:
+            _espera_marca(marcas_w2 / "pausado", w2, "W2")
+            w1 = subprocess.run(
+                [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+            )
+            assert w1.returncode == 0, w1.stderr
+            # A cria o lockdir e para antes de gravar o dono.
+            a = _popen(_script_entra(m, "a"), env_a)
+            _espera_marca(marcas_a / "criou", a, "A")
+            # A remocao atrasada de W2 chega no lockdir recem-nascido de A.
+            (marcas_w2 / "segue").touch()
+            _espera_marca(marcas_w2 / "depois", w2, "W2")
+            # B pega o lock e fica com ele.
+            b = _popen(_script_segura(m, "b"), env)
+            _espera_marca(marcas / "b_segura", b, "B")
+            # A volta e grava o dono: no lockdir de B.
+            (marcas_a / "segue-mkdir").touch()
+            _espera(
+                lambda: (marcas / "a_entrou").exists() or len(_mkdirs(log_a)) >= 2,
+                a, "A", "entrar ou tentar o lock de novo",
+            )
+
+            assert not (marcas / "a_entrou").exists(), "A e B ficaram os dois com o lock"
+            assert _mkdirs(log_a)[1] != "0", "A pegou o lock com B ainda dentro"
+        finally:
+            (marcas_w2 / "segue").touch()
+            (marcas_a / "segue-mkdir").touch()
+            (marcas / "b_solta").touch()
+            resultados = _colhe(w2, a, b)
+        for rc, err in resultados:
+            assert rc == 0, err
+
+    def test_dono_que_perdeu_o_lock_por_prazo_nao_remove_o_do_sucessor(self, harness_dir, tmp_path):
+        """O dono passou do prazo e outro quebrou o lock; o release atrasado do primeiro nao apaga o do segundo."""
+        lockdir = harness_dir / "state.json.lockdir"
+        marcas = harness_dir / "marcas"
+        marcas.mkdir()
+        m = marcas.as_posix()
+        env = _env(harness_dir, **self.ENV)
+        env_h, marcas_h, _ = _com_shims(env, tmp_path, "h", lockdir)
+
+        h = _popen(_script_segura(m, "h"), env_h)
+        w = None
+        try:
+            _espera_marca(marcas / "h_segura", h, "H")
+            # H passou do prazo: o lock dele agora e stale para quem espera.
+            velho = time.time() - 3600
+            os.utime(lockdir, (velho, velho))
+            # H comeca a soltar e para antes de remover.
+            (marcas / "h_solta").touch()
+            _espera_marca(marcas_h / "pausado", h, "H")
+            # W quebra o lock vencido de H e fica com ele.
+            w = _popen(_script_segura(m, "w"), env)
+            _espera_marca(marcas / "w_segura", w, "W")
+            (marcas_h / "segue").touch()
+            _espera_marca(marcas_h / "depois", h, "H")
+
+            comando = (marcas_h / "pausado").read_text(encoding="utf-8").strip()
+            foto = (marcas_h / "depois").read_text(encoding="utf-8").strip()
+            assert foto == "presente", f"o release atrasado de H apagou o lock de W ({comando})"
+        finally:
+            (marcas_h / "segue").touch()
+            (marcas / "h_solta").touch()
+            (marcas / "w_solta").touch()
+            resultados = _colhe(h, w)
+        for rc, err in resultados:
+            assert rc == 0, err
+
+    def test_lockdir_abandonado_pela_versao_anterior_e_quebrado(self, harness_dir):
+        """Lockdir stale no formato antigo (`owner` com "pid epoch"): trocar de versao nao trava o lock."""
+        lockdir = harness_dir / "state.json.lockdir"
+        lockdir.mkdir()
+        (lockdir / "owner").write_text("999999 12345\n", encoding="utf-8", newline="\n")
+        velho = time.time() - 3600
+        os.utime(lockdir, (velho, velho))
+        result = _run_lock(
+            ["acquire"], harness_dir, STATE_LOCK_STALE_SECS="300", STATE_LOCK_TIMEOUT_SECS="10",
+        )
+        assert result.returncode == 0, result.stderr
+
+
+class TestOpcoesDeGlobDeQuemFazSource:
+    """O lock funciona com as opcoes de glob de quem faz `source` dele.
+
+    Os hooks fazem `source` do lock no proprio shell, com as opcoes que tiverem.
+    Um lock que dependesse do glob ligado travaria calado sob `set -f`.
+    """
+
+    @pytest.mark.parametrize("opcao", ["set -f", "shopt -s failglob"])
+    def test_quebra_stale_e_ciclo_completo(self, harness_dir, opcao):
+        preambulo = f"set -euo pipefail\n{opcao}"
+        _dono_morto(harness_dir, preambulo)
+        script = f"""
+            {preambulo}
+            source "{LOCK_SH}"
+            acquire_state_lock || exit 1
+            test -d "$STATE_LOCK_DIR"
+            release_state_lock
+            test ! -d "$STATE_LOCK_DIR"
+        """
+        result = subprocess.run(
+            [BASH, "-c", script],
+            env=_env(harness_dir, STATE_LOCK_STALE_SECS="300", STATE_LOCK_TIMEOUT_SECS="10"),
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
