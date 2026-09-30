@@ -175,10 +175,15 @@ def test_no_morto_ainda_forca_pass_false(tmp_path):
 # tautologia.
 # ---------------------------------------------------------------------------
 
+# Pai de d017a6b (o commit que introduziu o roteamento por tabela). Fixado por
+# SHA, nunca por branch: `main` passou a conter o codigo novo no merge c175fd9 e
+# o controle reprovava por construcao.
+OLD_REF = "9487f48b2689247d9c8e86f756b864d281c86dca"
+
 
 def _old_wf_source() -> str:
     result = subprocess.run(
-        ["git", "-C", str(ROOT), "show", "main:scripts/workflows/wf-verify-multimodel.js"],
+        ["git", "-C", str(ROOT), "show", f"{OLD_REF}:scripts/workflows/wf-verify-multimodel.js"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -188,7 +193,7 @@ def _old_wf_source() -> str:
 
 
 def test_CONTROLE_codigo_antigo_adjudicava_medium_low(tmp_path):
-    """Metade 1: no codigo de `main` (antes desta tarefa), medium/low SEMPRE
+    """Metade 1: no codigo de OLD_REF (antes desta tarefa), medium/low SEMPRE
     iam para adjudicacao — prova que o teste acima nao e tautologia."""
     old_file = tmp_path / "wf-verify-multimodel-old.js"
     old_file.write_text(_old_wf_source(), encoding="utf-8")
@@ -202,5 +207,6 @@ def test_CONTROLE_codigo_antigo_adjudicava_medium_low(tmp_path):
     for call in out["calls"]["review"]:
         assert call.get("agentType") is None, (
             "codigo antigo nao deveria passar agentType — se passar, o "
-            "arquivo de main ja mudou e este controle precisa ser revisto"
+            "arquivo em OLD_REF nao e o anterior a d017a6b e este controle "
+            "precisa ser revisto"
         )
