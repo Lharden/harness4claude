@@ -12,6 +12,7 @@ ampla adjudica so achados criticos e altos."
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -171,33 +172,41 @@ def test_no_morto_ainda_forca_pass_false(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Duas metades: o mesmo cenario roda contra o codigo ANTIGO (antes desta
-# mudanca) via git show, e o teste tem que reprovar la para provar que nao e
-# tautologia.
+# mudanca), versionado em tests/data, e o teste tem que reprovar la para provar
+# que nao e tautologia.
 # ---------------------------------------------------------------------------
 
-# Pai de d017a6b (o commit que introduziu o roteamento por tabela). Fixado por
-# SHA, nunca por branch: `main` passou a conter o codigo novo no merge c175fd9 e
-# o controle reprovava por construcao.
-OLD_REF = "9487f48b2689247d9c8e86f756b864d281c86dca"
+# Versao de antes de d017a6b (o commit que introduziu o roteamento por tabela),
+# fixada pelo hash de blob do git. Procedencia:
+#   git rev-parse d017a6b^:scripts/workflows/wf-verify-multimodel.js
+# (d017a6b^ = 9487f48b, mesmo conteudo de 86d6315, o ultimo commit que tocou o
+# arquivo antes da mudanca). O controle nao le do historico: `git show main:`
+# reprovava por construcao depois do merge c175fd9, e `git show <sha>:` reprova
+# no CI, que faz checkout raso (actions/checkout, fetch-depth 1) sem o commit.
+OLD_FILE = TESTS_DIR / "data" / "wf-verify-multimodel-antes-de-d017a6b.js"
+OLD_BLOB = "f424d63067cad0515f342dddd6d0ff31134cc488"
 
 
-def _old_wf_source() -> str:
-    result = subprocess.run(
-        ["git", "-C", str(ROOT), "show", f"{OLD_REF}:scripts/workflows/wf-verify-multimodel.js"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
+def _git_blob_sha1(data: bytes) -> str:
+    """O hash que `git hash-object` daria ao conteudo, sem git nem historico."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
+
+
+def _old_wf_file() -> Path:
+    """OLD_FILE, depois de provar que ainda e o blob OLD_BLOB."""
+    blob = _git_blob_sha1(OLD_FILE.read_bytes())
+    assert blob == OLD_BLOB, (
+        f"{OLD_FILE.name} virou o blob {blob}, nao e mais o {OLD_BLOB} de antes "
+        "de d017a6b. Restaure (Git Bash, na raiz do repo):\n"
+        f"  git cat-file blob {OLD_BLOB} > tests/data/{OLD_FILE.name}"
     )
-    assert result.returncode == 0, f"git show falhou:\n{result.stderr}"
-    return result.stdout
+    return OLD_FILE
 
 
 def test_CONTROLE_codigo_antigo_adjudicava_medium_low(tmp_path):
-    """Metade 1: no codigo de OLD_REF (antes desta tarefa), medium/low SEMPRE
+    """Metade 1: no codigo de antes de d017a6b (OLD_FILE), medium/low SEMPRE
     iam para adjudicacao — prova que o teste acima nao e tautologia."""
-    old_file = tmp_path / "wf-verify-multimodel-old.js"
-    old_file.write_text(_old_wf_source(), encoding="utf-8")
-    out = _run(old_file, SOMENTE_MEDIUM_LOW, tmp_path)
+    out = _run(_old_wf_file(), SOMENTE_MEDIUM_LOW, tmp_path)
     assert len(out["calls"]["adjudicate"]) == 2, (
         "esperava que o codigo antigo adjudicasse os 2 findings medium/low "
         "(comportamento que esta tarefa remove)"
@@ -206,7 +215,7 @@ def test_CONTROLE_codigo_antigo_adjudicava_medium_low(tmp_path):
     assert "nao_adjudicados" not in out["result"]
     for call in out["calls"]["review"]:
         assert call.get("agentType") is None, (
-            "codigo antigo nao deveria passar agentType — se passar, o "
-            "arquivo em OLD_REF nao e o anterior a d017a6b e este controle "
-            "precisa ser revisto"
+            "codigo antigo nao deveria passar agentType — se passar, "
+            "OLD_FILE nao e o anterior a d017a6b e este controle precisa "
+            "ser revisto"
         )
