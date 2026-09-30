@@ -19,7 +19,7 @@ import pytest
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import checar_triagem  # noqa: E402
+import checar_triagem
 
 DADOS = Path(__file__).parent / "data" / "verify-rodadas-2026-09-30"
 SECAO = "## Destino dos achados não adjudicados"
@@ -304,7 +304,10 @@ def test_rodada_final_por_mtime_sem_workflow_progress(tmp_path):
     nova = _saida(verify, "wf_nova", [("achado novo ja decidido aqui", False)], formato="retorno")
     os.utime(velha, (1_000, 1_000))
     os.utime(nova, (2_000, 2_000))
-    linhas = [_linha("wf_velha", 1, "achado velho ja decidido aqui"), _linha("wf_nova", 1, "achado novo ja decidido aqui")]
+    linhas = [
+        _linha("wf_velha", 1, "achado velho ja decidido aqui"),
+        _linha("wf_nova", 1, "achado novo ja decidido aqui"),
+    ]
     assert _checar(_plano(tmp_path, linhas), verify)[0] == 0
     os.utime(velha, (3_000, 3_000))
     assert _checar(_plano(tmp_path, linhas), verify)[0] == 1

@@ -244,13 +244,15 @@ def checar(plano: Path, saidas: list[Path]) -> tuple[int, list[str]]:
 
     if not problemas:
         total = sum(len(r.pendentes) for r in rodadas)
-        return 0, [
+        ok = (
             f"OK: {total} achado(s) nao adjudicado(s) em {len(rodadas)} rodada(s), todos com destino; "
             f"ultima rodada ({final.id}) sem bloqueio."
-        ]
+        )
+        return 0, [ok]
     mensagens = list(problemas)
     if faltam:
-        mensagens += ["", 'Linhas para colar sob "## Destino dos achados não adjudicados" (troque destino e referencia):']
+        cabeca = 'Linhas para colar sob "## Destino dos achados não adjudicados" (troque destino e referencia):'
+        mensagens += ["", cabeca]
         mensagens += [_linha_pronta(r, a) for r, a in faltam]
     saidas_txt = " ".join(f'"{s}"' for s in saidas)
     mensagens += ["", f'Depois rode de novo: python scripts/checar_triagem.py --plano "{plano}" --saidas {saidas_txt}']
