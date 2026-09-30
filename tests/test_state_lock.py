@@ -417,3 +417,32 @@ class TestReentrancySemantics:
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0, "lockdir foi removido indevidamente"
+
+
+class TestIntervaloDeEspera:
+    """O intervalo de retry e o declarado em STATE_LOCK_POLL_MS, em milissegundos.
+
+    Antes, `poll_secs="0.${STATE_LOCK_POLL_MS}"` fazia 50 virar `sleep 0.50`
+    (meio segundo, nao 50 ms) e 5 virar `0.5`. Cada passagem do lock custava
+    ate 10x o documentado, e dez workers em fila estouravam os 20 s do teste de
+    escrita concorrente sob carga (2026-09-30). Prova sem relogio: um `sleep`
+    de mentira registra o argumento que o lock realmente usa.
+    """
+
+    @pytest.mark.parametrize("poll_ms,esperado", [("50", "0.050"), ("5", "0.005"), ("1500", "1.500")])
+    def test_sleep_recebe_o_intervalo_em_segundos(self, harness_dir, poll_ms, esperado):
+        (harness_dir / "state.json.lockdir").mkdir()  # ocupado: forca uma espera
+        script = f"""
+            source "{LOCK_SH}"
+            sleep() {{ echo "$1"; exit 0; }}
+            STATE_LOCK_STALE_SECS=3600
+            acquire_state_lock
+            exit 9
+        """
+        result = subprocess.run(
+            [BASH, "-c", script],
+            env=_env(harness_dir, STATE_LOCK_POLL_MS=poll_ms, STATE_LOCK_TIMEOUT_SECS="30"),
+            capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == esperado
