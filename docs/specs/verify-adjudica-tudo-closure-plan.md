@@ -41,6 +41,31 @@ e a medição (`verify-adjudica-tudo-medicao.md`) o cita como fonte dos destinos
 - Resultado: 83 testes nos arquivos afetados; mutação **23 de 23** (M18–M26
   novos, um por regra desta iteração).
 
+## Rodada 2 (`wf_e66b2c58-1e7`, script `d5aff37`, sha256 `0ee119e9…`)
+
+`pass: false`, **`critical_count: 2`** (bloqueio), `nos_mortos: []`, 10 não
+adjudicados. Rodada: 2 de 3.
+
+### Bloqueio → gap-closure
+
+- **B1 · adjudicador morto apagava o crítico (#1 critical, #2 high, confirmados).**
+  `.then((v) => ({ ...f, verdict: v }))` embrulhava o veredito `null` num objeto
+  sempre verdadeiro: o censo não via o nó morto, o achado saía de `confirmed` sem
+  entrar em lugar nenhum, e o `pass` saía `true`. Anterior ao ramo (a
+  metade-controle no blob de `8cd6884` reproduz), mas anulava a garantia central
+  desta mudança. Conserto: veredito vazio fica `null` e o censo conta o nó morto.
+  `test_adjudicador_morto_bloqueia` + `test_CONTROLE_codigo_de_antes_apagava_o_critico_com_adjudicador_morto`, mutante M27.
+
+### Delta tasks
+
+- [x] E1 (B1): censo do Adjudicate sobre o veredito cru.
+- [x] E2 (#7): chave do dedupe com arquivo, linha e título inteiro; na duplicata exata fica o rótulo mais grave. M28, M29.
+- [x] E3 (#11): `repo_root` só com espaços é descartado. M30.
+- [x] E4 (#6): `checar` com lista vazia sai 2. M31.
+- [x] E5 (#10): título ausente ou não texto sai 2. M32.
+- [x] E6 (#8): a skill diz o que fazer com execução abortada (não copiar; nó morto).
+- Resultado: 91 testes nos arquivos afetados; mutação **29 de 29**.
+
 ## Destino dos achados não adjudicados
 
 | Rodada | # | Achado | Destino | Referência |
@@ -62,3 +87,13 @@ e a medição (`verify-adjudica-tudo-medicao.md`) o cita como fonte dos destinos
 | wf_d91bfd29-d22 | 15 | Sem workflowProgress, a rodada final sai | limite | só o formato de retorno não tem startedAt, e ele não é o que a skill copia (a saída do host traz startedAt, conferido nos dados reais); AC-2.11 da spec fixa o mtime como desempate |
 | wf_d91bfd29-d22 | 16 | Early-return path of wf-verify-multimode | consertado | D5, test_rodada_sem_achado_traz_nao_adjudicados_zero, M26 |
 | wf_d91bfd29-d22 | 17 | Intentional behavior change: a batch wit | nao-defeito | é o propósito da mudança (L-01); o próprio revisor o registra como contrato, não defeito |
+| wf_e66b2c58-1e7 | 3 | REQ-F9 / AC-2.17 (frase de L-03 no item | nao-defeito | previsto na spec (deploy com OK do usuário); ver wf_d91bfd29-d22 #3 |
+| wf_e66b2c58-1e7 | 4 | REQ-NF3 (.js sem CR) sem teste nos arqui | nao-defeito | o teste existe: test_workflow_returns.py::test_workflow_pode_ser_invocado_pela_ferramenta varre todo scripts/workflows/*.js; o blob de controle é conferido por hash |
+| wf_e66b2c58-1e7 | 5 | A 'ultima rodada' pode sair errada quand | limite | mesma ordem por mtime de wf_d91bfd29-d22 #15: a skill copia a saída do host, que traz startedAt; AC-2.11 fixa o mtime como desempate |
+| wf_e66b2c58-1e7 | 6 | checar() com lista de saidas vazia levan | consertado | E4, test_lista_de_saidas_vazia_sai_2, M31 |
+| wf_e66b2c58-1e7 | 7 | Dedup por (file, 40 primeiros caracteres | consertado | E2, test_dedupe_nao_junta_titulos_diferentes_com_o_mesmo_prefixo e test_dedupe_de_duplicata_exata_fica_com_a_maior_severidade, M28/M29 |
+| wf_e66b2c58-1e7 | 8 | Copia de rodada que falhou (sem result/f | consertado | E6, passo 2 da seção verify da skill; test_skill_manda_copiar_a_saida_e_rodar_o_checador |
+| wf_e66b2c58-1e7 | 9 | Rodada final escolhida por mtime quando | limite | mesmo mecanismo do #5 desta rodada; ver wf_d91bfd29-d22 #15 |
+| wf_e66b2c58-1e7 | 10 | title null no achado vira a string 'None | consertado | E5, test_titulo_ausente_ou_nao_texto_sai_2, M32 |
+| wf_e66b2c58-1e7 | 11 | repo_root so com espacos e aceito e prod | consertado | E3, test_repo_root_so_com_espacos_e_ignorado, M30 |
+| wf_e66b2c58-1e7 | 12 | Referencias arquivo:linha para wf-verify | nao-defeito | fora do diff e anterior a ele: exemplo didático de skills/source-selection já defasado, registrado no graph-context |

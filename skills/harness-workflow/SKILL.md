@@ -344,7 +344,10 @@ adjudicado, conferido por script (spec `verify-adjudica-tudo`, REQ-F8).
 2. **Copie a saída logo depois da rodada.** O `.output` do host (o
    `<output-file>` da notificação) some em horas; a cópia fica no balde da task,
    fora do repo, em `<STATE_DIR>/verify/<run id>.json` (`<run id>` = o `wf_…`
-   que o tool devolveu). Nunca edite a cópia.
+   que o tool devolveu). Nunca edite a cópia. Execução que o host abortou (saída
+   sem `result`) não é rodada: não a copie — ela conta como nó morto (passo 6).
+   Se já copiou, mova a cópia para fora de `<STATE_DIR>/verify/` e diga no
+   closure-plan qual execução era; o checador sai 2 enquanto ela estiver lá.
    ```bash
    mkdir -p "<STATE_DIR>/verify"
    cp "<output-file da notificação>" "<STATE_DIR>/verify/<run id>.json"

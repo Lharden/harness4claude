@@ -141,8 +141,12 @@ def _ler_rodada(caminho: Path) -> Rodada:
             raise EntradaIlegivel(f"{caminho}: achado na posicao {pos} nao e objeto")
         if "n" in f and f["n"] != pos:
             raise EntradaIlegivel(f"{caminho}: achado na posicao {pos} traz n={f['n']!r}")
+        titulo = f.get("title")
+        if not isinstance(titulo, str):
+            # `str(None)` viraria o titulo "None", que casa com uma celula "None".
+            raise EntradaIlegivel(f"{caminho}: achado na posicao {pos} sem titulo de texto ({titulo!r})")
         # So `adjudicado: true` tira o achado da triagem; ausente conta como aberto.
-        achados.append(Achado(pos, str(f.get("title", "")), f.get("adjudicado") is True))
+        achados.append(Achado(pos, titulo, f.get("adjudicado") is True))
 
     progresso = dado.get("workflowProgress")
     inicios = [
@@ -223,6 +227,8 @@ def checar(plano: Path, saidas: list[Path]) -> tuple[int, list[str]]:
         rodadas = [_ler_rodada(a) for a in _arquivos(saidas)]
     except EntradaIlegivel as exc:
         return 2, [f"ENTRADA ILEGIVEL: {exc}"]
+    if not rodadas:
+        return 2, ["ENTRADA ILEGIVEL: nenhuma copia de rodada em --saidas"]
     ids = [r.id for r in rodadas]
     repetidos = sorted({i for i in ids if ids.count(i) > 1})
     if repetidos:

@@ -500,6 +500,27 @@ def test_mesmo_arquivo_passado_duas_vezes_nao_e_duplicata(tmp_path):
     assert _checar(_plano(tmp_path, _linhas_validas()), verify, copia)[0] == 0
 
 
+# --------------------------------------- verify da task, rodada wf_e66b2c58-1e7 ----
+
+
+def test_lista_de_saidas_vazia_sai_2(tmp_path):
+    """Achado #6: `ordem[-1]` levantava IndexError para quem chama a API direto."""
+    codigo, texto = _checar(_plano(tmp_path, []))
+    assert codigo == 2
+    assert texto
+
+
+@pytest.mark.parametrize("titulo", [None, 7])
+def test_titulo_ausente_ou_nao_texto_sai_2(tmp_path, titulo):
+    """Achado #10: `str(None)` virava o titulo 'None' e casava com a celula 'None'."""
+    verify = tmp_path / "verify"
+    copia = _saida(verify, "wf_a", [("um titulo qualquer de achado", False)])
+    dado = json.loads(copia.read_text(encoding="utf-8"))
+    dado["result"]["findings"][0]["title"] = titulo
+    copia.write_text(json.dumps(dado), encoding="utf-8")
+    assert _checar(_plano(tmp_path, []), verify)[0] == 2
+
+
 # ------------------------------------------------------- AC-2.16: skill ----
 
 SKILL = ROOT / "skills" / "harness-workflow" / "SKILL.md"
@@ -516,6 +537,8 @@ def test_skill_manda_copiar_a_saida_e_rodar_o_checador():
     assert "<STATE_DIR>/verify/<run id>.json" in texto
     assert "## Destino dos achados não adjudicados" in texto
     assert "repo_root" in texto
+    # Rodada 2, achado #8: copia de execucao abortada travava o checador em 2.
+    assert "Execução que o host abortou" in texto
 
 
 def test_skill_nao_manda_mais_para_done_so_com_pass_de_critico_alto():

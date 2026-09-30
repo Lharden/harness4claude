@@ -147,6 +147,52 @@ def test_repo_root_sem_lista_de_arquivos_nao_contradiz_o_git_diff(tmp_path):
         assert "git diff abc123" in c["prompt"]
 
 
+def test_adjudicador_morto_bloqueia(tmp_path):
+    """Rodada 2 do verify da task, achados #1/#2 (critical/high, confirmados): o
+    `.then` embrulhava o veredito null num objeto sempre verdadeiro, o censo nao
+    via o no morto, o achado sumia e o `pass` saia verde."""
+    cenario = _cenario(correctness=[_achado("bug critico nao julgado", "critical", "a.py", 1)])
+    cenario["verdicts"] = {"a.py": None}
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert out["result"]["pass"] is False
+    assert "bug critico nao julgado" in out["result"]["nos_mortos"]
+
+
+def test_dedupe_nao_junta_titulos_diferentes_com_o_mesmo_prefixo(tmp_path):
+    """Rodada 2, achado #7: a chave usava os 40 primeiros caracteres do titulo, e o
+    segundo achado do mesmo arquivo sumia sem `n` e sem destino."""
+    prefixo = "AC-2.1 sem teste correspondente em checar_triagem"
+    cenario = _cenario(
+        spec_coverage=[
+            _achado(f"{prefixo} pelo lado A", "low", "a.py", 1),
+            _achado(f"{prefixo} pelo lado B", "low", "a.py", 2),
+        ]
+    )
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert out["result"]["nao_adjudicados"] == 2
+
+
+def test_dedupe_de_duplicata_exata_fica_com_a_maior_severidade(tmp_path):
+    """Mesmo achado de duas dimensoes com rotulos diferentes: o mais grave vai ao adjudicador."""
+    cenario = _cenario(
+        correctness=[_achado("mesmo defeito visto duas vezes", "medium", "a.py", 5)],
+        security=[_achado("mesmo defeito visto duas vezes", "high", "a.py", 5)],
+    )
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert len(out["calls"]["adjudicate"]) == 1
+    assert len(out["result"]["findings"]) == 1
+    assert out["result"]["findings"][0]["severity"] == "high"
+
+
+def test_repo_root_so_com_espacos_e_ignorado(tmp_path):
+    """Rodada 2, achado #11: '   ' virava 'Repositorio:  .' em todo prompt."""
+    cenario = _cenario(correctness=[_achado("bug real", "critical")])
+    cenario["args"] = {"changed_files": ["a.py"], "repo_root": "   "}
+    out = _run(WF_FILE, cenario, tmp_path)
+    prompts = [c["prompt"] for c in out["calls"]["review"]] + [c["prompt"] for c in out["calls"]["adjudicate"]]
+    assert all("Repositorio:" not in p for p in prompts)
+
+
 def test_summary_nomeia_o_checador_e_a_secao(tmp_path):
     """AC-1.7. Sessao com o texto antigo da skill le no retorno o que fazer."""
     summary = _run(WF_FILE, SO_MEDIUM_LOW, tmp_path)["result"]["summary"]
@@ -237,4 +283,13 @@ def test_CONTROLE_codigo_de_antes_aprovava_lote_so_medium_low(tmp_path):
     out = _run(_old_wf_file(), SO_MEDIUM_LOW, tmp_path)
     assert out["result"]["pass"] is True
     assert out["result"]["nao_adjudicados"] == 2
+
+
+def test_CONTROLE_codigo_de_antes_apagava_o_critico_com_adjudicador_morto(tmp_path):
+    """Metade de `test_adjudicador_morto_bloqueia`: o defeito e anterior ao ramo."""
+    cenario = _cenario(correctness=[_achado("bug critico nao julgado", "critical", "a.py", 1)])
+    cenario["verdicts"] = {"a.py": None}
+    out = _run(_old_wf_file(), cenario, tmp_path)
+    assert out["result"]["pass"] is True
+    assert out["result"]["nos_mortos"] == []
 

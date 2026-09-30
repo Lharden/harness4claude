@@ -18,7 +18,8 @@ const baseRef = input.base_ref || 'HEAD'
 // sem ele, revisor e adjudicador resolvem caminho relativo no cwd da sessao. Na
 // medicao de verify-adjudica-tudo esse cwd era o worktree da mae com os consertos
 // ja aplicados. Vai para o prompt dos revisores E do adjudicador.
-const repoRoot = typeof input.repo_root === 'string' && input.repo_root ? input.repo_root : null
+// So espacos nao e raiz: viraria "Repositorio:  ." e os agentes voltariam ao cwd.
+const repoRoot = typeof input.repo_root === 'string' && input.repo_root.trim() ? input.repo_root.trim() : null
 // "O escopo sao os arquivos listados" so quando ha lista: sem ela, o scope manda
 // usar `git diff <base_ref>`, e as duas frases juntas se contradiziam.
 const linhaRaiz = repoRoot
@@ -128,17 +129,20 @@ const reviews = await parallel(
 
 const censoReview = censoNos('Review', DIMENSIONS.map((d) => d.key), reviews)
 
-// Consolida + deduplica por (file, title) aproximado
-const seen = new Set()
-const findings = []
+// Consolida + deduplica por (file, line, titulo inteiro). A chave antiga usava os 40
+// primeiros caracteres do titulo: dois achados diferentes do mesmo arquivo com o
+// mesmo comeco viravam um, e o segundo sumia sem `n` e sem destino. Na duplicata
+// exata fica o rotulo mais grave, que e o que decide se ela vai ao adjudicador.
+const PESO = { critical: 3, high: 2, medium: 1, low: 0 }
+const porChave = new Map()
 for (const r of censoReview.vivos) {
   for (const f of r.findings || []) {
-    const key = `${f.file}::${(f.title || '').toLowerCase().slice(0, 40)}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    findings.push(f)
+    const key = `${f.file}::${f.line ?? ''}::${(f.title || '').trim().toLowerCase()}`
+    const atual = porChave.get(key)
+    if (!atual || (PESO[f.severity] ?? -1) > (PESO[atual.severity] ?? -1)) porChave.set(key, f)
   }
 }
+const findings = [...porChave.values()]
 log(`Review: ${findings.length} findings unicos de ${censoReview.vivos.length}/${DIMENSIONS.length} dimensoes`)
 
 if (findings.length === 0) {
@@ -179,7 +183,9 @@ const adjudicated = await parallel(
         `Leia o codigo real e julgue por ele. Default para is_real=true apenas se a evidencia sustentar. ` +
         `Severidade alegada errada nao e motivo para refutar: refute so se o defeito nao existe no codigo.`,
       { label: `adjudicate:${f.file}`, phase: 'Adjudicate', schema: VERDICT_SCHEMA, agentType: 'juiz-alto-risco' },
-    ).then((v) => ({ ...f, verdict: v })),
+    // Veredito vazio fica vazio: embrulhado em `{ ...f, verdict: null }` ele era um
+    // objeto verdadeiro, o censo nao via o no morto, e o critico sumia com `pass: true`.
+    ).then((v) => (v ? { ...f, verdict: v } : null)),
   ),
 )
 
