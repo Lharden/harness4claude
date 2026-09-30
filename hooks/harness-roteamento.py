@@ -164,6 +164,13 @@ def main(argv=None) -> int:
     if not rt.ligado():
         return 0
     try:
+        # O Claude Code manda JSON em UTF-8; no Windows o stdin em pipe seria
+        # decodificado em cp1252 e o "·" da linha de roteamento chegaria como
+        # "Â·", recusando todo chip (medido em 2026-09-30).
+        try:
+            sys.stdin.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
         d = json.load(sys.stdin)
         if not isinstance(d, dict):
             return 0
