@@ -292,11 +292,17 @@ def passes_guards(prompt, state_json):
     # classify, ao banco (ramo ciclo-de-vida-da-task); ate 2026-09-23 esta guarda
     # tinha o seu proprio conjunto de "viva" e lia a projecao. DESCONHECIDA cala
     # tambem: dica de skill e opcional, e na duvida o custo de calar e zero.
+    #
+    # Com o nivel do prompt, como o classify pergunta no mesmo evento. Sem ele,
+    # a task entregue respondia NENHUMA aqui e VIVA la: o router oferecia skill
+    # no mesmo turno em que o classify anunciava CONTINUING (sim-nao-fecha-entrega).
     if SCRIPTS_DIR not in sys.path:
         sys.path.insert(0, SCRIPTS_DIR)
+    from classify_prompt import classify_prompt
     from continuation_policy import NENHUMA, task_viva  # noqa: PLC0415
 
-    return task_viva(os.path.dirname(state_json)).resposta == NENHUMA
+    nivel, _ = classify_prompt(p)
+    return task_viva(os.path.dirname(state_json), nivel_do_prompt=nivel).resposta == NENHUMA
 
 
 def load_index(idx_dir=IDX_DIR):

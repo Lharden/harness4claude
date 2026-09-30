@@ -464,10 +464,18 @@ except Exception:
 # `task_viva` responde em tres valores. DESCONHECIDA nunca abre task: abrir
 # fecharia a que talvez exista, e essa e a acao que nao se desfaz. O aviso diz a
 # causa, e o proximo prompt pergunta de novo (decisao do usuario, relatorio 8.4).
-from continuation_policy import DESCONHECIDA, VIVA, task_viva
+#
+# O nivel do prompt entra na pergunta por causa da task ENTREGUE (fase final,
+# evidencia fresca, sem `complete`). Ate 2026-09-28 so a task era olhada, e o
+# `yes` que respondia a aprovacao pedida em texto fechou a entrega como
+# `superseded` (t-20260928-203110092956). So prompt que abre pipeline fecha
+# entrega: D2 + F2, em `continuation_policy.continua`.
+from continuation_policy import DESCONHECIDA, VIVA, entregue, task_viva
+from classify_prompt import classify_prompt
 
 _balde = os.path.dirname(state_file)
-pergunta = task_viva(_balde)
+level, task_type = classify_prompt(msg)
+pergunta = task_viva(_balde, nivel_do_prompt=level)
 
 if pergunta.resposta == DESCONHECIDA:
     try:
@@ -559,6 +567,17 @@ if pergunta.resposta == VIVA and not is_task_switch:
         if gate_display else
         " Continue the active pipeline by invoking skill='harness-workflow'."
     )
+    if entregue(viva):
+        # So prompt L0 chega aqui com a task entregue. Sem a nota, "continue o
+        # pipeline" numa fase final ja verificada manda refazer o que esta
+        # pronto. A nota so informa: o hook nao sabe se ha pergunta pendente nem
+        # quem escreveu o prompt (mensagem de outra sessao tambem chega por
+        # aqui), entao nao pode dizer que o usuario aprovou nada.
+        gate_instruction += (
+            " Final phase already verified and not completed: this prompt opened "
+            "no new pipeline, so it stays in this task. Close the task with "
+            "state_cli complete + record_signal only when its work is done."
+        )
     _falar("continuing", (
         f"HARNESS v3 CONTINUING: {classification} (task {task_id}). "
         f"Current step: {step_display}. Pipeline: {pipe_display}. "
@@ -658,9 +677,7 @@ l1_all = l1_bug + l1_refactor + l1_small_feature
 # ============================================================================
 # Classification logic
 # ============================================================================
-from classify_prompt import classify_prompt
-
-level, task_type = classify_prompt(msg)
+# `level` e `task_type` vieram de `classify_prompt`, antes da pergunta ao banco.
 classification = f"{level}-{task_type}"
 
 # ============================================================================

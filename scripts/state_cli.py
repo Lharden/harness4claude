@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
+from projecao import projetar
 from transactional_state import EVIDENCIA_COM_RELATORIO, HarnessDatabase, StateTransitionError
 
 
@@ -25,13 +27,17 @@ def _pipelines() -> dict[str, list[str]]:
     return json.loads((arvore / "pipelines.json").read_text(encoding="utf-8"))["pipelines"]
 
 
-def _sync(home: Path, task: dict) -> None:
-    path = home / "state.json"
-    try:
-        projection = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (OSError, json.JSONDecodeError):
-        projection = {}
-    projection.update(
+def _sync(home: Path, db: HarnessDatabase, task: dict) -> None:
+    """Projeta a task operada, pela regra de `projecao.projetar`.
+
+    Ate 2026-09-28 isto era um `update` sobre o que estivesse no `state.json`,
+    que podia ser a projecao de OUTRA task (incidente em
+    `docs/specs/sim-nao-fecha-entrega-diagnostico.md`).
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    dona = projetar(
+        home,
+        task,
         {
             "task_id": task["task_id"],
             "classification": f"{task['tier']}-{task['kind']}",
@@ -48,12 +54,22 @@ def _sync(home: Path, task: dict) -> None:
             # e deixava `artifacts_so_far: []` no state — sucesso silencioso que
             # parecia perda de dado.
             "artifacts_so_far": [a["path"] for a in task.get("artifacts", [])],
-        }
+        },
+        db,
     )
-    temporary = path.with_suffix(".json.tmp")
-    home.mkdir(parents=True, exist_ok=True)
-    temporary.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    if dona is not None:
+        # A operacao valeu no banco; so a projecao ficou com quem e dono dela.
+        # Dito aqui porque o `record_signal --expect-task` desta task vai recusar
+        # em seguida, e o remedio antigo para essa recusa — restaurar o
+        # state.json a mao — agora seria roubar a projecao da task viva. ASCII de
+        # proposito: no Windows o stderr sai em cp1252 e o travessao vira 0x97.
+        print(
+            f"aviso: state.json segue com a task {dona}; a operacao em "
+            f"{task['task_id']} ficou so no harness.db. Nao edite o state.json a mao: "
+            f"record_signal --expect-task {task['task_id']} vai recusar, e o desfecho "
+            f"dela ja esta no banco.",
+            file=sys.stderr,
+        )
 
 
 def _hash_do_relatorio(caminho: str | None) -> str:
@@ -167,7 +183,7 @@ def main(argv=None) -> int:
     except (StateTransitionError, KeyError, ValueError) as exc:
         print(f"erro: {exc}")
         return 2
-    _sync(args.home, task)
+    _sync(args.home, db, task)
     print(json.dumps(task, ensure_ascii=False, sort_keys=True))
     return 0
 
