@@ -19,7 +19,23 @@ class StateTransitionError(RuntimeError):
 ACTIVE_STATUSES = ("suggested", "active", "awaiting_gate", "verified")
 # Um desfecho ja registrado nao muda mais. Fora do indice de task unica e
 # fora do alcance de qualquer evidencia que chegue depois.
+#
+# Ate 2026-09-30 cada escritor de `tasks.status` decidia sozinho, e nove dos
+# quinze nao olhavam. Agora sao duas perguntas, cada uma num lugar:
+# `HarnessDatabase._desfecho_registrado` recusa quem tenta mudar o ciclo de vida
+# de uma task encerrada (`docs/specs/desfecho-terminal-diagnostico.md`), e
+# `_status_derivado` recalcula o status pelos portoes sem reabrir terminal
+# (`docs/specs/status-derivado-dos-portoes-diagnostico.md`).
 TERMINAL_STATUSES = frozenset({"done", "abandoned", "superseded"})
+#: O que cada desfecho ja diz, na recusa de quem tenta mexer nele.
+O_QUE_O_DESFECHO_DIZ = {
+    "superseded": (
+        "`superseded` ja registra a entrega: ela foi verificada (verified=1) e "
+        "substituida antes do `complete`. Nao ha mais nada a fechar nela."
+    ),
+    "done": "Ela ja foi concluida.",
+    "abandoned": "Ela foi abandonada; retomar esse trabalho e abrir task nova.",
+}
 HUMAN_GATES = {"approve-spec", "approve-plan", "answer-clarifications", "escalation", "branch-open"}
 #: Portoes que nao sao fase: nascem em qualquer uma e resolvem em qualquer uma.
 #: Os outros de HUMAN_GATES so resolvem na propria fase (`_resolve_gate_aceita`),
@@ -566,6 +582,7 @@ class HarnessDatabase:
         final = f"{tier}-{kind}"
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            self._exige_task_viva(connection, row, "confirm_classification")
             self._reclassificar_portoes(connection, row, pipeline)
             decision = connection.execute(
                 "SELECT suggested FROM classifications WHERE task_id = ?", (task_id,)
@@ -864,6 +881,10 @@ class HarnessDatabase:
         now = utc_now()
         with self._write() as connection:
             task = self._locked_task(connection, task_id)
+            # Oferta nova e trabalho novo: nao nasce em task encerrada (D2). O
+            # ciclo de um ramo JA oferecido continua depois dela — ver
+            # `request_branch_approval` e `resolve_branch_decision`.
+            self._exige_task_viva(connection, task, "create_branch")
             offer_stats = connection.execute(
                 "SELECT COUNT(*) AS count, MAX(offered_turn) AS last_turn FROM branches WHERE task_id = ?",
                 (task_id,),
@@ -1053,6 +1074,7 @@ class HarnessDatabase:
     ) -> dict[str, Any]:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            self._exige_task_viva(connection, row, "reclassify")
             self._reclassificar_portoes(connection, row, pipeline)
             connection.execute(
                 """
@@ -1113,6 +1135,7 @@ class HarnessDatabase:
     def open_gate(self, task_id: str, gate_type: str) -> dict[str, Any]:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            self._exige_task_viva(connection, row, "open_gate")
             pending = connection.execute(
                 "SELECT 1 FROM gates WHERE task_id = ? AND gate_type = ? AND status = 'pending'",
                 (task_id, gate_type),
@@ -1138,6 +1161,10 @@ class HarnessDatabase:
     ) -> dict[str, Any]:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            # Antes da revisao: quem chega numa task substituida carrega a
+            # revisao de antes da troca, e "revision mismatch" o faria reler e
+            # tentar de novo so para ouvir entao o motivo real.
+            self._exige_task_viva(connection, row, "transition")
             self._expect_revision(row, expected_revision)
             if owner_epoch is not None and int(row["owner_epoch"]) != owner_epoch:
                 raise StateTransitionError(
@@ -1201,6 +1228,7 @@ class HarnessDatabase:
             raise StateTransitionError(f"unsupported gate decision: {decision}")
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            self._exige_task_viva(connection, row, "resolve_gate")
             self._expect_revision(row, expected_revision)
             pending = connection.execute(
                 "SELECT id FROM gates WHERE task_id = ? AND gate_type = ? AND status = 'pending' "
@@ -1677,6 +1705,9 @@ class HarnessDatabase:
     def complete(self, task_id: str, *, expected_revision: int) -> dict[str, Any]:
         with self._write() as connection:
             row = self._locked_task(connection, task_id)
+            # `superseded` inclusive (D1): ele ja registra a entrega verificada,
+            # e `done` por cima apagava o fato de que ela foi substituida.
+            self._exige_task_viva(connection, row, "complete")
             self._expect_revision(row, expected_revision)
             # Fechar por cima de decisao humana em aberto e o que `transition`
             # ja recusa; ate 2026-09-30 `complete` nao lia `gates`, e 3 tasks
@@ -1716,6 +1747,67 @@ class HarnessDatabase:
         if row is None:
             raise StateTransitionError(f"task not found: {task_id}")
         return row
+
+    @staticmethod
+    def _desfecho_registrado(row: sqlite3.Row) -> bool:
+        """A task terminou, e o status dela nao muda mais?
+
+        A regra de todo escritor de `tasks.status`. Ate 2026-09-30 cada um
+        decidia sozinho, e nove nao olhavam: `complete` levou uma task
+        `superseded` a `done` (t-20260928-203110092956), e `transition`,
+        `resolve_gate` e os outros a devolviam a `active` — com outra task viva
+        no escopo, `IntegrityError` de `one_active_task_per_scope`.
+
+        Uma excecao: `done` sem pipeline. E assim que a task L0 nasce
+        (`start_task` sem fases grava `done`), e ela nunca teve trabalho para
+        encerrar. E dali que partem a promocao L0->L1 (`reclassify`), a
+        correcao do palpite do regex (`confirm_classification`) e a oferta de
+        ramo numa conversa L0 (`create_branch`, pela projecao que aponta a task
+        L0). Tratar esse `done` como desfecho quebraria os tres.
+
+        `abandon_task`, `record_evidence` e `touch_files` continuam lendo
+        `TERMINAL_STATUSES` direto, sem a excecao: eles nao mudam status, param
+        de acumular atividade numa task encerrada — e task L0 nao acumula.
+        """
+        if row["status"] not in TERMINAL_STATUSES:
+            return False
+        return not (row["status"] == "done" and not json.loads(row["pipeline_json"]))
+
+    def _exige_task_viva(self, connection: sqlite3.Connection, row: sqlite3.Row, operacao: str) -> None:
+        """Recusa, antes de qualquer escrita, mexer no status de um desfecho."""
+        if self._desfecho_registrado(row):
+            raise StateTransitionError(self._recusa_por_desfecho(connection, row, operacao))
+
+    def _recusa_por_desfecho(self, connection: sqlite3.Connection, row: sqlite3.Row, operacao: str) -> str:
+        """Diz o que o desfecho ja registra e onde o trabalho continua.
+
+        Sem linha de comando: nenhum comando desfaz um desfecho, e imprimir um
+        que "resolve" prometeria o que nao existe. O que serve a quem chegou
+        aqui e a task viva do escopo — o `superseded` do incidente foi
+        concluido por quem nao sabia que ela tinha sido substituida.
+        """
+        status = str(row["status"])
+        linhas = [
+            f"{operacao} recusada: a task {row['task_id']} ja terminou como `{status}`, "
+            "e desfecho registrado nao muda.",
+            O_QUE_O_DESFECHO_DIZ[status],
+        ]
+        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+        viva = connection.execute(
+            f"SELECT * FROM tasks WHERE scope_id = ? AND task_id <> ? AND status IN ({placeholders}) "
+            "ORDER BY started_at DESC LIMIT 1",
+            (row["scope_id"], row["task_id"], *ACTIVE_STATUSES),
+        ).fetchone()
+        if viva is None:
+            linhas.append(
+                "Nao ha task viva neste escopo: trabalho novo entra por task nova, aberta pelo proximo prompt."
+            )
+        else:
+            linhas.append(
+                f"A task viva deste escopo e {viva['task_id']} (fase {self._phase(viva)}, "
+                f"revision {viva['revision']}): o trabalho que continua e dela."
+            )
+        return "\n".join(linhas)
 
     @staticmethod
     def _expect_revision(row: sqlite3.Row, expected: int) -> None:
