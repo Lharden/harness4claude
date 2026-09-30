@@ -20,6 +20,11 @@ if [ -r "$_MH_MARCA" ]; then
     [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
 fi
 
+# UTF-8 no Python filho, como os demais hooks (cp1252 no pipe recusava todo chip com "·"; medido 2026-09-30)
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+export LANG=C.UTF-8
+
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "${HOOK_DIR}/harness-roteamento.py" ] || exit 0
 
