@@ -330,6 +330,31 @@ class _Lock:
     protocolo para `state.json`. Reimplementar com outro mecanismo (flock,
     arquivo .lock) criaria dois locks que nao se enxergam — pior que nenhum.
 
+    **Dono: quem segura o lock tem, dentro do lockdir, um arquivo de nome
+    unico** (`owner.<pid>.<ms>.<aleatorio>`). Nenhuma remocao usa so o nome do
+    lockdir: cada uma apaga as entradas que viu, pelo nome delas, e o lockdir
+    com `os.rmdir`, que falha se ele nao estiver vazio. Lockdir vazio nao tem
+    dono.
+
+    - A quebra de stale lista as entradas ANTES de ler a idade e remove so as
+      que viu. Ate 2026-09-30 ela lia a idade e fazia `os.rmdir` no nome, e o
+      lockdir, sempre vazio, saia qualquer que fosse a instancia: dois waiters
+      julgavam stale o mesmo lockdir velho, o primeiro quebrava e o lock
+      passava para um terceiro, e o segundo removia o lockdir do terceiro e
+      entrava com ele dentro (tests/test_branch_state.py::
+      TestCorridaDaQuebraDeStale). Na ordem inversa, um lockdir trocado entre
+      as duas leituras juntaria a idade do velho com o dono do novo.
+    - O release remove o proprio arquivo e o lockdir se ficar vazio. O dono
+      que passou de `LOCK_STALE_S` e foi quebrado nao acha mais o arquivo dele,
+      e o `rmdir` falha no lockdir do sucessor. Antes o release tambem era
+      `os.rmdir` no nome e apagava o lock do sucessor.
+    - Quem cria o lockdir so fica com o lock se o seu arquivo for o UNICO dono.
+      Entre o `mkdir` e a gravacao o lockdir esta vazio e pode sair pela quebra
+      atrasada de outro; a gravacao cai entao no lockdir de quem o criou depois,
+      ou em lugar nenhum. Quem grava lista o lockdir depois de gravar: de dois
+      que gravam no mesmo, pelo menos um ve o arquivo do outro, e esse remove so
+      o proprio e tenta de novo.
+
     **`owned` distingue "adquiri" de "furei".** Ate 2026-09-09 nao havia essa
     distincao: no timeout o `__enter__` devolvia `self` e o `__exit__` fazia
     `os.rmdir` incondicional, entao quem furou o lock apagava o lockdir de quem
@@ -355,12 +380,70 @@ class _Lock:
         self.dir = target + ".lockdir"
         self.owned = False
         self.required = required
+        # Nome do arquivo de dono desta aquisicao; None enquanto nao segura.
+        self._dono: str | None = None
 
     def _desistir(self):
         if self.required:
             raise LockUnavailable(f"lock ocupado: {self.dir}")
         # Fail-open: um ramo perdido e menos grave que um hook travado.
         return self
+
+    def _entradas(self) -> list[str] | None:
+        """Entradas do lockdir; None se ele nao existe ou nao pode ser lido."""
+        try:
+            return os.listdir(self.dir)
+        except OSError:
+            return None
+
+    def _remover(self, nomes) -> bool:
+        """Remove as entradas pelo nome e o lockdir so se ele ficar vazio.
+
+        Devolve se o lockdir saiu. Entrada que ja nao existe nao e erro: o
+        lockdir que esta no caminho agora pode ser de outro dono, e o `rmdir`
+        nao o toca porque o arquivo desse dono esta la dentro.
+        """
+        for nome in nomes:
+            try:
+                os.remove(os.path.join(self.dir, nome))
+            except OSError:
+                pass
+        try:
+            os.rmdir(self.dir)
+            return True
+        except OSError:
+            return False
+
+    def _quebrar_se_stale(self) -> bool:
+        """Quebra o lockdir abandonado sem tocar em nenhum que tenha nascido depois.
+
+        Devolve se o lockdir saiu. Lockdir que sumiu ou nao pode ser lido nao
+        e quebrado: quem chama espera a vez e tenta de novo.
+        """
+        vistas = self._entradas()
+        if vistas is None:
+            return False
+        try:
+            age = time.time() - os.stat(self.dir).st_mtime
+        except OSError:
+            return False
+        if age < LOCK_STALE_S:
+            return False
+        return self._remover(vistas)
+
+    def _reivindicar(self) -> bool:
+        """Grava o dono no lockdir recem-criado e so fica com o lock se for o unico dono."""
+        nome = f"owner.{os.getpid()}.{int(time.time() * 1000)}.{uuid.uuid4().hex[:8]}"
+        try:
+            os.close(os.open(os.path.join(self.dir, nome), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except OSError:
+            return False
+        donos = [e for e in self._entradas() or () if e == "owner" or e.startswith("owner.")]
+        if donos == [nome]:
+            self._dono = nome
+            return True
+        self._remover([nome])
+        return False
 
     def __enter__(self):
         # O diretorio do bucket so nasce dentro de `save()`, que roda DENTRO do
@@ -377,28 +460,23 @@ class _Lock:
         while True:
             try:
                 os.mkdir(self.dir)
-                self.owned = True
-                return self
             except FileExistsError:
-                try:
-                    age = time.time() - os.stat(self.dir).st_mtime
-                    if age >= LOCK_STALE_S:
-                        os.rmdir(self.dir)
-                        continue
-                except OSError:
-                    pass
-                if time.monotonic() >= deadline:
-                    return self._desistir()
-                time.sleep(LOCK_POLL_S)
+                pass
             except OSError:
                 return self._desistir()
+            else:
+                if self._reivindicar():
+                    self.owned = True
+                    return self
+            if self._quebrar_se_stale():
+                continue
+            if time.monotonic() >= deadline:
+                return self._desistir()
+            time.sleep(LOCK_POLL_S)
 
     def __exit__(self, *exc):
         if self.owned:
-            try:
-                os.rmdir(self.dir)
-            except OSError:
-                pass
+            self._remover([self._dono])
         return False
 
 
