@@ -185,6 +185,11 @@ def build_task_do_banco(
                      steps=steps, reason=reason, timestamp=timestamp,
                      fora=_fora_da_raiz(counter, task_id))
     task["contador_usado"] = usado
+    # O desfecho que o banco gravou. `pipeline_completed` sozinho nao separa a
+    # task fechada por `complete` da `superseded` verificada (registrada como
+    # concluida de proposito, S1 do sinal da substituida). So o registro do
+    # banco o leva: a projecao nao e autoridade de desfecho.
+    task["desfecho"] = linha["status"]
     return task
 
 
@@ -420,10 +425,14 @@ def main() -> int:
         # E vai para a task ESPERADA: a da projecao, numa troca de assunto, e a
         # task nova que o usuario acabou de pedir.
         try:
-            banco.abandon_task(expect, reason=args.reason)
+            encerrada = banco.abandon_task(expect, reason=args.reason)
         except Exception as exc:  # noqa: BLE001 - telemetria ja gravada; o erro vai escrito
             logger.error("task %s NAO foi encerrada no harness.db: %s", expect, exc)
             return 1
+        # A linha foi gravada com o status de antes do abandono. Regrava com o
+        # que o banco devolveu (`abandoned`, ou o terminal que ja estava la).
+        task["desfecho"] = encerrada["status"]
+        signals = record(args.signals_dir or args.harness_dir, task)
     accuracy = signals["aggregates"].get("classify", {}).get("avg_classify_accuracy")
     logger.info(
         "registrado %s (level=%s, files=%s); avg_classify_accuracy=%s",

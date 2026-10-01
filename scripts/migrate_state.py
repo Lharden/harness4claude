@@ -173,8 +173,15 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
     sdd_usage = dict(SDD_USAGE_DEFAULT)
     sdd_usage.update(prev.get("sdd_usage", {}))
 
+    # Task verificada e substituida antes do `complete`: conta como concluida
+    # (o trabalho foi verificado), e este numero diz quantas das concluidas
+    # foram fechadas assim. So linhas com `desfecho` (gravado do banco por
+    # record_signal); linha antiga sem o campo nao entra nem como zero.
+    superseded = sum(1 for t in tasks if t.get("desfecho") == "superseded")
+
     return {
         "total_tasks": total,
+        "superseded_count": superseded,
         "l0_count": levels["L0"],
         "l1_count": levels["L1"],
         "l2_count": levels["L2"],
