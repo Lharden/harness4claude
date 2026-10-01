@@ -14,7 +14,9 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import pytest
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1] / "scripts"))
 import vault_sync as vs
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "vault_sync.py"
@@ -697,3 +699,85 @@ def test_cli_imprime_recusa_no_stderr_e_grava_manifesto_onde_mandado(tmp_path: P
     assert "recusada" in proc.stderr and "feature-spec.md" in proc.stderr, proc.stderr
     assert "TEXTO ESCRITO NO OBSIDIAN" in _pagina(vault).read_text(encoding="utf-8")
     assert not manifesto.exists() or "feature-spec.md" not in manifesto.read_text(encoding="utf-8")
+
+
+# --- `--cwd` relativo: o slug e o do diretorio, nao o de "." --------------------
+#
+# Medido em 2026-10-01 (sessao do moneytree_farmer, fora de git): `vault_sync.py
+# --cwd .` calculou o slug "projeto" em vez de "moneytree-farmer". `Path(".").name`
+# e "" e o `or "projeto"` de `_slug_do_nome` assumia. No AI-Brain real: uma pagina de
+# decisao e uma nota de inbox duplicadas, e 9 specs carimbadas com `project: projeto`.
+# Como o carimbo volatil ignora `project:`, rodar de novo com o caminho certo nao conserta.
+
+
+def _pasta_do_projeto(tmp_path: Path, onde: str) -> Path:
+    pasta = tmp_path / "meu-projeto"
+    (pasta / "sub").mkdir(parents=True)
+    if onde == "dentro-do-git":
+        _git(pasta, "init", "-q", "-b", "main")
+    else:
+        assert vs._raiz_do_repo(pasta) is None, "pre-condicao: tmp_path nao pode estar num repo"
+    return pasta
+
+
+@pytest.mark.parametrize("onde", ["fora-do-git", "dentro-do-git"])
+@pytest.mark.parametrize("relativo", [".", "sub/..", "../meu-projeto"])
+def test_cwd_relativo_da_o_mesmo_slug_que_o_caminho_absoluto(tmp_path, monkeypatch, onde, relativo):
+    pasta = _pasta_do_projeto(tmp_path, onde)
+    monkeypatch.chdir(pasta / "sub" if relativo.startswith("..") else pasta)
+
+    assert vs.project_slug(Path(relativo)) == vs.project_slug(pasta) == "meu-projeto"
+    assert vs._slug_do_nome(Path(relativo)) == vs._slug_do_nome(pasta) == "meu-projeto"
+
+
+def test_rotulo_do_inbox_de_cwd_relativo_e_o_da_pasta(tmp_path, monkeypatch) -> None:
+    """`fontes_do_inbox` rotula pela pasta do `.remember`; com `.` o rotulo era "projeto"."""
+    pasta = _pasta_do_projeto(tmp_path, "fora-do-git")
+    (pasta / ".remember").mkdir()
+    (pasta / ".remember" / NOTA).write_text("# nota\n", encoding="utf-8")
+    sem_global = tmp_path / "sem-remember-global"
+    monkeypatch.chdir(pasta)
+
+    relativo = sorted(vs.fontes_do_inbox(Path("."), sem_global).values())
+    absoluto = sorted(vs.fontes_do_inbox(pasta, sem_global).values())
+
+    assert relativo == absoluto == [f"meu-projeto--{NOTA}"]
+
+
+def _arvore(vault: Path) -> dict[str, str]:
+    return {
+        p.relative_to(vault).as_posix(): p.read_text(encoding="utf-8")
+        for p in sorted(vault.rglob("*.md"))
+    }
+
+
+@pytest.mark.parametrize("onde", ["fora-do-git", "dentro-do-git"])
+def test_cli_com_cwd_ponto_escreve_o_mesmo_vault_que_com_caminho_absoluto(tmp_path, onde) -> None:
+    """Producao de ponta a ponta: o destino e o carimbo `project:` nao dependem de como
+    o `--cwd` foi escrito."""
+    pasta = _pasta_do_projeto(tmp_path, onde)
+    (pasta / "docs" / "specs").mkdir(parents=True)
+    (pasta / "docs" / "CONTEXT.md").write_text("# CONTEXT\n\n- L-01: algo.\n", encoding="utf-8")
+    (pasta / "docs" / "specs" / "feature-spec.md").write_text("# Feature\n\ncorpo\n", encoding="utf-8")
+    (pasta / ".remember").mkdir()
+    (pasta / ".remember" / NOTA).write_text("# nota\n", encoding="utf-8")
+
+    def rodar(cwd_arg: str, nome: str) -> dict[str, str]:
+        vault = tmp_path / nome
+        vault.mkdir()
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--quiet", "--vault", str(vault),
+             "--raiz", str(tmp_path / f"raiz-{nome}"), "--cwd", cwd_arg],
+            capture_output=True, text=True, encoding="utf-8",
+            env={**os.environ, "PYTHONUTF8": "1"}, cwd=pasta, timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return _arvore(vault)
+
+    ponto = rodar(".", "vault-ponto")
+    absoluto = rodar(str(pasta), "vault-absoluto")
+
+    assert "wiki/decisions/meu-projeto-context.md" in absoluto, sorted(absoluto)
+    assert ponto == absoluto
+    spec = ponto["wiki/specs/feature-spec.md"]
+    assert re.search(r"^project: meu-projeto$", spec, re.M), spec

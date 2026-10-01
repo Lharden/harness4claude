@@ -511,8 +511,14 @@ def append_log(vault: Path, message: str) -> None:
 
 
 def _slug_do_nome(pasta: Path) -> str:
-    """Slug kebab-case do nome de uma pasta."""
-    return re.sub(r"[^a-z0-9]+", "-", pasta.name.lower()).strip("-") or "projeto"
+    """Slug kebab-case do nome de uma pasta.
+
+    O nome vem do caminho ABSOLUTO: `Path(".").name` e "" e caia no padrao "projeto"
+    (2026-10-01, `--cwd .` fora de git). `abspath`, e nao `resolve`, para nao seguir
+    link simbolico: caminho absoluto continua dando o mesmo nome, como em `_escopo`.
+    """
+    nome = Path(os.path.abspath(pasta)).name
+    return re.sub(r"[^a-z0-9]+", "-", nome.lower()).strip("-") or "projeto"
 
 
 def project_slug(cwd: Path) -> str:
