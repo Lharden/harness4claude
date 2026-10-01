@@ -269,7 +269,7 @@ revisores (5) ──findings──▶ dedupe ──┬── critical/high ─�
   3. Bloqueio (crítico/alto confirmado ou nó morto) → gap-closure de hoje. Todo não adjudicado da rodada, com ou sem bloqueio, recebe linha na tabela.
   4. Conserto de código (bloqueio ou triagem) → nova rodada obrigatória, se ainda houver rodada; antes dela, o checador não pode apontar pendente de triagem.
   5. Nova rodada só por nó morto, sem código mudado, não conta no limite; um segundo nó morto seguido vai ao gate `escalation`.
-  6. Na 3ª rodada: bloqueio → gate `escalation`; conserto pedido pela triagem fecha com teste que pegue o defeito, e o relatório de verificação lista esses "consertos sem rodada de revisão".
+  6. Na 3ª rodada: bloqueio → gate `escalation`; conserto pedido pela triagem fecha com teste que pegue o defeito, e o relatório de verificação lista esses "consertos sem rodada de revisão". Se o usuário decidir fechar com o bloqueio consertado e sem rodada nova, o fechamento vale com a tabela completa (o checador segue apontando o `BLOQUEIO` da cópia, que não se edita), e o closure-plan registra a decisão (acrescentado em 2026-10-01: o verify desta própria task chegou a esse caso).
   7. Ordem no fim: tabela → checador saindo 0 → evidência de teste final → `complete`.
   8. No DONE, a tabela de destinos é mostrada ao usuário.
 - [ ] **REQ-F9**: o item "Fan-out (Workflow)" do `CLAUDE.md` global ganha a frase de L-03, com a origem datada, no deploy e com OK do usuário. [traces: US-2]

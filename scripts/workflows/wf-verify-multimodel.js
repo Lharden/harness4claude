@@ -28,8 +28,17 @@ const linhaRaiz = repoRoot
     '\n'
   : ''
 
+// O Workflow nao le disco: raiz errada levaria os revisores a um diretorio vazio e a
+// um `pass` verde por "nenhum finding". Quem le o disco e o revisor, entao ele diz.
+const avisoRaiz = !repoRoot
+  ? ''
+  : changedFiles.length
+    ? 'Se esse diretorio ou os arquivos listados nao existirem, devolva um achado critical dizendo isso.\n'
+    : 'Se esse diretorio nao existir, devolva um achado critical dizendo isso.\n'
+
 const scope =
   linhaRaiz +
+  avisoRaiz +
   (changedFiles.length
     ? `Arquivos alterados:\n${changedFiles.map((f) => `- ${f}`).join('\n')}`
     : `Use \`git diff ${baseRef}\` para descobrir os arquivos alterados.`)
@@ -190,14 +199,20 @@ const adjudicated = await parallel(
 )
 
 const censoAdj = censoNos('Adjudicate', adjudicaveis.map((f) => f.title), adjudicated)
-const confirmed = censoAdj.vivos.filter(
-  (f) => f.verdict && f.verdict.is_real && f.verdict.confidence >= 0.5,
-)
+// Confirmado: real com confianca. Refutado: nao real com confianca — sai do retorno.
+// O resto e inconclusivo e vai para a triagem: ate 2026-10-01 ele saia de
+// `confirmed` sem entrar em lugar nenhum, e um critico "real com confianca 0,3"
+// sumia com `pass: true` (rodada 3 do verify de verify-adjudica-tudo).
+const confiante = (f) => f.verdict.confidence >= 0.5
+const confirmed = censoAdj.vivos.filter((f) => f.verdict.is_real && confiante(f))
+const inconclusivos = censoAdj.vivos.filter((f) => !confiante(f))
+const pendentes = [...naoAdjudicaveis, ...inconclusivos]
 
 const criticals = confirmed.filter((f) => f.severity === 'critical' || f.severity === 'high')
 log(
   `Adjudicate: ${confirmed.length} confirmados, ${criticals.length} criticos/altos` +
-    (naoAdjudicaveis.length ? `, ${naoAdjudicaveis.length} medium/low nao adjudicados` : ''),
+    (naoAdjudicaveis.length ? `, ${naoAdjudicaveis.length} medium/low nao adjudicados` : '') +
+    (inconclusivos.length ? `, ${inconclusivos.length} com veredito inconclusivo` : ''),
 )
 
 // Finding nao julgado NAO e finding liberado: no morto bloqueia a aprovacao.
@@ -208,7 +223,7 @@ const nosMortos = [...censoReview.mortos, ...censoAdj.mortos]
 // 49 medium/low abertos, 25 deles defeito real (docs/specs/verify-adjudica-tudo-medicao.md).
 // O corte da adjudicacao fica: o achado nao adjudicado vai para a triagem da
 // skill, com destino escrito conferido por scripts/checar_triagem.py.
-const pass = criticals.length === 0 && nosMortos.length === 0 && naoAdjudicaveis.length === 0
+const pass = criticals.length === 0 && nosMortos.length === 0 && pendentes.length === 0
 
 // `n` e a posicao na lista: e o numero que a tabela de destino do closure-plan cita.
 const saida = [
@@ -221,13 +236,13 @@ const saida = [
     confidence: f.verdict.confidence,
     adjudicado: true,
   })),
-  ...naoAdjudicaveis.map((f) => ({
+  ...pendentes.map((f) => ({
     title: f.title,
     severity: f.severity,
     file: f.file,
     line: f.line ?? null,
     rationale: f.rationale,
-    confidence: null,
+    confidence: f.verdict ? f.verdict.confidence : null,
     adjudicado: false,
   })),
 ].map((f, i) => ({ n: i + 1, ...f }))
@@ -236,12 +251,12 @@ return {
   pass,
   critical_count: criticals.length,
   nos_mortos: nosMortos,
-  nao_adjudicados: naoAdjudicaveis.length,
+  nao_adjudicados: pendentes.length,
   findings: saida,
   summary:
     `${confirmed.length} findings confirmados (${criticals.length} bloqueantes) de ${adjudicaveis.length} adjudicaveis` +
-    (naoAdjudicaveis.length
-      ? `, ${naoAdjudicaveis.length} aguardam triagem (nao adjudicados): cada um precisa de destino escrito ` +
+    (pendentes.length
+      ? `, ${pendentes.length} aguardam triagem (nao adjudicados ou com veredito inconclusivo): cada um precisa de destino escrito ` +
         `no closure-plan, conferido por scripts/checar_triagem.py — ver a secao verify da skill harness-workflow`
       : '') +
     `.` +

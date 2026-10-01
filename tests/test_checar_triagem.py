@@ -521,6 +521,58 @@ def test_titulo_ausente_ou_nao_texto_sai_2(tmp_path, titulo):
     assert _checar(_plano(tmp_path, []), verify)[0] == 2
 
 
+# --------------------------------------- verify da task, rodada wf_69c2fd62-849 ----
+
+
+def test_achado_com_linha_invalida_aponta_a_linha_e_nao_manda_colar_outra(tmp_path):
+    """Achado #4: a linha pronta saia tambem para quem ja tinha linha invalida;
+    colada, virava DUPLICADA, e o laco nao terminava."""
+    verify = tmp_path / "verify"
+    _rodada_a(verify)
+    linhas = [*_linhas_validas()[:2], _linha("wf_a", 7, TITULOS[6], destino="talvez")]
+    plano = _plano(tmp_path, linhas)
+    codigo, texto = _checar(plano, verify)
+    assert codigo == 1
+    assert not any(ln.startswith("| wf_a | 7 |") for ln in texto.splitlines())
+    numero = plano.read_text(encoding="utf-8").splitlines().index(linhas[-1]) + 1
+    assert f"edite a linha closure-plan.md:{numero}" in texto
+
+
+def test_cercas_de_tipos_diferentes_nao_se_fecham(tmp_path):
+    """Achado #6: ``` dentro de ~~~ invertia o estado e a tabela real virava codigo."""
+    verify = tmp_path / "verify"
+    _rodada_a(verify)
+    antes = "~~~\n```\n~~~"
+    assert _checar(_plano(tmp_path, _linhas_validas(), antes=antes), verify)[0] == 0
+
+
+@pytest.mark.parametrize("titulo", ["", "   "])
+def test_titulo_vazio_sai_2(tmp_path, titulo):
+    """Achado #7: titulo vazio aceitava celula vazia e anulava a conferencia."""
+    verify = tmp_path / "verify"
+    _saida(verify, "wf_a", [(titulo, False)])
+    assert _checar(_plano(tmp_path, []), verify)[0] == 2
+
+
+def test_skill_diz_limite_de_rodadas_ordem_do_fim_e_tabela_no_done():
+    """Achado #2: as regras do protocolo estavam no texto sem nada que as protegesse."""
+    texto = SKILL.read_text(encoding="utf-8")
+    assert "No máximo **3 por task**" in texto
+    assert "tabela → checador saindo 0 → evidência de teste final" in texto
+    assert "No DONE**, mostre a tabela de destinos" in texto
+    # Rodada 3 do verify da task: o protocolo nao dizia como fechar depois de um
+    # `escalation` decidido por fechar, com o BLOQUEIO preso na copia da 3a rodada.
+    assert "Se o usuário decidir fechar" in texto
+
+
+def test_template_e_readme_dizem_o_contrato_novo():
+    """Achado #3 (US-5, AC-5.1 e AC-5.3)."""
+    template = (ROOT / "skills" / "write-spec" / "templates" / "spec-template.md").read_text(encoding="utf-8")
+    assert "`checar_triagem.py` saindo 0 sobre todas as rodadas da task" in template
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "tries to refute each critical or high finding" in readme
+
+
 # ------------------------------------------------------- AC-2.16: skill ----
 
 SKILL = ROOT / "skills" / "harness-workflow" / "SKILL.md"

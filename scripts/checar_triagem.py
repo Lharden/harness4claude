@@ -142,8 +142,9 @@ def _ler_rodada(caminho: Path) -> Rodada:
         if "n" in f and f["n"] != pos:
             raise EntradaIlegivel(f"{caminho}: achado na posicao {pos} traz n={f['n']!r}")
         titulo = f.get("title")
-        if not isinstance(titulo, str):
-            # `str(None)` viraria o titulo "None", que casa com uma celula "None".
+        if not isinstance(titulo, str) or not titulo.strip():
+            # `str(None)` viraria o titulo "None", que casa com uma celula "None"; e
+            # titulo vazio aceitaria celula vazia, anulando a conferencia do `#`.
             raise EntradaIlegivel(f"{caminho}: achado na posicao {pos} sem titulo de texto ({titulo!r})")
         # So `adjudicado: true` tira o achado da triagem; ausente conta como aberto.
         achados.append(Achado(pos, titulo, f.get("adjudicado") is True))
@@ -168,11 +169,16 @@ def _ler_tabela(plano: Path) -> tuple[list[Linha], list[str]]:
         raise EntradaIlegivel(f"{plano}: {exc} — salve o plano em UTF-8") from exc
     linhas: list[Linha] = []
     problemas: list[str] = []
-    dentro = cerca = False
+    dentro = False
+    cerca: str | None = None  # marcador que abriu o bloco: so o mesmo fecha
     for i, bruta in enumerate(unicodedata.normalize("NFC", conteudo).splitlines(), 1):
         texto = bruta.strip()
-        if CERCA.match(bruta):
-            cerca = not cerca
+        marca = CERCA.match(bruta)
+        if marca:
+            if cerca is None:
+                cerca = marca.group(1)
+            elif marca.group(1) == cerca:
+                cerca = None
             continue
         if cerca:
             continue
@@ -269,8 +275,15 @@ def checar(plano: Path, saidas: list[Path]) -> tuple[int, list[str]]:
             decididos.add(chave)
 
     ordem = sorted(rodadas, key=lambda r: r.inicio)
-    faltam = [(r, a) for r in ordem for a in r.pendentes if (r.id, a.n) not in decididos]
-    problemas.extend(f'PENDENTE {r.id} #{a.n} (sem linha valida): "{a.titulo}"' for r, a in faltam)
+    sem_decisao = [(r, a) for r in ordem for a in r.pendentes if (r.id, a.n) not in decididos]
+    # Quem ja tem linha (invalida ou duplicada) conserta a linha: colar outra viraria
+    # DUPLICADA e o laco nao terminaria. Linha pronta so para quem nao tem linha.
+    faltam = [(r, a) for r, a in sem_decisao if (r.id, a.n) not in vistas]
+    for r, a in sem_decisao:
+        if (r.id, a.n) in vistas:
+            problemas.append(f"PENDENTE {r.id} #{a.n}: edite a linha {plano.name}:{vistas[(r.id, a.n)]}")
+        else:
+            problemas.append(f'PENDENTE {r.id} #{a.n} (sem linha): "{a.titulo}"')
     final = ordem[-1]
     if final.critical_count or final.nos_mortos:
         problemas.append(

@@ -66,6 +66,45 @@ adjudicados. Rodada: 2 de 3.
 - [x] E6 (#8): a skill diz o que fazer com execução abortada (não copiar; nó morto).
 - Resultado: 91 testes nos arquivos afetados; mutação **29 de 29**.
 
+## Rodada 3 (`wf_69c2fd62-849`, script `933f8bb`, sha256 `307a5834…`) — última
+
+`pass: false`, **`critical_count: 1`** (bloqueio), `nos_mortos: []`, 9 não
+adjudicados. Rodada: 3 de 3.
+
+### Bloqueio → gate `escalation`
+
+- **B2 · veredito inconclusivo apagava o achado (#1 high, confirmado; #5 low é o
+  mesmo).** `confirmed` exigia `is_real && confidence >= 0.5`; um crítico/alto
+  julgado "real com confiança 0,3" (ou refutado com confiança baixa) não entrava
+  em `confirmed` nem em lugar nenhum, e o `pass` saía `true`. Anterior ao ramo
+  (metade-controle no blob de `8cd6884`).
+- **Decisão do usuário (2026-10-01, gate `escalation`):** "Consertar e fechar" —
+  conserto com teste e mutante, sem 4ª rodada; a triagem dos 9 restantes fecha
+  sem rodada nova. O `state_cli` não abre gate `escalation` (`pending gate not
+  found`), então a decisão fica registrada aqui. O checador seguirá apontando o
+  `BLOQUEIO` desta rodada, porque a cópia não se edita: o fechamento vale com a
+  tabela completa (nenhum `PENDENTE` nem `INVALIDA`), por decisão humana.
+
+### Delta tasks (todas **sem rodada de revisão**)
+
+- [x] F1 (B2): veredito inconclusivo — real ou refutação com confiança < 0,5 —
+      vai para a triagem com `adjudicado: false`; refutação confiante sai do
+      retorno como antes. `test_veredito_inconclusivo_vai_para_a_triagem` (2
+      casos) + `test_CONTROLE_codigo_de_antes_apagava_o_achado_de_veredito_inconclusivo`, M33.
+- [x] F2 (#4): linha pronta só para quem não tem linha; quem tem linha inválida
+      ou duplicada recebe "edite a linha :N". M35.
+- [x] F3 (#6): cerca de código fecha só com o marcador que a abriu. M36.
+- [x] F4 (#7): título vazio sai 2. M37.
+- [x] F5 (#8, mitigação): com `repo_root`, o prompt manda o revisor devolver um
+      achado critical se o diretório ou os arquivos não existirem. M34.
+- [x] F6 (#2, #3): testes de texto para o protocolo da skill, o template e o README.
+- Resultado: 101 testes nos arquivos afetados; mutação **34 de 34**.
+
+### Consertos sem rodada de revisão
+
+F1 a F6 acima. Cada um tem teste que o pega e mutante que o derruba; nenhum foi
+revisto pelo `wf-verify-multimodel`.
+
 ## Destino dos achados não adjudicados
 
 | Rodada | # | Achado | Destino | Referência |
@@ -97,3 +136,12 @@ adjudicados. Rodada: 2 de 3.
 | wf_e66b2c58-1e7 | 10 | title null no achado vira a string 'None | consertado | E5, test_titulo_ausente_ou_nao_texto_sai_2, M32 |
 | wf_e66b2c58-1e7 | 11 | repo_root so com espacos e aceito e prod | consertado | E3, test_repo_root_so_com_espacos_e_ignorado, M30 |
 | wf_e66b2c58-1e7 | 12 | Referencias arquivo:linha para wf-verify | nao-defeito | fora do diff e anterior a ele: exemplo didático de skills/source-selection já defasado, registrado no graph-context |
+| wf_69c2fd62-849 | 2 | REQ-F8/AC-2.16: passos 1, 5-7 e 10 do pr | consertado | F6, test_skill_diz_limite_de_rodadas_ordem_do_fim_e_tabela_no_done (sem rodada de revisão) |
+| wf_69c2fd62-849 | 3 | US-5 (AC-5.1, AC-5.3): template e README | consertado | F6, test_template_e_readme_dizem_o_contrato_novo (sem rodada de revisão) |
+| wf_69c2fd62-849 | 4 | checar_triagem offers a paste-ready line | consertado | F2, test_achado_com_linha_invalida_aponta_a_linha_e_nao_manda_colar_outra, M35 (sem rodada de revisão) |
+| wf_69c2fd62-849 | 5 | A critical/high that the adjudicator con | consertado | F1, mesmo conserto do bloqueio #1, test_veredito_inconclusivo_vai_para_a_triagem, M33 (sem rodada de revisão) |
+| wf_69c2fd62-849 | 6 | Cerca de codigo alterna em qualquer ``` | consertado | F3, test_cercas_de_tipos_diferentes_nao_se_fecham, M36 (sem rodada de revisão) |
+| wf_69c2fd62-849 | 7 | Titulo vazio ou so de espacos aceita cel | consertado | F4, test_titulo_vazio_sai_2, M37 (sem rodada de revisão) |
+| wf_69c2fd62-849 | 8 | repo_root inexistente ou com quebra de l | limite | o Workflow não lê disco; mitigado por F5 (prompt pede achado critical se a raiz não existir, M34); a raiz vem da skill, que passa a do worktree da task |
+| wf_69c2fd62-849 | 9 | Dedupe nao une o mesmo achado com line n | limite | erra duplicando, nunca perdendo: variação de caminho ou de linha custa uma linha a mais na triagem ou um adjudicador a mais; normalizar exigiria heurística sobre o texto do revisor |
+| wf_69c2fd62-849 | 10 | Dedupe com a linha na chave deixa de jun | limite | mesmo mecanismo do #9 desta rodada: o custo é duplicata, nunca perda (o próprio revisor o diz) |

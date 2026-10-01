@@ -374,7 +374,11 @@ adjudicado, conferido por script (spec `verify-adjudica-tudo`, REQ-F8).
    nó morto seguido vai ao gate `escalation`.
 7. **3ª rodada**: bloqueio → gate `escalation`. Conserto pedido pela triagem
    fecha com teste que pegue o defeito, e o relatório de verificação lista esses
-   **consertos sem rodada de revisão**.
+   **consertos sem rodada de revisão**. Se o usuário decidir fechar com o
+   bloqueio consertado e sem rodada nova, o checador seguirá saindo 1 pelo
+   `BLOQUEIO` da cópia da 3ª rodada (a cópia não se edita): o fechamento vale
+   com a tabela completa — nenhum `PENDENTE` nem `INVALIDA` —, e o closure-plan
+   registra a decisão com data e o conserto com teste e mutante.
 8. **Checador**, antes de cada rodada nova e antes do `complete`:
    ```bash
    python "<PLUGIN_ROOT>/scripts/checar_triagem.py" --plano "docs/closure-plan.md" --saidas "<STATE_DIR>/verify"

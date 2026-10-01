@@ -158,6 +158,32 @@ def test_adjudicador_morto_bloqueia(tmp_path):
     assert "bug critico nao julgado" in out["result"]["nos_mortos"]
 
 
+@pytest.mark.parametrize("veredito", [{"is_real": True, "confidence": 0.3}, {"is_real": False, "confidence": 0.3}])
+def test_veredito_inconclusivo_vai_para_a_triagem(tmp_path, veredito):
+    """Rodada 3 do verify da task, achado #1 (high, confirmado): veredito "real" com
+    confianca < 0,5 nao entrava em `confirmed` nem em lugar nenhum, e o `pass` saia
+    verde. Inconclusivo nao e refutacao: vai para a triagem com destino escrito."""
+    cenario = _cenario(correctness=[_achado("bug alto com veredito incerto", "high", "a.py", 1)])
+    cenario["verdicts"] = {"a.py": {**veredito, "reason": "incerto"}}
+    out = _run(WF_FILE, cenario, tmp_path)
+    assert out["result"]["pass"] is False
+    assert out["result"]["nao_adjudicados"] == 1
+    achado = out["result"]["findings"][0]
+    assert achado["title"] == "bug alto com veredito incerto"
+    assert achado["adjudicado"] is False
+
+
+def test_repo_root_pede_achado_critico_se_nao_existir(tmp_path):
+    """Rodada 3, achado #8: raiz errada levaria os revisores a um diretorio vazio e
+    a um `pass` verde por "nenhum finding". O Workflow nao le disco; o prompt manda
+    dizer."""
+    cenario = _cenario()
+    cenario["args"] = {"changed_files": ["a.py"], "repo_root": "C:/wt/x"}
+    out = _run(WF_FILE, cenario, tmp_path)
+    for c in out["calls"]["review"]:
+        assert "nao existirem, devolva um achado critical" in c["prompt"]
+
+
 def test_dedupe_nao_junta_titulos_diferentes_com_o_mesmo_prefixo(tmp_path):
     """Rodada 2, achado #7: a chave usava os 40 primeiros caracteres do titulo, e o
     segundo achado do mesmo arquivo sumia sem `n` e sem destino."""
@@ -283,6 +309,15 @@ def test_CONTROLE_codigo_de_antes_aprovava_lote_so_medium_low(tmp_path):
     out = _run(_old_wf_file(), SO_MEDIUM_LOW, tmp_path)
     assert out["result"]["pass"] is True
     assert out["result"]["nao_adjudicados"] == 2
+
+
+def test_CONTROLE_codigo_de_antes_apagava_o_achado_de_veredito_inconclusivo(tmp_path):
+    """Metade de `test_veredito_inconclusivo_vai_para_a_triagem`: anterior ao ramo."""
+    cenario = _cenario(correctness=[_achado("bug alto com veredito incerto", "high", "a.py", 1)])
+    cenario["verdicts"] = {"a.py": {"is_real": True, "confidence": 0.3, "reason": "incerto"}}
+    out = _run(_old_wf_file(), cenario, tmp_path)
+    assert out["result"]["pass"] is True
+    assert out["result"]["findings"] == []
 
 
 def test_CONTROLE_codigo_de_antes_apagava_o_critico_com_adjudicador_morto(tmp_path):
