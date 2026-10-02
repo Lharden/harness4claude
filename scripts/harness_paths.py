@@ -87,6 +87,31 @@ mantem um balde so.
 `HARNESS_PIN_TTL_H` (default 24, `0` desliga) e o botao. O balde anterior fica
 escrito em `repins`, com as datas: trocar de balde em silencio e como perder o
 trabalho guardado no lugar errado.
+
+## A subpasta nao e outro projeto (incidente 2026-10-02)
+
+A validade acima perguntava "o projeto corrente e outro?" comparando slugs. Em
+repositorio isso vale, porque toda subpasta sobe ate a mesma raiz. Em diretorio
+sem repositorio, o slug e o PROPRIO diretorio, e cada subpasta tem o seu. A
+sessao `b46f67bc` trabalhava em `Documents\\lojas`, sem `.git`, e o pin dela ja
+registrava onze derivas, todas subpastas de `lojas`:
+
+    2026-09-30T19:24  last_seen_at do pin (lojas-755c1f1a)
+    2026-10-02T16:21  prompt com o shell em lojas\\cardapio, pin parado 45 h
+                      -> repin para cardapio-c4581090; L0 nasce la
+    2026-10-02T16:26  3 Edit -> L0 promovida a L1, no balde cardapio
+    2026-10-02T16:27  o agente confirma no balde lojas, que resolveu em 30/09
+                      -> "state.json contem task None"
+
+A task estava inteira no outro balde, promovida e com os toques. Nos 193 pins
+da maquina, esse era o unico repin ja gravado, e era falso.
+
+A regua passa a ler "outro projeto" como o 2026-09-21 queria: cwd sem
+repositorio que mora DENTRO do diretorio fixado e o mesmo projeto, e vira
+deriva, nao repin. Continua repinando a pasta irma, o diretorio acima do
+fixado e o repositorio dentro dele, que e projeto proprio. O slug nao muda:
+isolar diretorio sem repositorio e decisao de `_escopo` (revert de 2026-09-05),
+e isto so decide quando o pin cede.
 """
 
 from __future__ import annotations
@@ -285,7 +310,36 @@ def _renovar(pin: dict, agora: datetime) -> bool:
     return parado is None or parado > RENOVACAO_MINIMA_S
 
 
-def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True) -> str:
+def _dentro_do_fixado(cwd: str | os.PathLike | None, pinned: str) -> bool:
+    """O cwd e uma pasta sem repositorio DENTRO do diretorio que o pin fixou.
+
+    Ver "A subpasta nao e outro projeto" no topo do modulo. O pin guarda so o
+    slug, entao a pergunta e feita de baixo para cima: algum diretorio acima do
+    cwd cunha o slug fixado? Pelo `project_slug`, e nao por uma copia da conta,
+    para que a resposta nunca discorde de quem cunhou o pin.
+
+    Cwd dentro de repositorio responde False: repositorio e projeto proprio,
+    more onde morar. Sem repositorio no cwd nao ha nenhum acima dele, entao a
+    subida so ve diretorios e o slug de cada um e o do proprio caminho.
+
+    So roda com o pin vencido e o slug diferente, que e raro; a subida custa um
+    `realpath` por nivel. Qualquer erro responde False, que e o comportamento de
+    antes deste conserto.
+    """
+    limpo = _clean(cwd)
+    if not limpo:
+        return False
+    try:
+        if find_repo_root(limpo):
+            return False
+        acima = Path(os.path.realpath(os.path.abspath(limpo))).parents
+        return any(project_slug(str(d)) == pinned for d in acima)
+    except (OSError, ValueError):
+        return False
+
+
+def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True,
+                 cwd: str | os.PathLike | None = None) -> str:
     """O slug que esta sessao usa, fixado na primeira resolucao.
 
     `grava=False` resolve igual e nao toca o pin: e para quem so LE o estado
@@ -299,7 +353,9 @@ def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True) -> str
 
     1. **sem pin** — cunha, adotando o balde existente mais recente se houver;
     2. **pin parado alem do TTL e projeto outro** — repina, guardando o
-       anterior em `repins`. Ver a secao "A validade do pin" no topo do modulo;
+       anterior em `repins`. Ver a secao "A validade do pin" no topo do modulo.
+       Pasta sem repositorio dentro do diretorio fixado NAO e projeto outro
+       (`_dentro_do_fixado`, incidente 2026-10-02) e cai em (3);
     3. **qualquer outro caso** — o pin manda. Deriva vira registro, nunca
        mudanca de balde, e `last_seen_at` avanca.
 
@@ -323,7 +379,8 @@ def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True) -> str
 
     pinned = pin["project_slug"]
 
-    if slug != pinned and _pin_venceu(pin, agora):
+    if (slug != pinned and _pin_venceu(pin, agora)
+            and not _dentro_do_fixado(cwd, pinned)):
         if not grava:
             return slug
         repins = [r for r in pin.get("repins", []) if isinstance(r, dict)]
@@ -383,12 +440,13 @@ def state_dir(
     base = Path(root) if root is not None else default_root()
     if is_global_scope(scope):
         return base
-    slug = project_slug(cwd or os.getcwd())
+    cwd = cwd or os.getcwd()
+    slug = project_slug(cwd)
     session = session_slug(session_id)
     if not session:
         return base / PROJECTS_SUBDIR / slug
     try:
-        slug = _pinned_slug(base, session, slug, grava=grava_pin)
+        slug = _pinned_slug(base, session, slug, grava=grava_pin, cwd=cwd)
     except Exception:
         # O pin e correcao, nao dependencia. Qualquer surpresa cai na resolucao
         # por cwd — o comportamento de antes, que e ruim mas nao e quebrado.
