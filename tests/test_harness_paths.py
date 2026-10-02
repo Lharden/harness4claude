@@ -637,3 +637,98 @@ class TestPinVence:
         assert hp.project_slug(str(meio)) in guardadas, (
             "o repin apagou o registro dos projetos por onde a sessao passou"
         )
+
+
+class TestSubpastaNaoEOutroProjeto:
+    """Incidente 2026-10-02: `cd` para subpasta sem repositorio repinou a sessao.
+
+    Sessao `b46f67bc`, pin em `lojas-755c1f1a` (diretorio sem `.git`), parado
+    45 h. O prompt seguinte chegou com o shell em `lojas\\cardapio`, o slug da
+    subpasta e outro, e o pin cedeu: a task nasceu no balde `cardapio`, e o
+    agente a procurou no balde `lojas`, que tinha resolvido dois dias antes. O
+    teste ponta a ponta e `tests/test_pin_subpasta.py`.
+
+    Sem repositorio, o slug e o proprio diretorio, entao toda subpasta tem slug
+    proprio; "projeto corrente e outro" nao pode ser lido como "slug diferente".
+    A pasta dentro do diretorio fixado e o mesmo projeto. Em par, como a regua
+    de `TestPinVence`: o que fica e o que continua cedendo.
+    """
+
+    def _envelhece(self, hp, root, sessao):
+        arquivo = root / hp.PINS_SUBDIR / f"{hp.session_slug(sessao)}.json"
+        pin = json.loads(arquivo.read_text(encoding="utf-8"))
+        pin["pinned_at"] = pin["last_seen_at"] = "2026-09-30T19:24:02+00:00"
+        arquivo.write_text(json.dumps(pin), encoding="utf-8")
+
+    def test_subpasta_sem_repositorio_do_diretorio_fixado_nao_repina(
+            self, hp, tmp_path, monkeypatch):
+        """A metade que o incidente reprovou."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        lojas = tmp_path / "lojas"
+        cardapio = lojas / "cardapio" / "ferramentas"
+        cardapio.mkdir(parents=True)
+
+        primeiro = hp.ensure_state_dir(root, str(lojas), session_id="s-b46f67bc")
+        self._envelhece(hp, root, "s-b46f67bc")
+
+        assert hp.state_dir(root, str(cardapio), session_id="s-b46f67bc") == primeiro, (
+            "subpasta do diretorio fixado foi tratada como outro projeto e repinou"
+        )
+
+    def test_leitor_puro_ve_o_mesmo_balde_na_subpasta(self, hp, tmp_path, monkeypatch):
+        """O skill-router nao pode divergir do escritor neste caso."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        lojas = tmp_path / "lojas"
+        (lojas / "cardapio").mkdir(parents=True)
+        primeiro = hp.ensure_state_dir(root, str(lojas), session_id="s-1")
+        self._envelhece(hp, root, "s-1")
+
+        lido = hp.state_dir(root, str(lojas / "cardapio"), session_id="s-1", grava_pin=False)
+        assert lido == primeiro
+
+    def test_pasta_irma_sem_repositorio_repina(self, hp, tmp_path, monkeypatch):
+        """Outra metade: diretorio fora do fixado continua sendo outro projeto."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        lojas = tmp_path / "lojas"
+        outra = tmp_path / "financas"
+        lojas.mkdir()
+        outra.mkdir()
+        hp.ensure_state_dir(root, str(lojas), session_id="s-1")
+        self._envelhece(hp, root, "s-1")
+
+        destino = hp.state_dir(root, str(outra), session_id="s-1")
+        assert destino.parent.parent.name == hp.project_slug(str(outra))
+
+    def test_diretorio_acima_do_fixado_repina(self, hp, tmp_path, monkeypatch):
+        """Subir da pasta fixada nao e ficar dentro dela."""
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        lojas = tmp_path / "lojas"
+        cardapio = lojas / "cardapio"
+        cardapio.mkdir(parents=True)
+        hp.ensure_state_dir(root, str(cardapio), session_id="s-1")
+        self._envelhece(hp, root, "s-1")
+
+        destino = hp.state_dir(root, str(lojas), session_id="s-1")
+        assert destino.parent.parent.name == hp.project_slug(str(lojas))
+
+    def test_repositorio_dentro_do_diretorio_fixado_repina(self, hp, tmp_path, monkeypatch):
+        """Repositorio e projeto proprio, mesmo morando dentro do diretorio fixado.
+
+        E o caso de 2026-09-21 visto de outro angulo: sessao cunhada numa pasta
+        solta e retomada dias depois num repositorio abaixo dela.
+        """
+        monkeypatch.setenv("HARNESS_PIN_TTL_H", "24")
+        root = tmp_path / "root"
+        projetos = tmp_path / "projects"
+        projetos.mkdir()
+        repo = _repo(projetos, "harness4claude")
+        (repo / "scripts").mkdir()
+        hp.ensure_state_dir(root, str(projetos), session_id="s-1")
+        self._envelhece(hp, root, "s-1")
+
+        destino = hp.state_dir(root, str(repo / "scripts"), session_id="s-1")
+        assert destino.parent.parent.name == hp.project_slug(str(repo))
