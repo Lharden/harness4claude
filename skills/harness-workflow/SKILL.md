@@ -69,6 +69,13 @@ Para L0, NÃO ative — execute direto sem pipeline.
    # Passo 2 — resolva o balde UMA vez por sessao e anote o valor impresso.
    #           Esta linha SOBE o contador: e `python`, e o hook nao pode saber
    #           se um interpretador escreve. Custo conhecido, pago uma vez.
+   #           Excecao: o pin da sessao repina quando fica parado alem de
+   #           HARNESS_PIN_TTL_H e o projeto e outro, e o caminho anotado passa
+   #           a ser de um balde que os hooks largaram. `state_cli.py` e
+   #           `record_signal.py` recusam esse balde com exit 2 e imprimem o
+   #           atual: re-resolva e siga com ele, nunca recrie a task a mao.
+   #           Re-resolver por task custaria uma escrita no contador em TODA
+   #           task (medido 2026-10-02: 735 tasks, 1 repin em 195 pins).
    # --session-id NAO e opcional: sem ele o CLI devolve o bucket do PROJETO,
    # e o hook escreve no bucket da SESSAO. Mesma forma do preambulo
    # "Harness4Contract v1", acima.

@@ -2,7 +2,7 @@
 ## Harness v3 SDD (MANDATORY)
 - Hook classifica cada prompt como L0/L1/L2 (regex = `classification_meta.suggested`); harness-workflow confirma/corrige semanticamente (`classification_meta.final`/`agreed`). Loop de accuracy em signals.json (`aggregates.classify`)
 - "HARNESS v3 CLASSIFIED" L1/L2 no `additionalContext` -> **julgar primeiro o nivel real, sem carregar a skill.** A classificacao vem de regex e acerta ~30% (`aggregates.classify.proxy_regex_vs_observado = 0.297`)
-  - **L0 real:** so registrar e seguir direto: `python "<PR>/scripts/confirm_classification.py" --final "L0-question" --expect-task "<task_id do hook>" --harness-dir "<balde>"`. `<PR>` = conteudo de `~/.claude/harness/plugin-root`; `<balde>` = saida de `python "<PR>/scripts/harness_paths.py" --cwd "<cwd>" --session-id "<session_id>"`, resolvido uma vez por sessao. Uma chamada por linha, caminho literal
+  - **L0 real:** so registrar e seguir direto: `python "<PR>/scripts/confirm_classification.py" --final "L0-question" --expect-task "<task_id do hook>" --harness-dir "<balde>"`. `<PR>` = conteudo de `~/.claude/harness/plugin-root`; `<balde>` = saida de `python "<PR>/scripts/harness_paths.py" --cwd "<cwd>" --session-id "<session_id>"`, resolvido uma vez por sessao (e de novo quando `state_cli`/`record_signal` recusarem o balde por repin). Uma chamada por linha, caminho literal
   - **L1/L2 real:** invocar `Skill(skill="harness-workflow")` ANTES de responder e seguir o protocolo dela (confirmacao, fases, gates)
   - Motivo (2026-09-24): carregar a skill (~10 mil tokens) so para rebaixar a L0 era o maior custo fixo do harness
 - "HARNESS v3 CONTINUING" ou "HARNESS v3 RESUMING" -> invocar harness-workflow para continuar/retomar
