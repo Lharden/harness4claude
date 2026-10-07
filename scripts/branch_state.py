@@ -854,10 +854,18 @@ def signal(event: str, harness_root: str | os.PathLike | None = None) -> None:
 
     Fica na raiz, nao no bucket do projeto: telemetria e agregada de proposito.
     Nunca levanta — perder um contador nao pode custar um ramo.
+
+    Sem o lock, desiste do contador. Ate 2026-09-30 o fail-open gravava mesmo
+    assim, e quem segura o lock pode estar entre ler e gravar uma task
+    (`record_signal.record`, `migrate_state.run`, todos sob este mesmo `_Lock`):
+    o documento gravado por cima nao tinha a task. Perder o contador e o
+    fail-open; apagar a task do outro nao e.
     """
     path = Path(harness_paths.signals_dir(harness_root)) / "signals.json"
     try:
-        with _Lock(str(path)):
+        with _Lock(str(path)) as lock:
+            if not lock.owned:
+                return
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):

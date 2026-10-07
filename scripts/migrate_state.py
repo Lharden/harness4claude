@@ -211,9 +211,16 @@ def recompute_aggregates(tasks: list[dict], previous: dict | None = None) -> dic
 
 
 def migrate_signals(signals: dict) -> dict:
-    """Migra o signals.json para v3, preservando tasks e recalculando agregados."""
+    """Migra o signals.json para v3, preservando tasks e recalculando agregados.
+
+    Os demais campos passam intactos. O schema aceita campo extra, e o bloco
+    `branch` (contadores do Branch Keeper, `branch_state.signal`) e um deles:
+    ate 2026-09-30 a migracao montava o documento so com os quatro campos
+    conhecidos e o descartava.
+    """
     tasks = list(signals.get("tasks", []))
     return {
+        **signals,
         "version": SCHEMA_VERSION_SIGNALS,
         "harness_version": "v3",
         "tasks": tasks,
@@ -248,27 +255,42 @@ def _write(path: Path, data: dict, *, dry_run: bool) -> None:
 
 
 def run(harness_dir: Path, schemas_dir: Path, *, dry_run: bool, do_backup: bool) -> int:
-    """Executa a migracao completa. Retorna 0 em sucesso, 1 se houver erro de schema."""
+    """Executa a migracao completa. Retorna 0 em sucesso, 1 se houver erro de schema
+    ou se o lock de signals.json nao vier."""
+    # Import tardio: este modulo tambem e biblioteca (`recompute_aggregates`,
+    # usado por record_signal e confirm_classification) e so `run` precisa do lock.
+    from branch_state import LockUnavailable, _Lock  # type: ignore[import-not-found]
+
     state_path = harness_dir / "state.json"
     signals_path = harness_dir / "signals.json"
 
     state = migrate_state(load_json(state_path))
-    signals = migrate_signals(load_json(signals_path))
 
-    errors: list[str] = []
-    errors += [f"state: {e}" for e in validate(state, schemas_dir / "state.schema.json")]
-    errors += [f"signals: {e}" for e in validate(signals, schemas_dir / "signals.schema.json")]
-    if errors:
-        for err in errors:
-            logger.error("validacao falhou: %s", err)
+    # Leitura e escrita de signals.json sob o `_Lock` de `branch_state.signal` e
+    # `record_signal.record`: os tres reescrevem o documento inteiro, e sem o
+    # lock comum um contador ou uma task gravados entre a leitura e a escrita
+    # daqui sumiam (tests/test_signals_escritores.py).
+    try:
+        with _Lock(str(signals_path), required=True):
+            signals = migrate_signals(load_json(signals_path))
+
+            errors: list[str] = []
+            errors += [f"state: {e}" for e in validate(state, schemas_dir / "state.schema.json")]
+            errors += [f"signals: {e}" for e in validate(signals, schemas_dir / "signals.schema.json")]
+            if errors:
+                for err in errors:
+                    logger.error("validacao falhou: %s", err)
+                return 1
+
+            if do_backup and not dry_run:
+                backup_file(state_path)
+                backup_file(signals_path)
+
+            _write(state_path, state, dry_run=dry_run)
+            _write(signals_path, signals, dry_run=dry_run)
+    except LockUnavailable as exc:
+        logger.error("migracao nao gravada: %s", exc)
         return 1
-
-    if do_backup and not dry_run:
-        backup_file(state_path)
-        backup_file(signals_path)
-
-    _write(state_path, state, dry_run=dry_run)
-    _write(signals_path, signals, dry_run=dry_run)
     logger.info("migracao concluida (state schema_version=%s, signals version=%s)",
                 state["schema_version"], signals["version"])
     return 0
