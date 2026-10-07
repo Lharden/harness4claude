@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +51,30 @@ EVIDENCE = {
 }
 
 
+def _mh_pelo_marcador() -> None:
+    """Poe no `sys.path` a raiz que `~/.master-harness/mh-root` declara, se ela existir.
+
+    E o protocolo do ecossistema para achar o `mh` sem depender de ele estar
+    instalado — o mesmo de `_mh()` na presenca e do dreno do SessionStart. Ate
+    2026-10-07 este adaptador so tentava `import mh`, e o Python do sistema tinha
+    um `master-harness` editavel apontando para um worktree apagado: os hooks com
+    `python` puro, `confirm_classification.py` e `state_cli.py` liam o vizinho
+    (`vizinho:ModuleNotFoundError`) com a flag em `preferido`.
+
+    Sem marcador, nada muda e o `import mh` de baixo decide, como antes. E o caso
+    do kit S1, que roda com `-I` e a casa no temporario: la nao ha marcador, e o
+    `mh` vem do site-packages do venv.
+    """
+    casa = os.environ.get("MASTER_HARNESS_HOME") or os.path.join(os.path.expanduser("~"), ".master-harness")
+    try:
+        with open(os.path.join(casa, "mh-root"), encoding="utf-8") as fh:
+            raiz = fh.readline(4096).strip()
+    except OSError:
+        return
+    if raiz and os.path.isdir(raiz) and raiz not in sys.path:
+        sys.path.insert(0, raiz)
+
+
 def arvore_do_contrato(root: str | Path | None = None) -> tuple[Path, str]:
     """Devolve (arvore, origem): de onde o contrato foi lido, e por que dali.
 
@@ -73,6 +99,7 @@ def arvore_do_contrato(root: str | Path | None = None) -> tuple[Path, str]:
     if root is not None:
         return vizinho, "vizinho:raiz-explicita"
     try:
+        _mh_pelo_marcador()
         from mh import contrato as _mh_contrato
         from mh import flags as _mh_flags
 

@@ -139,3 +139,92 @@ class TestInvarianteDaMigracao:
 
         assert do_vizinho["pipeline_fingerprint"] == pela_canonica["pipeline_fingerprint"]
         assert set(do_vizinho["capabilities"]) == set(pela_canonica["capabilities"])
+
+
+_BLOQUEIO_DO_MH = r'''
+import importlib.abc, importlib.machinery, json, sys
+FALSO = sys.argv[1]
+class _SoOFalso(importlib.abc.MetaPathFinder):
+    """O `mh` instalado nao e importavel; so o que o marcador aponta e.
+
+    Imita o Python do sistema medido em 2026-10-07: um `master-harness` editavel
+    cujo finder aponta para um worktree apagado.
+    """
+    def find_spec(self, nome, path, target=None):
+        if nome != "mh" and not nome.startswith("mh."):
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(nome, path)
+        if spec is not None and str(spec.origin or "").startswith(FALSO):
+            return spec
+        raise ModuleNotFoundError(f"No module named {nome!r}")
+sys.meta_path.insert(0, _SoOFalso())
+sys.path.insert(0, sys.argv[2])
+import contract_adapter as ca
+arv, origem = ca.arvore_do_contrato()
+print(json.dumps({"arvore": str(arv), "origem": origem}))
+'''
+
+
+class TestPeloMarcador:
+    """O `mh` e achado pelo marcador `~/.master-harness/mh-root`, como a presenca e o dreno ja fazem.
+
+    Medido em 2026-10-07: o Python do sistema tem um `master-harness` editavel
+    apontando para um worktree apagado. Com ele, `import mh` falha e
+    `arvore_do_contrato()` devolvia `vizinho:ModuleNotFoundError` — os hooks
+    chamados com `python` puro, `confirm_classification.py` e `state_cli.py`
+    ficavam fora da flag `contrato = preferido` sem ninguem saber.
+    """
+
+    @pytest.fixture()
+    def falso(self, tmp_path: Path) -> Path:
+        """Um `mh` minimo: `contrato.CANONICA` e `flags.get`, o que o adaptador usa."""
+        raiz = tmp_path / "mh-falso"
+        canon = tmp_path / "canonica"
+        canon.mkdir()
+        (canon / "capabilities.json").write_text("{}", encoding="utf-8")
+        pacote = raiz / "mh"
+        pacote.mkdir(parents=True)
+        (pacote / "__init__.py").write_text("", encoding="utf-8")
+        (pacote / "contrato.py").write_text(
+            f"from pathlib import Path\nCANONICA = Path({str(canon)!r})\n", encoding="utf-8")
+        (pacote / "flags.py").write_text("def get(nome):\n    return 'preferido'\n", encoding="utf-8")
+        return raiz
+
+    def _rodar(self, casa: Path, falso: Path) -> dict:
+        import os
+
+        env = dict(os.environ, MASTER_HARNESS_HOME=str(casa))
+        p = subprocess.run(
+            [sys.executable, "-c", _BLOQUEIO_DO_MH, str(falso), str(ROOT / "scripts")],
+            capture_output=True, text=True, timeout=120, env=env,
+        )
+        assert p.returncode == 0, p.stderr
+        return json.loads(p.stdout.strip().splitlines()[-1])
+
+    def test_marcador_resolve_com_o_mh_inimportavel(self, falso: Path, tmp_path: Path) -> None:
+        casa = tmp_path / "casa"
+        casa.mkdir()
+        (casa / "mh-root").write_text(str(falso) + "\n", encoding="utf-8")
+
+        d = self._rodar(casa, falso)
+
+        assert d["origem"] == "mh"
+        assert Path(d["arvore"]) == tmp_path / "canonica"
+
+    def test_sem_marcador_e_sem_mh_cai_no_vizinho(self, falso: Path, tmp_path: Path) -> None:
+        casa = tmp_path / "casa-vazia"
+        casa.mkdir()
+
+        d = self._rodar(casa, falso)
+
+        assert d["origem"].startswith("vizinho:")
+        assert Path(d["arvore"]) == ROOT / "contract"
+
+    def test_marcador_para_pasta_inexistente_cai_no_vizinho(self, falso: Path, tmp_path: Path) -> None:
+        casa = tmp_path / "casa"
+        casa.mkdir()
+        (casa / "mh-root").write_text(str(tmp_path / "apagado") + "\n", encoding="utf-8")
+
+        d = self._rodar(casa, falso)
+
+        assert d["origem"].startswith("vizinho:")
