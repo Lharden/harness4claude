@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness_paths import recusa_balde_repinado  # type: ignore[import-not-found]
 from migrate_state import (  # type: ignore[import-not-found]
     load_json,
     recompute_aggregates,
@@ -366,6 +367,10 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     expect = (args.expect_task or "").strip() or None
+    recusa = recusa_balde_repinado(args.harness_dir, expect)
+    if recusa:
+        print(recusa, file=sys.stderr)
+        return 2
     if args.abandoned and not expect:
         _recusa_abandono_sem_task(args)
         return 2

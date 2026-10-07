@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from harness_paths import recusa_balde_repinado
 from projecao import projetar
 from transactional_state import EVIDENCIA_COM_RELATORIO, HarnessDatabase, StateTransitionError
 
@@ -134,6 +135,12 @@ def main(argv=None) -> int:
     complete.add_argument("--task", required=True)
     complete.add_argument("--expect-revision", type=int, required=True)
     args = parser.parse_args(argv)
+    # Antes do banco: `HarnessDatabase` cria o `harness.db`, e criar banco num
+    # balde abandonado ja e o comeco do estrago.
+    recusa = recusa_balde_repinado(args.home, args.task)
+    if recusa:
+        print(recusa)
+        return 2
     db = HarnessDatabase(args.home)
     try:
         if args.command == "init":

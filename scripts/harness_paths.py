@@ -120,6 +120,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -418,6 +419,105 @@ def _pinned_slug(base: Path, session: str, slug: str, grava: bool = True,
     if escrever:
         _write_pin(path, pin)
     return pinned
+
+
+def balde_repinado(balde: str | os.PathLike) -> dict | None:
+    """O balde atual da sessao, se `balde` e um que o pin dela ja deixou.
+
+    Responde a pergunta que o agente nao tem como fazer: o protocolo manda
+    resolver o balde uma vez por sessao e reusar o caminho literal, e um repin
+    genuino (secao "A validade do pin") muda o balde dos hooks sem avisar quem
+    anotou o caminho. Incidente 2026-10-02, sessao `b46f67bc`: a task nasceu no
+    balde novo, o agente a recriou a mao no velho e o registro saiu files=0, L0.
+
+    Le so o caminho e o pin, sem `cwd` nem `session_id`: o balde
+    `<raiz>/projects/<projeto>/sessions/<sessao>` ja carrega os dois, e o pin
+    mora em `<raiz>/pins/<sessao>.json`. Nao escreve nada.
+
+    Julga so com evidencia de abandono: o pin aponta para outro projeto **e**
+    tem um repin saindo deste. Projeto diferente sem repin e deriva, ou balde
+    anterior ao pin — nos dois o caminho anotado continua sendo o que os hooks
+    usam ou usavam, e recusar seria inventar. Qualquer falha de leitura devolve
+    None, pela mesma direcao de erro de `_pin_venceu`.
+
+    Devolve `{"atual", "projeto_atual", "repinned_at"}`, com `repinned_at` da
+    saida MAIS RECENTE deste projeto (A -> B -> A -> B sai duas vezes de A).
+    """
+    try:
+        caminho = Path(balde)
+        sessoes = caminho.parent
+        projetos = sessoes.parent.parent
+        if sessoes.name != SESSIONS_SUBDIR or projetos.name != PROJECTS_SUBDIR:
+            return None
+        sessao, projeto, raiz = caminho.name, sessoes.parent.name, projetos.parent
+        pin = _read_pin(_pin_file(raiz, sessao))
+        if pin is None or pin["project_slug"] == projeto:
+            return None
+        saidas = [
+            r for r in pin.get("repins", [])
+            if isinstance(r, dict) and r.get("project_slug") == projeto
+        ]
+        if not saidas:
+            return None
+        return {
+            "atual": str(raiz / PROJECTS_SUBDIR / pin["project_slug"] / SESSIONS_SUBDIR / sessao),
+            "projeto_atual": pin["project_slug"],
+            "repinned_at": saidas[-1].get("repinned_at"),
+        }
+    except Exception:  # noqa: BLE001 - o guarda nao pode ser quem quebra o CLI
+        return None
+
+
+def _iniciada_antes(balde: Path, task_id: str, momento: datetime) -> bool:
+    """A task ja vivia neste balde antes de `momento`.
+
+    Leitura crua e somente-leitura do `harness.db`: este modulo e importado
+    pelos hooks e nao pode depender de `transactional_state`.
+    """
+    banco = balde / "harness.db"
+    if not banco.is_file():
+        return False
+    try:
+        uri = f"{banco.resolve().as_uri()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conexao:
+            linha = conexao.execute(
+                "SELECT started_at FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+    inicio = _quando(linha[0]) if linha else None
+    return inicio is not None and inicio < momento
+
+
+def recusa_balde_repinado(balde: str | os.PathLike, task_id: str | None) -> str | None:
+    """A mensagem de recusa para quem opera `task_id` num balde abandonado, ou None.
+
+    Consumidores: `state_cli.py` (`--home`) e `record_signal.py`
+    (`--harness-dir`). `confirm_classification.py` tambem recebe o balde, mas
+    esta congelado enquanto o P1 do System One estiver vivo
+    (`docs/specs/status-proprio-da-task-l0-diagnostico.md`).
+
+    **A task que ja vivia no balde antes do repin passa.** O repin nao a move, e
+    recusar o registro dela a deixaria irregistravel para sempre. O que se
+    recusa e a task de depois — a que o hook criou no balde novo e o agente
+    tenta operar, ou recriar a mao, no velho. Data de repin ilegivel nao isenta
+    nada: sem ela nao ha como dizer que a task e anterior.
+    """
+    achado = balde_repinado(balde)
+    if achado is None:
+        return None
+    repin = _quando(achado["repinned_at"])
+    if task_id and repin is not None and _iniciada_antes(Path(balde), task_id, repin):
+        return None
+    # ASCII de proposito: no Windows o stderr sai em cp1252.
+    return (
+        f"erro: o balde {balde} deixou de ser o desta sessao em "
+        f"{achado['repinned_at']}: o pin ficou parado alem de HARNESS_PIN_TTL_H e "
+        f"repinou no projeto {achado['projeto_atual']}. Os hooks gravam agora em: "
+        f"{achado['atual']} . Re-resolva com harness_paths.py --cwd <cwd> "
+        f"--session-id <session_id>, anote o caminho novo e repita o comando com "
+        f"ele. Nao recrie a task a mao neste balde."
+    )
 
 
 def state_dir(
