@@ -103,6 +103,23 @@ class TestSmokeDetectaSabotagem:
         finally:
             alvo.write_text(original, encoding="utf-8")
 
+    def test_git_guard_com_decisao_sabotada_reprova(self, plugin_copy):
+        """A decisao mora em harness_git_guard.py desde 2026-10-07; sabotar so
+        o .sh deixaria a metade que decide sem vigia."""
+        alvo = plugin_copy / "hooks" / "harness_git_guard.py"
+        original = alvo.read_text(encoding="utf-8") if alvo.exists() else None
+        alvo.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+        try:
+            secao = _smoke_section(_run_health_check(plugin_copy).stdout)
+            assert "[FAIL]   git-guard bloqueia destrutivo" in secao, (
+                f"decisao do guard desativada passou despercebida:\n{secao}"
+            )
+        finally:
+            if original is None:
+                alvo.unlink()
+            else:
+                alvo.write_text(original, encoding="utf-8")
+
     def test_arsenal_gate_que_para_de_bloquear_reprova(self, plugin_copy):
         """Mesma sabotagem no gate de orcamento.
 

@@ -118,8 +118,30 @@ def _nested_command(invocation: CommandInvocation) -> str | None:
     return None
 
 
+# Opcoes globais do git que consomem o token seguinte. A forma `--opcao=valor`
+# ocupa um token so e cai no caso geral.
+_GIT_GLOBAL_WITH_VALUE = frozenset({
+    "-c", "-C", "--git-dir", "--work-tree", "--namespace",
+    "--config-env", "--super-prefix", "--exec-path",
+})
+
+
+def _git_subcommand_args(args: tuple[str, ...]) -> tuple[str, ...]:
+    """Os argumentos a partir do subcomando, pulando as opcoes globais.
+
+    Ate 2026-10-07 o subcomando era `args[0]`, e `git -C <dir> branch -D x` era
+    lido como o subcomando `-c`: 12 `branch -D` reais passaram como allow nos
+    transcripts desta maquina, e 41 pushes sem o aviso.
+    """
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        index += 2 if args[index] in _GIT_GLOBAL_WITH_VALUE else 1
+    return args[index:]
+
+
 def _evaluate_invocation(invocation: CommandInvocation) -> PolicyDecision:
-    args = [arg.lower() for arg in invocation.args]
+    original = _git_subcommand_args(invocation.args) if invocation.program == "git" else invocation.args
+    args = [arg.lower() for arg in original]
     if invocation.program == "git" and args:
         subcommand = args[0]
         flags = set(args[1:])
@@ -127,7 +149,7 @@ def _evaluate_invocation(invocation: CommandInvocation) -> PolicyDecision:
             return PolicyDecision("deny", "destructive git reset --hard", invocation)
         if subcommand == "clean" and any(flag.startswith("-") and "f" in flag[1:] for flag in flags):
             return PolicyDecision("deny", "destructive git clean force", invocation)
-        if subcommand == "branch" and any("D" in flag[1:] for flag in invocation.args[1:] if flag.startswith("-")):
+        if subcommand == "branch" and any("D" in flag[1:] for flag in original[1:] if flag.startswith("-")):
             return PolicyDecision("deny", "forced branch deletion", invocation)
         if subcommand in {"checkout", "restore"} and "." in args[1:]:
             return PolicyDecision("deny", "broad workspace restore", invocation)
