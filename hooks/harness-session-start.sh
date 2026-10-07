@@ -384,6 +384,40 @@ elif rel.cercados or rel.ilegiveis:
 ' || true)"
 export DRENO_DIGEST
 
+# ---------------------------------------------------------------------------
+# Saude do ecossistema (master-harness)
+# ---------------------------------------------------------------------------
+# Os portoes do Release 1.0.0 do master-harness nao tinham chamador. Medido em
+# 2026-10-07: `mh identidade check` vermelho de 30/09 a 07/10 e `mh contrato
+# check` morrendo num link pendente, sem nada perceber. Este digest e o lugar que
+# alguem le.
+#
+# O hook NAO mede: `mh.saude.ao_iniciar_sessao` le o ultimo resultado gravado e,
+# se ele passou de 6 h, dispara `mh saude --registrar` destacado (a medicao leva
+# ~7 s; aqui custa um processo python). Silencio quando saudavel, uma linha
+# quando nao. Sem master-harness, ou com um anterior a este chamador, silencio;
+# mas um `mh` que LEVANTA vira linha, porque silencio ali e o proprio defeito.
+SAUDE_DIGEST="$("$PY" -c "
+import os, sys
+casa = os.environ.get('MASTER_HARNESS_HOME') or os.path.join(os.path.expanduser('~'), '.master-harness')
+try:
+    with open(os.path.join(casa, 'mh-root'), encoding='utf-8') as fh:
+        raiz = fh.readline(4096).strip()
+    if not raiz or not os.path.isdir(raiz):
+        raise SystemExit(0)
+    sys.path.insert(0, raiz)
+    from mh import saude
+    ao_iniciar = saude.ao_iniciar_sessao
+except Exception:
+    raise SystemExit(0)
+try:
+    print(ao_iniciar(casa, python=sys.executable))
+except Exception as exc:
+    print(f'SAUDE DO ECOSSISTEMA: NAO VERIFICADO - a checagem levantou {type(exc).__name__}: {exc}. '
+          'Rode \`mh saude\`.')
+" 2>/dev/null | tr -d '\r\n' || true)"
+export SAUDE_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     "$PY" -c "
@@ -407,7 +441,8 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 # Os dois aconteceram aqui em 2026-08-13, e o sintoma foi exit 1 sem stderr.
 sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
 dreno = os.environ.get('DRENO_DIGEST', '').strip()
-partes_saida = [x for x in (digest, arsenal, sessoes, dreno) if x]
+saude = os.environ.get('SAUDE_DIGEST', '').strip()
+partes_saida = [x for x in (digest, arsenal, sessoes, dreno, saude) if x]
 if partes_saida:
     print((chr(10) * 2).join(partes_saida))
 " 2>/dev/null | _harness_emit digest || true
@@ -457,8 +492,11 @@ sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
 if sessoes:
     partes.append(sessoes)
 dreno = os.environ.get('DRENO_DIGEST', '').strip()
+saude = os.environ.get('SAUDE_DIGEST', '').strip()
 if dreno:
     partes.append(dreno)
+if saude:
+    partes.append(saude)
 print('\n\n'.join(partes))
 " 2>/dev/null | _harness_emit resuming || true
     exit 0
@@ -510,8 +548,11 @@ sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
 if sessoes:
     parts.append(sessoes)
 dreno = os.environ.get('DRENO_DIGEST', '').strip()
+saude = os.environ.get('SAUDE_DIGEST', '').strip()
 if dreno:
     parts.append(dreno)
+if saude:
+    parts.append(saude)
 
 if parts:
     print('\n\n'.join(parts))
