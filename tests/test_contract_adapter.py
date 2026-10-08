@@ -3,6 +3,7 @@ import io
 import json
 import re
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,9 +82,58 @@ def test_release_version_and_lifecycle_are_synchronized():
     assert (ROOT / "skills" / "science-evidence" / "SKILL.md").exists()
 
 
-def test_science_intent_routes_evidence_prompts(monkeypatch, capsys):
+def _chamar_server_info(spec: dict) -> dict:
+    """Sobe o servidor do registro e chama `server_info` pelo protocolo MCP stdio."""
+    processo = subprocess.Popen(
+        [spec["command"], *spec.get("args", [])],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+    )
+    try:
+        def pedir(mensagem):
+            processo.stdin.write(json.dumps(mensagem) + "\n")
+            processo.stdin.flush()
+            if "id" not in mensagem:
+                return None
+            while True:
+                resposta = json.loads(processo.stdout.readline())
+                if resposta.get("id") == mensagem["id"]:
+                    return resposta
+
+        pedir({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "sonda-contrato", "version": "0"}}})
+        pedir({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        resposta = pedir({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                          "params": {"name": "server_info", "arguments": {}}})
+    finally:
+        processo.stdin.close()
+        processo.wait(timeout=10)
+    assert resposta["result"]["isError"] is False
+    return json.loads(resposta["result"]["content"][0]["text"])
+
+
+def test_science_intent_routes_evidence_prompts(monkeypatch, capsys, tmp_path):
+    """Sonda de `integration.science-harness`: do prompt ate a resposta do MCP.
+
+    Ate 2026-10-07 esta sonda provava so que o hook roteava, e passava com o MCP
+    ausente do Claude (decisao 5 de `decisoes-capacidades-orfas.md`). Agora o
+    hook so emite com o `science_harness` registrado, e a sonda sobe o servidor
+    pelo mesmo registro que o hook aceitou e chama `server_info`, como a skill
+    `science-evidence` manda. O servidor e um duble no formato do `shs.exe
+    claims-mcp`; a sonda nao depende do executavel real da maquina.
+    """
     hook = _load("science_intent", ROOT / "hooks" / "science_intent.py")
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"prompt": "Review scientific evidence"})))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config_dir = tmp_path / "claude-config"
+    config_dir.mkdir()
+    (config_dir / ".claude.json").write_text(json.dumps({"mcpServers": {"science_harness": {
+        "type": "stdio", "command": sys.executable,
+        "args": [str(ROOT / "tests" / "fixtures" / "fake_claims_mcp.py")], "env": {}}}}), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(
+        {"prompt": "Review scientific evidence", "cwd": str(repo)})))
 
     assert hook.main() == 0
 
@@ -97,6 +147,10 @@ def test_science_intent_routes_evidence_prompts(monkeypatch, capsys):
     assert "science-evidence" in message
     assert "read-only" in message
     assert "provenance" in message
+
+    spec = hook.registro_science(str(repo))
+    assert spec is not None
+    assert "corpora" in _chamar_server_info(spec)
 
 
 def test_classifier_core_is_portable_and_used_by_the_hook():
