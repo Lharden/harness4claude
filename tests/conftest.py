@@ -44,6 +44,7 @@ _vault_session_dir: str | None = None
 REAL_VAULTS: frozenset[Path] = frozenset()
 BASH_REQUIRED_CLASSES = {
     "test_arsenal_gate.py": {"TestInvocacaoBloqueia", "TestMencaoNaoBloqueia", "TestPassaDireto", "TestFalhaAberta"},
+    "test_signals_criacao.py": {"TestCriacaoBashNaoApagaTask"},
     "test_harness_dir_resolution.py": {
         "TestOverrideRedirectsWrites",
         "TestDefaultFallback",
