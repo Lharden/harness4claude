@@ -11,42 +11,48 @@ from typing import Any
 
 EVIDENCE = {
     "classification.deterministic-suggestion": [
-        "tests/test_contract_adapter.py#test_classifier_core_is_portable_and_used_by_the_hook"
+        "tests/test_sondas_de_producao.py#test_classify_hook_grava_sugestao_deterministica",
     ],
     "classification.semantic-confirmation": [
-        "tests/test_confirm_classification.py#test_divergencia_corrige_classificacao_e_pipeline"
+        "tests/test_sondas_de_producao.py#test_confirm_cli_grava_confirmacao_semantica",
     ],
-    "classification.human-override": ["tests/test_confirm_classification.py#test_human_override_registrado_na_source"],
+    "classification.human-override": ["tests/test_sondas_de_producao.py#test_confirm_cli_grava_human_override"],
     "state.session-worktree-isolation": [
-        "tests/test_harness_paths.py#test_duas_sessoes_no_mesmo_worktree_tem_estado_independente"
+        "tests/test_sondas_de_producao.py#test_classify_hook_isola_duas_sessoes_no_mesmo_repo",
     ],
-    "state.transactional-fsm": ["tests/test_transactional_state.py#test_revision_evidence_and_scope_invariants"],
-    "state.ttl-signals": ["tests/test_transactional_state.py#test_stale_task_ttl_abandons_pipeline_and_releases_scope"],
-    "workflow.sdd-v3": ["tests/test_contract_adapter.py#test_claude_pipelines_are_the_canonical_contract_pipelines"],
+    "state.transactional-fsm": [
+        "tests/test_transactional_hook.py#test_atomic_test_command_records_fresh_evidence",
+        "tests/test_transactional_hook.py#test_stop_blocks_twice_then_opens_escalation_gate",
+    ],
+    "state.ttl-signals": ["tests/test_sondas_de_producao.py#test_session_start_hook_abandona_task_vencida"],
+    "workflow.sdd-v3": ["tests/test_sondas_de_producao.py#test_classify_hook_grava_pipeline_do_contrato"],
     "workflow.human-gates": [
-        "tests/test_branch_state.py#test_park_resolve_gate_e_abertura_posterior_cria_nova_aprovacao"
+        "tests/test_transition_portao_pendente.py#test_linha_impressa_para_branch_open_parkeia_e_destrava",
     ],
-    "workflow.adversarial-agents": ["tests/test_workflow_returns.py#test_todo_fan_out_tem_censo_de_nos"],
-    "workflow.spec-verification": ["tests/test_workflow_returns.py#test_verify_nao_aprova_com_cobertura_incompleta"],
-    "context.graphify": ["tests/test_graph_lint.py#test_grafo_saudavel_passa_limpo"],
+    "workflow.adversarial-agents": ["tests/test_sondas_de_producao.py#test_workflow_de_contexto_nomeia_o_no_morto"],
+    "workflow.spec-verification": [
+        "tests/test_sondas_de_producao.py#test_verify_multimodel_com_dimensao_morta_nao_aprova",
+    ],
+    "context.graphify": ["tests/test_sondas_de_producao.py#test_graphify_autosetup_dispara_update_sem_grafo"],
     "context.skill-router": ["tests/test_skill_router.py#test_main_runs_layer_b_when_layer_a_empty"],
-    "capability.arsenal": ["tests/test_arsenal.py#test_registry_minimo_valido_passa"],
-    "memory.wiki-vault": ["tests/test_vault_sync.py#test_spec_crua_chega_ao_vault_com_frontmatter"],
-    "memory.operational-search": ["tests/test_wiki_query.py#test_camada_a_acha_por_alias_curado_e_e_confiavel"],
+    "capability.arsenal": ["tests/test_arsenal_gate.py#test_install_sem_decisao"],
+    "memory.wiki-vault": ["tests/test_sondas_de_producao.py#test_precompact_hook_espelha_spec_no_vault"],
+    "memory.operational-search": ["tests/test_sondas_de_producao.py#test_wiki_query_cli_acha_por_alias"],
     "conversation.branch-keeper": [
-        "tests/test_branch_state.py#test_fluxo_publico_aplica_gate_e_limite_transacionais"
+        "tests/test_branch_state.py#test_add_pela_linha_de_comando_cria_o_registro",
+        "tests/test_sondas_de_producao.py#test_branch_state_cli_recusa_abrir_alem_do_limite",
     ],
-    "safety.command-policy": [
-        "tests/test_command_policy.py#test_policy_denies_destructive_chain_and_gates_plugin_mutation"
-    ],
+    "safety.command-policy": ["tests/test_host_contract_resilience.py#test_bloqueia_destrutivo"],
     "integration.harness-lite": [
-        "tests/test_harness_lite_adapter.py#test_a_passed_bundle_with_artifacts_is_acceptable"
+        "tests/test_harness_lite_adapter.py#test_a_passed_bundle_with_artifacts_is_acceptable",
     ],
     "integration.science-harness": ["tests/test_contract_adapter.py#test_science_intent_routes_evidence_prompts"],
-    "lifecycle.full-hooks": ["tests/test_contract_adapter.py#test_release_version_and_lifecycle_are_synchronized"],
-    "observability.health-telemetry": ["tests/test_hook_liveness.py#test_tudo_disparando_sai_zero"],
+    "lifecycle.full-hooks": ["tests/test_sondas_de_producao.py#test_todo_comando_de_hooks_json_roda"],
+    "observability.health-telemetry": [
+        "tests/test_sondas_de_producao.py#test_check_hook_liveness_cli_sai_zero_e_reprova_evento_mudo",
+    ],
     "editorial.drop-constrain-retain": [
-        "tests/test_contract_adapter.py#test_workflow_encodes_drop_constrain_retain_gate"
+        "tests/test_sondas_de_producao.py#test_classify_hook_manda_carregar_workflow_com_drop_constrain_retain",
     ],
 }
 
