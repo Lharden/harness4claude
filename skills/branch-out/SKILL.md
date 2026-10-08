@@ -141,7 +141,8 @@ desta sessão (o mesmo que aparece nos comandos `--resume`).
 **A semente é escrita por você, não pelo hook.** Só você tem o contexto. Ela é
 o único fio entre um contexto limpo e a decisão que o originou.
 
-Seis seções obrigatórias (o renderizador recusa semente incompleta):
+Seis seções obrigatórias. Ninguém confere por você: o `write` grava o arquivo
+como veio, então conferir as seis antes de gravar é sua responsabilidade.
 
 1. **Origem** — sessão pai (uuid + nome), projeto, uuid do ramo
 2. **O ramo** — 3 a 5 linhas

@@ -95,13 +95,6 @@
    "motivo": "Bench de latencia do wiki_query por subprocess real. docs/wiki-query.md:103 registra a medicao que ele produziu (n=12, indice de 512 chunks)."
   },
   {
-   "modulo": "branch_seed",
-   "nome": "render_seed",
-   "arquivo": "scripts/branch_seed.py",
-   "categoria": "ORFAO",
-   "motivo": "Renderiza a semente de um ramo: seis secoes, 110 linhas, e uma correcao de RecursionError com o caso que derrubava a skill inteira. A unica chamada no repositorio e a recursao dela mesma, na linha 150. O `main` le o arquivo pronto via --seed-file, e skills/branch-out/SKILL.md:139 diz explicitamente que a semente e escrita pelo agente. Pior: a linha 142 da mesma SKILL.md afirma que *o renderizador recusa semente incompleta*, e ele nunca roda. A capacidade existe, tem teste, e a frase que a anuncia e falsa."
-  },
-  {
    "modulo": "calibrate_branch_floor",
    "nome": "embeddings_de",
    "arquivo": "scripts/calibrate_branch_floor.py",
