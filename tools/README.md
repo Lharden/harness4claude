@@ -26,19 +26,16 @@ Todos operam sobre a **raiz do vault** via `--root`. Aponte para o seu vault
 | `orfaos.py` | Guarda de órfão: função pública sem caminho até uma raiz que o host execute. Reprova o que não estiver declarado em `orfaos.json` | `python tools/orfaos.py --report` |
 | `migrar_inbox_rotulado.py` | Migração única: renomeia as notas diárias legadas `raw/inbox/today-*.md` para `<repo>--today-*.md`, o nome que o `vault_sync` grava desde 2026-09-24. Ensaio por padrão; `--aplicar` exige `--backup` fora do vault; `--restaurar` desfaz. Rodar depois de instalar o plugin novo, em cada máquina | `python tools/migrar_inbox_rotulado.py --vault "$VAULT_PATH/AI-Brain" --repo <dir> [--repo <dir> ...]` |
 
-**Esta tabela tem sete linhas, e `tools/` tem dezoito arquivos.** `wiki_lint.py` e
-`wiki_moc.py` — 17 funções, 31 testes — não estão aqui, não estão no
-`health-check.sh`, não estão em nenhuma `SKILL.md`, e nada as chama. `wiki_lint` é
-citado em 12 docstrings deste diretório como *o contrato que os outros herdam*:
-`graph_lint`, `arsenal`, `compendium`, `impact` e `design_scope` dizem seguir o
-formato dele, e nenhum o invoca.
+| `wiki_moc.py` | Gera o MOC raiz do AI-Brain (`wiki/00 MOC AI-Brain.md`), com o painel de saúde do `wiki_lint`. Rodar ao mudar as áreas do vault | `python tools/wiki_moc.py --root "$VAULT_PATH/AI-Brain" --write` |
+| `wiki_lint.py` | Health check read-only da wiki AI-Brain; é o painel de saúde do MOC e o formato que `graph_lint`, `arsenal`, `compendium`, `impact` e `design_scope` herdam. Rodar ao gerar o MOC ou ao suspeitar de deriva na wiki | `python tools/wiki_lint.py --root "$VAULT_PATH/AI-Brain" --report` |
 
-Elas **não** foram acrescentadas à tabela ao serem descobertas, e isso é
-deliberado. Escrever a linha aqui as tornaria ferramentas de mão declaradas — e
-quem decide que uma peça esquecida vira ferramenta declarada é quem mantém o
-repositório, não quem passou medindo. Enquanto ninguém decide, elas estão em
-`orfaos.json` com `categoria: ORFAO` e o motivo escrito, que é onde dívida com
-nome pertence. Consertar no mesmo gesto em que se mede apaga o que foi medido.
+`wiki_lint.py` e `wiki_moc.py` ficaram de fora desta tabela de 2026-09-16 a
+2026-10-07, de propósito: a medição que os achou (`docs/specs/guarda-de-orfao-medicao.md`)
+deixou para quem mantém o repositório decidir se peça esquecida vira ferramenta
+declarada, e enquanto isso elas moraram em `orfaos.json` como `ORFAO`. A decisão
+veio com a decisão 7 de `master-harness/docs/decisoes-capacidades-orfas.md`: o MOC
+no vault diz "Gerado por `tools/wiki_moc.py`" e cita o `wiki_lint` para reproduzir o
+painel, então as duas já eram usadas à mão; faltava a frase que diz como e quando.
 
 **Compêndio e arsenal são irmãos, e a diferença importa:** um verbete do compêndio
 é inerte e custa zero token por sessão; uma skill instalada é ativa, cobra ~93
