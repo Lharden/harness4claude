@@ -91,10 +91,15 @@ global do git, nem por ter sido rodado pela ferramenta PowerShell.
 ## Requisitos
 
 - REQ-1: sob carga focada (processo do teste + 4 laços nos mesmos 2 núcleos
-  lógicos), mediana(guarda) / mediana(Python vazio do MESMO interpretador que o
-  guarda escolhe) ≤ 2,5, medidas intercaladas, guarda invocado como
-  `bash harness-git-guard.sh` com payload `git status`; e o máximo do guarda
-  < 5 s (metade do prazo do host). Hoje: 10,2× e 5,39 s.
+  lógicos), mediana(guarda) / mediana(script bash que chama um Python vazio do
+  MESMO interpretador que o guarda escolhe) ≤ 2,0, medidas intercaladas, guarda
+  invocado como `bash harness-git-guard.sh` com payload `git status`.
+  Código-base: 7,6×. Revisado em 2026-10-07 (ramo `fix/preludio-sem-fork`): a
+  primeira versão comparava com um Python vazio sozinho e tinha teto absoluto de
+  5 s; na suíte completa com `-n 4` a disputa dos outros workers pesa por
+  processo, o Python vazio foi a 1,45 s e a razão a 2,8× sem mudança no guarda.
+  Com referência de mesma estrutura (2 processos) a disputa pesa igual nos dois
+  lados. O prazo absoluto fica com a verificação em produção, abaixo.
 - REQ-2: nenhum bloqueio de hoje se perde: push `--force`/`-f`/`--force-with-lease`,
   `reset --hard`, `clean -f*`, `branch -D`, `checkout .`, `restore .`; cadeia,
   aninhado em `bash -c`/`pwsh -c`; texto citado não executa; mutação de plugin
@@ -113,8 +118,9 @@ global do git, nem por ter sido rodado pela ferramenta PowerShell.
 ## Critérios de aceite (1 AC = 1 teste)
 
 - AC-1 (falsificação do prazo, REQ-1): Given carga focada, When 6 rodadas
-  intercaladas guarda/Python vazio, Then razão ≤ 2,5 e máximo < 5 s. Reprova no
-  código-base (medido: 10,2×), passa no novo. Na suíte padrão. Pula (com motivo)
+  intercaladas guarda/(bash → Python vazio), Then razão ≤ 2,0. Reprova no
+  código-base (medido: 7,6×, guarda a 23,6 s com a máquina carregada), passa no
+  novo (1,0× a 1,5×, também sob `-n 4` com os testes de hook). Na suíte padrão. Pula (com motivo)
   só se a máquina tiver < 2 núcleos lógicos ou sem API de afinidade.
 - AC-2: `# don't` ⏎ `git reset --hard HEAD~1` → 2.
 - AC-3: heredoc com `it's` ⏎ `git push --force origin main` → 2.

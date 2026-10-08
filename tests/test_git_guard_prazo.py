@@ -8,10 +8,19 @@ mesmos 2 nucleos, contra 0,22 s / 0,30 s de um Python vazio. Em producao, 531
 chamadas passaram de 10 s entre 20/09 e 07/10; o host mata o hook e a
 ferramenta segue, ou seja, a checagem nao acontece.
 
-O oraculo e uma RAZAO, nao um tempo absoluto: guarda e Python vazio medidos
+O oraculo e uma RAZAO contra a estrutura minima de um guarda: um script bash
+que chama um Python vazio (2 processos, como o guarda novo). Os dois medidos
 intercalados, sob a mesma carga. Tempo absoluto depende da maquina e do que as
-outras sessoes estao rodando; a razao mede quantos processos o guarda custa.
-Codigo antigo: ~12x. Teto: 2,5x.
+outras sessoes estao rodando; a razao mede o custo ALEM do minimo — processos
+a mais, imports, trabalho. Codigo antigo: ~7x ocioso. Teto: 2,0x.
+
+A primeira versao (2026-10-07) comparava com um Python vazio sozinho (1
+processo) e tinha teto absoluto de 5 s. Na suite completa com `-n 4`, os outros
+workers disputam os mesmos nucleos: o Python vazio subiu para 1,45 s, o guarda
+novo para 4,0 s, e a razao para 2,8x — o teste media a disputa, que pesa por
+processo, e nao o guarda. Com a referencia de mesma estrutura, a disputa pesa
+igual nos dois lados. O prazo absoluto em producao e medido nos transcripts
+(spec, secao "Verificacao em producao"), nao aqui.
 
 Carga focada (padrao da maquina compartilhada): o processo do teste e 4 lacos
 presos aos mesmos 2 nucleos logicos, nunca a maquina inteira. Os lacos tem
@@ -49,8 +58,13 @@ if sys.platform == "win32":
 
 RODADAS = 6
 LACOS = 4
-RAZAO_MAXIMA = 2.5
+RAZAO_MAXIMA = 2.0
 PRAZO_DO_HOST_S = 10  # hooks/hooks.json, "timeout" do git-guard
+
+# A estrutura minima de um guarda: bash que chama um Python e espera. O `exit 0`
+# depois impede o bash de trocar o Python por `exec` (otimizacao do ultimo
+# comando), que o guarda real nao faz.
+_REFERENCIA = '"$1" -c pass\nexit 0\n'
 
 # Laco ocupado com homem-morto: sai quando a sentinela some ou o prazo vence.
 _LACO = (
@@ -147,24 +161,27 @@ def _tempo(cmd: list[str], entrada: str | None, env: dict) -> tuple[float, int]:
     return time.perf_counter() - inicio, res.returncode
 
 
-def test_guarda_custa_pouco_mais_que_um_python_vazio_sob_carga(tmp_path):
+def test_guarda_custa_pouco_mais_que_bash_chamando_python_vazio_sob_carga(tmp_path):
     py = _interpretador_do_guarda()
     env = os.environ.copy()
     env["HARNESS_DIR"] = str(tmp_path)
     env["PYTHONUTF8"] = "1"
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}})
+    referencia = tmp_path / "referencia.sh"
+    referencia.write_text(_REFERENCIA, encoding="utf-8", newline="\n")
 
-    guarda, vazio = [], []
+    guarda, minimo = [], []
     with _carga_focada(_dois_nucleos()):
         for _ in range(RODADAS):
             t, rc = _tempo([BASH, str(GUARD)], payload, env)
             assert rc == 0, "git status nao pode bloquear"
             guarda.append(t)
-            t, _ = _tempo([py, "-c", "pass"], None, env)
-            vazio.append(t)
+            t, rc = _tempo([BASH, str(referencia), py], None, env)
+            assert rc == 0, "referencia nao rodou"
+            minimo.append(t)
 
-    razao = statistics.median(guarda) / statistics.median(vazio)
+    razao = statistics.median(guarda) / statistics.median(minimo)
     detalhe = (f"guarda p50={statistics.median(guarda):.2f}s max={max(guarda):.2f}s | "
-               f"python vazio p50={statistics.median(vazio):.2f}s | razao={razao:.1f}x")
+               f"bash+python vazio p50={statistics.median(minimo):.2f}s | razao={razao:.1f}x")
+    print(detalhe)  # a margem tambem quando passa: `pytest -rP`
     assert razao <= RAZAO_MAXIMA, f"guarda caro demais sob carga: {detalhe}"
-    assert max(guarda) < PRAZO_DO_HOST_S / 2, f"guarda perto do prazo do host: {detalhe}"

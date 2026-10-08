@@ -6,7 +6,10 @@ set -euo pipefail
 _MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
 PY="python"
 if [ -r "$_MH_MARCA" ]; then
-    _MH_CAND="$(cat "$_MH_MARCA" 2>/dev/null | tr -d '\r\n')"
+    _MH_CAND=""
+    IFS= read -r _MH_CAND < "$_MH_MARCA" || true
+    _MH_CAND="${_MH_CAND#$'\xef\xbb\xbf'}"
+    _MH_CAND="${_MH_CAND%$'\r'}"
     [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
 fi
 

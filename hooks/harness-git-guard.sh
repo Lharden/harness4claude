@@ -17,11 +17,9 @@
 
 set -uo pipefail
 
-# Interpretador nomeado (master-harness). Sem marcador valido, `python`.
-# `read` em vez de `cat | tr`: aceita marcador sem newline final, e o CR e o
-# BOM saem por expansao de parametro.
-PY="python"
+# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
 _MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+PY="python"
 if [ -r "$_MH_MARCA" ]; then
     _MH_CAND=""
     IFS= read -r _MH_CAND < "$_MH_MARCA" || true
