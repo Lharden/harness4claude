@@ -17,7 +17,7 @@ human gates and revision-bound evidence.
 - Verifies implementation against the spec with evidence-based coverage reports
 - Enforces pipeline order, artifact obligations, optimistic revisions, leases and fencing in SQLite WAL
 - Isolates active task state by session and Git worktree while retaining aggregate telemetry
-- Provides Graphify context, cited wiki retrieval, capability arsenal, Branch Keeper and Science Harness routing
+- Provides Graphify context, cited wiki retrieval, capability arsenal, Branch Keeper and Science Harness routing (only when the `science_harness` MCP is registered in Claude)
 - Emits a machine-readable 22-capability conformance report from `scripts/contract_adapter.py`
 
 ---
