@@ -23,7 +23,7 @@ const [, , wfFile, scenarioFile] = process.argv
 const src = fs.readFileSync(wfFile, 'utf8')
 const scenario = JSON.parse(fs.readFileSync(scenarioFile, 'utf8'))
 
-const calls = { review: [], adjudicate: [], phases: [], logs: [] }
+const calls = { review: [], adjudicate: [], scan: [], phases: [], logs: [] }
 
 function extractLabelKey(label, prefix) {
   return label.startsWith(prefix) ? label.slice(prefix.length) : null
@@ -47,11 +47,21 @@ async function agent(prompt, opts) {
     if (Object.prototype.hasOwnProperty.call(verdicts, file)) return verdicts[file]
     return { is_real: true, confidence: 0.9, reason: 'default-mock' }
   }
+  if (label.startsWith('scan:')) {
+    // wf-context-scan.js: `scenario.scans[<angulo>]`. Valor null = no morto.
+    const key = extractLabelKey(label, 'scan:')
+    calls.scan.push({ label })
+    const scans = scenario.scans || {}
+    if (Object.prototype.hasOwnProperty.call(scans, key)) return scans[key]
+    return { items: [] }
+  }
   throw new Error(`agent() mock nao sabe responder para label='${label}'`)
 }
 
+// Mesma semantica do runtime de Workflow: um thunk que lanca resolve a `null`
+// no resultado, e a chamada nunca rejeita.
 async function parallel(fns) {
-  return Promise.all(fns.map((fn) => fn()))
+  return Promise.all(fns.map((fn) => Promise.resolve().then(fn).catch(() => null)))
 }
 
 function phase(name) {
