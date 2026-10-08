@@ -472,12 +472,12 @@ class TestOrcamento:
         """Decisao do usuario: "agora nao" nunca perde a ideia."""
         b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x")
         assert b["status"] == "pending"
-        assert bs.pending(cwd=str(tmp_path))[0]["slug"] == b["slug"]
+        assert bs.by_status(str(tmp_path), "pending")[0]["slug"] == b["slug"]
 
     def test_descarte_e_explicito(self, bs, tmp_path):
         b = bs.add(cwd=str(tmp_path), name="Ramo", topic="x")
         bs.discard(cwd=str(tmp_path), slug=b["slug"])
-        assert bs.pending(cwd=str(tmp_path)) == []
+        assert bs.by_status(str(tmp_path), "pending") == []
 
     def test_teto_de_ramos_abertos(self, bs, tmp_path, monkeypatch):
         monkeypatch.setenv("HARNESS_BRANCH_MAX_OPEN", "2")

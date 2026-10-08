@@ -495,10 +495,6 @@ def may_offer(*, cwd, topic: str, turn: int = 0, explicito: bool = False) -> str
     return OK
 
 
-def reset_session(cwd) -> None:
-    """Zera orcamento e streak. Chamado no SessionStart."""
-    _save_budget(cwd, {"offers": 0, "last_offer_turn": -999, "drift_streak": 0})
-
 
 # ---------------------------------------------------------------------------
 # Payload dos hooks

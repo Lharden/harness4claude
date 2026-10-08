@@ -54,15 +54,17 @@
    "modulo": "_escopo",
    "nome": "de_sessao",
    "arquivo": "scripts/_escopo.py",
-   "categoria": "ORFAO",
-   "motivo": "Modulo de desenho da escada de identidade de escopo, com __all__ completo. O docstring descreve o degrau `dupla`, onde divergencia() rodaria os dois lados e reprovaria se discordassem — e esse degrau nao foi ligado. Marcado ORFAO e nao RESERVA_DECLARADA de proposito: reserva declarada exige a condicao ou a data de ligar, e aqui nenhum documento as da."
+   "categoria": "RESERVA_DECLARADA",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Copia derivada de master-harness/mh/escopo.py (`mh identidade semear`); apagar aqui quebra `mh identidade check`. O julgamento e na fonte, em master-harness/tools/orfaos.json: de_sessao e reserva ate o state.db do estado unico (pos-S1, L-36); divergencia e portao da suite do mh (tests/test_escopo.py::TestNaoDiverge).",
+   "gatilho": "mudanca na fonte mh/escopo.py, julgada no inventario do master-harness"
   },
   {
    "modulo": "_escopo",
    "nome": "divergencia",
    "arquivo": "scripts/_escopo.py",
-   "categoria": "ORFAO",
-   "motivo": "Modulo de desenho da escada de identidade de escopo, com __all__ completo. O docstring descreve o degrau `dupla`, onde divergencia() rodaria os dois lados e reprovaria se discordassem — e esse degrau nao foi ligado. Marcado ORFAO e nao RESERVA_DECLARADA de proposito: reserva declarada exige a condicao ou a data de ligar, e aqui nenhum documento as da."
+   "categoria": "RESERVA_DECLARADA",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Copia derivada de master-harness/mh/escopo.py (`mh identidade semear`); apagar aqui quebra `mh identidade check`. O julgamento e na fonte, em master-harness/tools/orfaos.json: de_sessao e reserva ate o state.db do estado unico (pos-S1, L-36); divergencia e portao da suite do mh (tests/test_escopo.py::TestNaoDiverge).",
+   "gatilho": "mudanca na fonte mh/escopo.py, julgada no inventario do master-harness"
   },
   {
    "modulo": "bench_stats",
@@ -98,20 +100,6 @@
    "arquivo": "scripts/branch_seed.py",
    "categoria": "ORFAO",
    "motivo": "Renderiza a semente de um ramo: seis secoes, 110 linhas, e uma correcao de RecursionError com o caso que derrubava a skill inteira. A unica chamada no repositorio e a recursao dela mesma, na linha 150. O `main` le o arquivo pronto via --seed-file, e skills/branch-out/SKILL.md:139 diz explicitamente que a semente e escrita pelo agente. Pior: a linha 142 da mesma SKILL.md afirma que *o renderizador recusa semente incompleta*, e ele nunca roda. A capacidade existe, tem teste, e a frase que a anuncia e falsa."
-  },
-  {
-   "modulo": "branch_sensor",
-   "nome": "reset_session",
-   "arquivo": "scripts/branch_sensor.py",
-   "categoria": "ORFAO",
-   "motivo": "Zera o contador de orcamento de ofertas. A unica mencao fora do arquivo e portao-de-stop-achados.md:201, que o descreve como DEFEITUOSO: trata como por-sessao um orcamento que e por-projeto. Nada o chama."
-  },
-  {
-   "modulo": "branch_state",
-   "nome": "pending",
-   "arquivo": "scripts/branch_state.py",
-   "categoria": "ORFAO",
-   "motivo": "Devolve os ramos com status pending. Irmao direto de open_branches(), que e viva e usada pelo teto de janelas. Simetria de API que ninguem consumiu."
   },
   {
    "modulo": "calibrate_branch_floor",
@@ -187,43 +175,43 @@
    "modulo": "calibrate_classify_guard",
    "nome": "avaliar",
    "arquivo": "scripts/calibrate_classify_guard.py",
-   "categoria": "ORFAO",
-   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: o guard L0-question de scripts/classify_prompt.py:270-284 cita a tabela que esta ferramenta produziu (calib/classify-guard-2026-09-04.txt, '2 guards aprovados') e diz que reverter e trocar aquela linha. Como: `python scripts/calibrate_classify_guard.py`; quando: ao rever o guard, que e a unica forma de medir de novo a precisao e a cobertura dele."
   },
   {
    "modulo": "calibrate_classify_guard",
    "nome": "distribuicao",
    "arquivo": "scripts/calibrate_classify_guard.py",
-   "categoria": "ORFAO",
-   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: o guard L0-question de scripts/classify_prompt.py:270-284 cita a tabela que esta ferramenta produziu (calib/classify-guard-2026-09-04.txt, '2 guards aprovados') e diz que reverter e trocar aquela linha. Como: `python scripts/calibrate_classify_guard.py`; quando: ao rever o guard, que e a unica forma de medir de novo a precisao e a cobertura dele."
   },
   {
    "modulo": "calibrate_classify_guard",
    "nome": "main",
    "arquivo": "scripts/calibrate_classify_guard.py",
-   "categoria": "ORFAO",
-   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: o guard L0-question de scripts/classify_prompt.py:270-284 cita a tabela que esta ferramenta produziu (calib/classify-guard-2026-09-04.txt, '2 guards aprovados') e diz que reverter e trocar aquela linha. Como: `python scripts/calibrate_classify_guard.py`; quando: ao rever o guard, que e a unica forma de medir de novo a precisao e a cobertura dele."
   },
   {
    "modulo": "calibrate_classify_guard",
    "nome": "render",
    "arquivo": "scripts/calibrate_classify_guard.py",
-   "categoria": "ORFAO",
-   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: o guard L0-question de scripts/classify_prompt.py:270-284 cita a tabela que esta ferramenta produziu (calib/classify-guard-2026-09-04.txt, '2 guards aprovados') e diz que reverter e trocar aquela linha. Como: `python scripts/calibrate_classify_guard.py`; quando: ao rever o guard, que e a unica forma de medir de novo a precisao e a cobertura dele."
   },
   {
    "modulo": "calibrate_classify_guard",
    "nome": "rodar",
    "arquivo": "scripts/calibrate_classify_guard.py",
-   "categoria": "ORFAO",
-   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: o guard L0-question de scripts/classify_prompt.py:270-284 cita a tabela que esta ferramenta produziu (calib/classify-guard-2026-09-04.txt, '2 guards aprovados') e diz que reverter e trocar aquela linha. Como: `python scripts/calibrate_classify_guard.py`; quando: ao rever o guard, que e a unica forma de medir de novo a precisao e a cobertura dele."
   },
   {
    "modulo": "calibrate_classify_guard",
    "nome": "veredicto",
    "arquivo": "scripts/calibrate_classify_guard.py",
-   "categoria": "ORFAO",
-   "motivo": "Mede um guard contra abrir pipeline em vazio. ZERO mencoes em todo o repositorio fora do proprio arquivo — nem CLAUDE.md, nem doc, nem skill, nem health-check. E irmao do calibrate_wiki_floor no formato e na intencao, e a unica diferenca entre os dois e que aquele tem duas linhas escritas num doc. Ninguem sabe se este ja rodou alguma vez."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: o guard L0-question de scripts/classify_prompt.py:270-284 cita a tabela que esta ferramenta produziu (calib/classify-guard-2026-09-04.txt, '2 guards aprovados') e diz que reverter e trocar aquela linha. Como: `python scripts/calibrate_classify_guard.py`; quando: ao rever o guard, que e a unica forma de medir de novo a precisao e a cobertura dele."
   },
   {
    "modulo": "calibrate_wiki_floor",
@@ -404,15 +392,15 @@
    "modulo": "harvest_branch_labels",
    "nome": "harvest",
    "arquivo": "scripts/harvest_branch_labels.py",
-   "categoria": "ORFAO",
-   "motivo": "Produz rotulos de ramificacao por supervisao distante, sem rotulacao manual. A unica mencao no repositorio e uma enumeracao de nomes de script num doc de risco — sem como, sem quando, sem comando. Provavelmente alimentou os 703 pares da calibracao de 2026-09-02, e se foi isso, esta sem a linha que diria."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: scripts/calibrate_branch_layer_a.py:50 e calibrate_branch_floor.py:48 importam este modulo (`import harvest_branch_labels as hbl`), e calibrate_branch_layer_a.py:183 manda roda-lo quando faltam rotulos. Como e quando: a recalibracao do branch-keeper que o CLAUDE.md global documenta ('refazer com calibrate_branch_layer_a.py e calibrate_branch_floor.py'); saida em ~/.claude/harness/calib/branch-labels.json."
   },
   {
    "modulo": "harvest_branch_labels",
    "nome": "main",
    "arquivo": "scripts/harvest_branch_labels.py",
-   "categoria": "ORFAO",
-   "motivo": "Produz rotulos de ramificacao por supervisao distante, sem rotulacao manual. A unica mencao no repositorio e uma enumeracao de nomes de script num doc de risco — sem como, sem quando, sem comando. Provavelmente alimentou os 703 pares da calibracao de 2026-09-02, e se foi isso, esta sem a linha que diria."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: scripts/calibrate_branch_layer_a.py:50 e calibrate_branch_floor.py:48 importam este modulo (`import harvest_branch_labels as hbl`), e calibrate_branch_layer_a.py:183 manda roda-lo quando faltam rotulos. Como e quando: a recalibracao do branch-keeper que o CLAUDE.md global documenta ('refazer com calibrate_branch_layer_a.py e calibrate_branch_floor.py'); saida em ~/.claude/harness/calib/branch-labels.json."
   },
   {
    "modulo": "export_plugins",
@@ -558,127 +546,127 @@
    "modulo": "wiki_lint",
    "nome": "analyze_wiki",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "build_parser",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "has_frontmatter",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "inbox_redundant_pairs",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "is_index_page",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "main",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "missing_fields",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "parse_wikilinks",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "render_report",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "stray_wiki_tree",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_lint",
    "nome": "subtrees_without_moc",
    "arquivo": "tools/wiki_lint.py",
-   "categoria": "ORFAO",
-   "motivo": "Health check read-only da wiki AI-Brain. AUSENTE da tabela do tools/README.md, que lista sete irmaos dele; ausente do health-check.sh; ausente de toda SKILL.md. E citado em 12 docstrings como *o contrato que os outros herdam* — graph_lint, arsenal, compendium, impact e design_scope dizem seguir o formato do wiki_lint — e nenhuma dessas mencoes o chama."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Health check read-only da wiki AI-Brain. Consumidor nomeado: o painel de saude do MOC (tools/wiki_moc.py:30 importa analyze_wiki; o MOC no vault cita `python tools/wiki_lint.py --root \"$VAULT_PATH/AI-Brain\" --report` para reproduzir). Como e quando: na tabela do tools/README.md, ao gerar o MOC ou ao suspeitar de deriva na wiki."
   },
   {
    "modulo": "wiki_moc",
    "nome": "area_spine",
    "arquivo": "tools/wiki_moc.py",
-   "categoria": "ORFAO",
-   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Gera o MOC raiz do AI-Brain; o arquivo `wiki/00 MOC AI-Brain.md` do vault diz 'Gerado por tools/wiki_moc.py' (atualizado em 2026-09-03), entao foi rodado a mao. Como: `python tools/wiki_moc.py --root \"$VAULT_PATH/AI-Brain\" --write`, agora na tabela do tools/README.md; quando: ao mudar as areas do vault."
   },
   {
    "modulo": "wiki_moc",
    "nome": "build_moc",
    "arquivo": "tools/wiki_moc.py",
-   "categoria": "ORFAO",
-   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Gera o MOC raiz do AI-Brain; o arquivo `wiki/00 MOC AI-Brain.md` do vault diz 'Gerado por tools/wiki_moc.py' (atualizado em 2026-09-03), entao foi rodado a mao. Como: `python tools/wiki_moc.py --root \"$VAULT_PATH/AI-Brain\" --write`, agora na tabela do tools/README.md; quando: ao mudar as areas do vault."
   },
   {
    "modulo": "wiki_moc",
    "nome": "build_parser",
    "arquivo": "tools/wiki_moc.py",
-   "categoria": "ORFAO",
-   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Gera o MOC raiz do AI-Brain; o arquivo `wiki/00 MOC AI-Brain.md` do vault diz 'Gerado por tools/wiki_moc.py' (atualizado em 2026-09-03), entao foi rodado a mao. Como: `python tools/wiki_moc.py --root \"$VAULT_PATH/AI-Brain\" --write`, agora na tabela do tools/README.md; quando: ao mudar as areas do vault."
   },
   {
    "modulo": "wiki_moc",
    "nome": "dataview_block",
    "arquivo": "tools/wiki_moc.py",
-   "categoria": "ORFAO",
-   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Gera o MOC raiz do AI-Brain; o arquivo `wiki/00 MOC AI-Brain.md` do vault diz 'Gerado por tools/wiki_moc.py' (atualizado em 2026-09-03), entao foi rodado a mao. Como: `python tools/wiki_moc.py --root \"$VAULT_PATH/AI-Brain\" --write`, agora na tabela do tools/README.md; quando: ao mudar as areas do vault."
   },
   {
    "modulo": "wiki_moc",
    "nome": "health_panel",
    "arquivo": "tools/wiki_moc.py",
-   "categoria": "ORFAO",
-   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Gera o MOC raiz do AI-Brain; o arquivo `wiki/00 MOC AI-Brain.md` do vault diz 'Gerado por tools/wiki_moc.py' (atualizado em 2026-09-03), entao foi rodado a mao. Como: `python tools/wiki_moc.py --root \"$VAULT_PATH/AI-Brain\" --write`, agora na tabela do tools/README.md; quando: ao mudar as areas do vault."
   },
   {
    "modulo": "wiki_moc",
    "nome": "main",
    "arquivo": "tools/wiki_moc.py",
-   "categoria": "ORFAO",
-   "motivo": "Gera o MOC raiz do AI-Brain, descrito no proprio docstring como *a porta de entrada humana do vault*. Nada o invoca. 13 testes em build_moc."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Gera o MOC raiz do AI-Brain; o arquivo `wiki/00 MOC AI-Brain.md` do vault diz 'Gerado por tools/wiki_moc.py' (atualizado em 2026-09-03), entao foi rodado a mao. Como: `python tools/wiki_moc.py --root \"$VAULT_PATH/AI-Brain\" --write`, agora na tabela do tools/README.md; quando: ao mudar as areas do vault."
   },
   {
    "modulo": "wiki_query",
    "nome": "chaves_de_citacao",
    "arquivo": "tools/wiki_query.py",
-   "categoria": "ORFAO",
-   "motivo": "Monta as chaves de citacao de um hit da wiki. O unico chamador de producao e calibrate_wiki_floor.py:41 — que tambem nao roda sozinho. Funcao viva dentro de codigo morto continua morta."
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Destino dado em 2026-10-07 (decisao 7 de master-harness/docs/decisoes-capacidades-orfas.md). Consumidor nomeado: scripts/calibrate_wiki_floor.py:41, a ferramenta de mao de calibracao do piso da wiki (docs/wiki-query.md:190, com o comando e o gatilho). Viva so quando ela roda, como ela."
   }
  ],
  "medido_em": "2026-09-16",

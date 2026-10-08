@@ -788,10 +788,6 @@ def by_status(cwd: str | os.PathLike | None = None, *statuses: str) -> list[dict
     return [b for b in load(cwd)["branches"] if b.get("status") in statuses]
 
 
-def pending(cwd: str | os.PathLike | None = None) -> list[dict]:
-    return by_status(cwd, "pending")
-
-
 def open_branches(cwd: str | os.PathLike | None = None) -> list[dict]:
     return by_status(cwd, "open")
 
