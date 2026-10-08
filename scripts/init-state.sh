@@ -24,28 +24,14 @@ EOF
     echo "Created: state.json"
 fi
 
+# signals.json nasce sob o `_Lock` dos escritores em Python, nunca com `cat >`:
+# entre a abertura e a escrita do `cat` o arquivo existia vazio, e um
+# record_signal concorrente perdia a task (tests/test_signals_criacao.py).
+# O script imprime "Created: signals.json" quando cria.
 if [ ! -f "$HARNESS_DIR/signals.json" ]; then
-    cat > "$HARNESS_DIR/signals.json" << 'EOF'
-{
-  "version": 3,
-  "harness_version": "v3",
-  "tasks": [],
-  "aggregates": {
-    "total_tasks": 0,
-    "pipeline_completion_rate": 0,
-    "avg_files_per_task": 0,
-    "sdd_usage": {
-      "specs_generated": 0,
-      "spec_lights_generated": 0,
-      "designs_generated": 0,
-      "verifications_passed": 0,
-      "verifications_failed": 0,
-      "clarifications_resolved": 0
-    }
-  }
-}
-EOF
-    echo "Created: signals.json"
+    SIG_DIR="$HARNESS_DIR"
+    command -v cygpath >/dev/null 2>&1 && SIG_DIR="$(cygpath -w "$HARNESS_DIR")"
+    python "$(dirname "$0")/migrate_state.py" --cria-signals --harness-dir "$SIG_DIR"
 fi
 
 if [ ! -f "$HARNESS_DIR/.session-files-count" ]; then

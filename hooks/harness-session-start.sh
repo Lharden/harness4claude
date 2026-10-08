@@ -72,36 +72,18 @@ if [ ! -f "$HARNESS_DIR/state.json" ]; then
 INITEOF
 fi
 
+# signals.json e escrito por Python sob o `_Lock` de branch_state; a criacao
+# tambem passa por la. Ate 2026-10-07 era `cat >` aqui, sem lock: entre a
+# abertura e a escrita o arquivo existia vazio, e um record_signal que rodasse
+# ali perdia a task (tests/test_signals_criacao.py). O `[ ! -f ]` de fora so
+# poupa o processo Python quando o arquivo ja existe; quem decide e a checagem
+# dentro do lock. Falhar aqui nao perde nada: record e signal criam o arquivo,
+# sob o mesmo lock, quando ele falta.
 if [ ! -f "$HARNESS_DIR/signals.json" ]; then
-    cat > "$HARNESS_DIR/signals.json" << 'INITEOF'
-{
-  "version": 3,
-  "harness_version": "v3",
-  "tasks": [],
-  "aggregates": {
-    "total_tasks": 0,
-    "l0_count": 0,
-    "l1_count": 0,
-    "l2_count": 0,
-    "pipeline_completion_rate": 0,
-    "avg_files_per_task": 0,
-    "sdd_usage": {
-      "specs_generated": 0,
-      "spec_lights_generated": 0,
-      "designs_generated": 0,
-      "verifications_passed": 0,
-      "verifications_failed": 0,
-      "clarifications_resolved": 0
-    },
-    "classify": {
-      "total_classified": 0,
-      "avg_classify_accuracy": null,
-      "regex_vs_semantic_agreement": null,
-      "human_override_count": 0
-    }
-  }
-}
-INITEOF
+    _SIG_DIR="$HARNESS_DIR"
+    command -v cygpath &>/dev/null && _SIG_DIR="$(cygpath -w "$HARNESS_DIR")"
+    "$PY" "$PLUGIN_ROOT_RESOLVED/scripts/migrate_state.py" --cria-signals \
+        --harness-dir "$_SIG_DIR" >/dev/null 2>&1 || true
 fi
 
 if [ ! -f "$HARNESS_DIR/.session-files-count" ]; then

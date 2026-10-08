@@ -254,6 +254,40 @@ def _write(path: Path, data: dict, *, dry_run: bool) -> None:
     logger.info("gravado: %s", path.name)
 
 
+def _grava_atomico(path: Path, data: dict) -> None:
+    """tmp -> os.replace: quem le nunca ve o arquivo pela metade."""
+    tmp = path.parent / f"{path.name}.tmp-{os.getpid()}"
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def cria_signals(harness_dir: Path) -> bool:
+    """Cria signals.json vazio se ele nao existir. Devolve se criou.
+
+    E o bootstrap de `harness-session-start.sh` e `init-state.sh`. Ate
+    2026-10-07 os dois criavam com `[ ! -f ]` seguido de `cat >`, sem o `_Lock`
+    dos escritores em Python: entre a abertura e a escrita o arquivo existia
+    VAZIO, e um `record_signal.record` ali levantava ao ler, ou gravava a task
+    que o `cat` apagava em seguida (tests/test_signals_criacao.py).
+
+    Aqui a checagem e a criacao acontecem dentro do lock, e a escrita e atomica.
+    O conteudo sai de `migrate_signals({})`, o mesmo formato que a migracao
+    produz, em vez de dois modelos escritos a mao que ja divergiam entre si.
+
+    Levanta `LockUnavailable` se o lock nao vier.
+    """
+    from branch_state import _Lock  # type: ignore[import-not-found]
+
+    signals_path = harness_dir / "signals.json"
+    with _Lock(str(signals_path), required=True):
+        if signals_path.exists():
+            return False
+        harness_dir.mkdir(parents=True, exist_ok=True)
+        _grava_atomico(signals_path, migrate_signals({}))
+        return True
+
+
 def run(harness_dir: Path, schemas_dir: Path, *, dry_run: bool, do_backup: bool) -> int:
     """Executa a migracao completa. Retorna 0 em sucesso, 1 se houver erro de schema
     ou se o lock de signals.json nao vier."""
@@ -310,9 +344,21 @@ def main() -> int:
                         default=Path(__file__).resolve().parent.parent / "schemas")
     parser.add_argument("--dry-run", action="store_true", help="nao grava, apenas reporta")
     parser.add_argument("--no-backup", action="store_true", help="nao cria .bak")
+    parser.add_argument("--cria-signals", action="store_true",
+                        help="so cria signals.json, sob o lock, se ele nao existir (bootstrap)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.cria_signals:
+        from branch_state import LockUnavailable  # type: ignore[import-not-found]
+
+        try:
+            if cria_signals(args.harness_dir):
+                logger.info("Created: signals.json")
+        except LockUnavailable as exc:
+            logger.error("signals.json nao criado: %s", exc)
+            return 1
+        return 0
     return run(args.harness_dir, args.schemas_dir, dry_run=args.dry_run, do_backup=not args.no_backup)
 
 

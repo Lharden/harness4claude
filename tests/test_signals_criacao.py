@@ -29,6 +29,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -160,4 +161,83 @@ class TestCriacaoBashNaoApagaTask:
         doc = json.loads(alvo.read_text(encoding="utf-8"))
         assert [t["task_id"] for t in doc.get("tasks", [])] == ["t-criacao"], (
             f"a task gravada durante a criacao por {criador} sumiu: {doc.get('tasks')!r}"
+        )
+
+    @pytest.mark.parametrize("criador", sorted(_CRIADORES))
+    def test_criador_sozinho_cria_signals_v3(self, tmp_path, criador):
+        """O verde acima nao basta: `record` tambem cria o arquivo quando falta.
+
+        Sem este, um criador que deixou de criar (Python ausente, caminho
+        errado, `|| true` engolindo o erro) passaria pelo teste da corrida.
+        """
+        script, stdin = _CRIADORES[criador]
+        harness = tmp_path / "h"
+        harness.mkdir()
+        env = os.environ.copy()
+        env.update(HARNESS_DIR=str(harness), HARNESS_SKIP_DEPCHECK="1", PYTHONUTF8="1")
+        subprocess.run([BASH, str(script)], env=env, input=stdin, text=True,
+                       capture_output=True, timeout=_PRAZO)
+        doc = json.loads((harness / "signals.json").read_text(encoding="utf-8"))
+        assert doc["version"] == 3 and doc["tasks"] == []
+        assert "classify" in doc["aggregates"], "modelo sem o bloco classify da migracao"
+
+
+class TestCriaSignalsSobLock:
+    def test_record_durante_cria_signals_espera_e_grava_a_task(self, mods, tmp_path, monkeypatch):
+        """cria_signals decide criar, para antes de gravar; record tem de esperar.
+
+        Soltura por evento, como em test_signals_escritores.py: o record
+        terminou (sem lock comum) ou bateu no lockdir ocupado.
+        """
+        parado = threading.Event()
+        segue = threading.Event()
+        record_decidiu = threading.Event()
+        erros: dict[str, BaseException] = {}
+
+        grava_real = mods.ms._grava_atomico
+
+        def grava_parado(path, data):
+            parado.set()
+            assert segue.wait(_PRAZO), "cria_signals nunca foi solto"
+            grava_real(path, data)
+
+        monkeypatch.setattr(mods.ms, "_grava_atomico", grava_parado)
+        mkdir_real = os.mkdir
+
+        def mkdir(path, *a, **kw):
+            try:
+                return mkdir_real(path, *a, **kw)
+            except FileExistsError:
+                if (threading.current_thread().name == "record"
+                        and str(path).endswith("signals.json.lockdir")):
+                    record_decidiu.set()
+                raise
+
+        monkeypatch.setattr(os, "mkdir", mkdir)
+
+        def roda(nome, corpo, fim=None):
+            def alvo():
+                try:
+                    corpo()
+                except BaseException as exc:  # noqa: BLE001 - reportado abaixo
+                    erros[nome] = exc
+                finally:
+                    if fim is not None:
+                        fim.set()
+            t = threading.Thread(target=alvo, name=nome, daemon=True)
+            t.start()
+            return t
+
+        t1 = roda("cria", lambda: mods.ms.cria_signals(tmp_path))
+        assert parado.wait(_PRAZO), "cria_signals nunca chegou a gravar"
+        t2 = roda("record", lambda: mods.rs.record(tmp_path, _task(mods.rs)), record_decidiu)
+        assert record_decidiu.wait(_PRAZO), "record nem terminou nem esperou o lock"
+        segue.set()
+        for t in (t1, t2):
+            t.join(_PRAZO)
+            assert not t.is_alive(), f"{t.name} nao terminou"
+        assert not erros, f"participante levantou: {erros!r}"
+        doc = json.loads((tmp_path / "signals.json").read_text(encoding="utf-8"))
+        assert [t["task_id"] for t in doc["tasks"]] == ["t-criacao"], (
+            f"cria_signals gravou o modelo por cima da task: {doc['tasks']!r}"
         )
