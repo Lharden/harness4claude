@@ -1,53 +1,305 @@
 {
-  "contract_version": "1.2.0",
+  "contract_version": "1.3.0",
   "adapters": {
     "harness4codex": {
-      "classification.deterministic-suggestion": ["tests/test_classifier.py::test_bug_promotes_debugging_and_tdd"],
-      "classification.semantic-confirmation": ["tests/test_transactional_state.py::test_semantic_confirmation_records_provenance_and_replaces_pipeline"],
-      "classification.human-override": ["tests/test_cli.py::test_classification_confirm_updates_transactional_task"],
-      "state.session-worktree-isolation": ["tests/test_state.py::test_store_for_payload_scopes_by_session_and_cwd"],
-      "state.transactional-fsm": ["tests/test_transactional_state.py::test_fresh_test_evidence_allows_completion_and_file_change_invalidates_it"],
-      "state.ttl-signals": ["tests/test_transactional_state.py::test_stale_task_ttl_abandons_pipeline_and_releases_scope"],
-      "workflow.sdd-v3": ["tests/test_packaging.py::test_codex_native_sdd_skill_surface_is_packaged"],
-      "workflow.human-gates": ["tests/test_transactional_state.py::test_human_gate_sets_awaiting_gate_and_resolution_advances"],
-      "workflow.adversarial-agents": ["tests/test_agent_workflows.py::test_node_census_reconciles_only_complete_unique_results"],
-      "workflow.spec-verification": ["tests/test_packaging.py::test_sdd_templates_are_packaged"],
-      "context.graphify": ["tests/test_graph_context.py::test_graph_context_records_hash_head_query_and_freshness"],
-      "context.skill-router": ["tests/test_classifier.py::test_openai_docs_prompt_uses_the_installed_openai_docs_skill"],
-      "capability.arsenal": ["tests/test_arsenal.py::test_arsenal_validates_vocab_overlap_and_budget"],
-      "memory.wiki-vault": ["tests/test_wiki.py::test_wiki_index_returns_cited_sections_and_confidence"],
-      "memory.operational-search": ["tests/test_memory.py::test_memory_records_and_searches_history"],
-      "conversation.branch-keeper": ["tests/test_branches.py::test_each_branch_approval_resolves_only_its_own_gate"],
-      "safety.command-policy": ["tests/test_command_policy.py::test_destructive_command_in_chain_is_denied"],
-      "integration.harness-lite": ["tests/test_harness_lite_adapter.py::test_preview_envelope_matches_harness_lite_task_envelope_v1"],
-      "integration.science-harness": ["tests/test_science_adapter.py::test_scientific_evidence_prompts_activate_the_read_only_mcp_route"],
-      "lifecycle.full-hooks": ["tests/test_packaging.py::test_plugin_registers_full_codex_lifecycle"],
-      "observability.health-telemetry": ["tests/test_diagnostics.py::test_doctor_fails_when_active_plugin_is_older_than_marketplace_source"],
-      "editorial.drop-constrain-retain": ["tests/test_packaging.py::test_workflow_skill_drives_the_transactional_contract"]
+      "classification.deterministic-suggestion": [
+        "tests/test_sondas_de_producao.py::test_user_prompt_grava_nivel_e_pipeline_do_classificador"
+      ],
+      "classification.semantic-confirmation": [
+        "tests/test_cli.py::test_classification_confirm_updates_transactional_task"
+      ],
+      "classification.human-override": [
+        "tests/test_sondas_de_producao.py::test_classification_confirm_cli_grava_human_override"
+      ],
+      "state.session-worktree-isolation": [
+        "tests/test_hook.py::test_parallel_sessions_do_not_continue_each_other"
+      ],
+      "state.transactional-fsm": [
+        "tests/test_cli.py::test_task_artifact_evidence_and_completion_commands_drive_fsm",
+        "tests/test_hook.py::test_write_after_verification_invalidates_the_gate"
+      ],
+      "state.ttl-signals": [
+        "tests/test_hook.py::test_session_start_expires_stale_pipeline_before_resuming"
+      ],
+      "workflow.sdd-v3": [
+        "tests/test_sondas_de_producao.py::test_user_prompt_manda_carregar_workflow_com_fases_sdd"
+      ],
+      "workflow.human-gates": [
+        "tests/test_hook.py::test_stop_escalates_after_two_automatic_continuations_then_allows_human_gate",
+        "tests/test_cli.py::test_gate_resolve_approve_releases_escalation_and_resets_continuations"
+      ],
+      "workflow.adversarial-agents": [
+        "tests/test_sondas_de_producao.py::test_user_prompt_manda_carregar_workflow_com_contrato_de_node_result"
+      ],
+      "workflow.spec-verification": [
+        "tests/test_sondas_de_producao.py::test_task_complete_recusa_sem_verificacao_fresca"
+      ],
+      "context.graphify": [
+        "tests/test_sondas_de_producao.py::test_graph_cli_grava_artefato_de_contexto"
+      ],
+      "context.skill-router": [
+        "tests/test_sondas_de_producao.py::test_user_prompt_de_docs_injeta_pipeline_de_documentacao"
+      ],
+      "capability.arsenal": [
+        "tests/test_sondas_de_producao.py::test_arsenal_cli_valida_registro_e_sobreposicao"
+      ],
+      "memory.wiki-vault": [
+        "tests/test_cli.py::test_memory_compress_and_wiki_cli"
+      ],
+      "memory.operational-search": [
+        "tests/test_hook.py::test_session_history_is_recorded_in_the_shared_memory_store",
+        "tests/test_cli.py::test_memory_search_prints_matches"
+      ],
+      "conversation.branch-keeper": [
+        "tests/test_cli.py::test_branch_cli_offer_approve_open_and_list"
+      ],
+      "safety.command-policy": [
+        "tests/test_hook.py::test_pre_tool_use_denies_dangerous_git"
+      ],
+      "integration.harness-lite": [
+        "tests/test_harness_lite_adapter.py::test_preview_envelope_matches_harness_lite_task_envelope_v1"
+      ],
+      "integration.science-harness": [
+        "tests/test_science_adapter.py::test_scientific_evidence_prompts_activate_the_read_only_mcp_route"
+      ],
+      "lifecycle.full-hooks": [
+        "tests/test_sondas_de_producao.py::test_hook_por_subprocesso_atende_todo_evento_de_hooks_json"
+      ],
+      "observability.health-telemetry": [
+        "tests/test_cli.py::test_doctor_json_prints_machine_readiness"
+      ],
+      "editorial.drop-constrain-retain": [
+        "tests/test_sondas_de_producao.py::test_user_prompt_manda_carregar_workflow_com_drop_constrain_retain"
+      ]
     },
     "harness4claude": {
-      "classification.deterministic-suggestion": ["tests/test_contract_adapter.py::test_classifier_core_is_portable_and_used_by_the_hook"],
-      "classification.semantic-confirmation": ["tests/test_confirm_classification.py::TestApplyConfirmation::test_divergencia_corrige_classificacao_e_pipeline"],
-      "classification.human-override": ["tests/test_confirm_classification.py::TestApplyConfirmation::test_human_override_registrado_na_source"],
-      "state.session-worktree-isolation": ["tests/test_harness_paths.py::TestIsolamento::test_duas_sessoes_no_mesmo_worktree_tem_estado_independente"],
-      "state.transactional-fsm": ["tests/test_transactional_state.py::test_revision_evidence_and_scope_invariants"],
-      "state.ttl-signals": ["tests/test_transactional_state.py::test_stale_task_ttl_abandons_pipeline_and_releases_scope"],
-      "workflow.sdd-v3": ["tests/test_contract_adapter.py::test_claude_pipelines_are_the_canonical_contract_pipelines"],
-      "workflow.human-gates": ["tests/test_branch_state.py::TestOrcamento::test_park_resolve_gate_e_abertura_posterior_cria_nova_aprovacao"],
-      "workflow.adversarial-agents": ["tests/test_workflow_returns.py::test_todo_fan_out_tem_censo_de_nos"],
-      "workflow.spec-verification": ["tests/test_workflow_returns.py::test_verify_nao_aprova_com_cobertura_incompleta"],
-      "context.graphify": ["tests/test_graph_lint.py::TestSeveridade::test_grafo_saudavel_passa_limpo"],
-      "context.skill-router": ["tests/test_skill_router.py::test_main_runs_layer_b_when_layer_a_empty"],
-      "capability.arsenal": ["tests/test_arsenal.py::TestContratoDoRegistry::test_registry_minimo_valido_passa"],
-      "memory.wiki-vault": ["tests/test_vault_sync.py::test_spec_crua_chega_ao_vault_com_frontmatter"],
-      "memory.operational-search": ["tests/test_wiki_query.py::test_camada_a_acha_por_alias_curado_e_e_confiavel"],
-      "conversation.branch-keeper": ["tests/test_branch_state.py::TestOrcamento::test_fluxo_publico_aplica_gate_e_limite_transacionais"],
-      "safety.command-policy": ["tests/test_command_policy.py::test_policy_denies_destructive_chain_and_gates_plugin_mutation"],
-      "integration.harness-lite": ["tests/test_harness_lite_adapter.py::test_a_passed_bundle_with_artifacts_is_acceptable"],
-      "integration.science-harness": ["tests/test_contract_adapter.py::test_science_intent_routes_evidence_prompts"],
-      "lifecycle.full-hooks": ["tests/test_contract_adapter.py::test_release_version_and_lifecycle_are_synchronized"],
-      "observability.health-telemetry": ["tests/test_hook_liveness.py::TestRunEndToEnd::test_tudo_disparando_sai_zero"],
-      "editorial.drop-constrain-retain": ["tests/test_contract_adapter.py::test_workflow_encodes_drop_constrain_retain_gate"]
+      "classification.deterministic-suggestion": [
+        "tests/test_sondas_de_producao.py::test_classify_hook_grava_sugestao_deterministica"
+      ],
+      "classification.semantic-confirmation": [
+        "tests/test_sondas_de_producao.py::test_confirm_cli_grava_confirmacao_semantica"
+      ],
+      "classification.human-override": [
+        "tests/test_sondas_de_producao.py::test_confirm_cli_grava_human_override"
+      ],
+      "state.session-worktree-isolation": [
+        "tests/test_sondas_de_producao.py::test_classify_hook_isola_duas_sessoes_no_mesmo_repo"
+      ],
+      "state.transactional-fsm": [
+        "tests/test_transactional_hook.py::test_atomic_test_command_records_fresh_evidence",
+        "tests/test_transactional_hook.py::test_stop_blocks_twice_then_opens_escalation_gate"
+      ],
+      "state.ttl-signals": [
+        "tests/test_sondas_de_producao.py::test_session_start_hook_abandona_task_vencida"
+      ],
+      "workflow.sdd-v3": [
+        "tests/test_sondas_de_producao.py::test_classify_hook_grava_pipeline_do_contrato"
+      ],
+      "workflow.human-gates": [
+        "tests/test_transition_portao_pendente.py::test_linha_impressa_para_branch_open_parkeia_e_destrava"
+      ],
+      "workflow.adversarial-agents": [
+        "tests/test_sondas_de_producao.py::test_workflow_de_contexto_nomeia_o_no_morto"
+      ],
+      "workflow.spec-verification": [
+        "tests/test_sondas_de_producao.py::test_verify_multimodel_com_dimensao_morta_nao_aprova"
+      ],
+      "context.graphify": [
+        "tests/test_sondas_de_producao.py::test_graphify_autosetup_dispara_update_sem_grafo"
+      ],
+      "context.skill-router": [
+        "tests/test_skill_router.py::test_main_runs_layer_b_when_layer_a_empty"
+      ],
+      "capability.arsenal": [
+        "tests/test_arsenal_gate.py::TestInvocacaoBloqueia::test_install_sem_decisao"
+      ],
+      "memory.wiki-vault": [
+        "tests/test_sondas_de_producao.py::test_precompact_hook_espelha_spec_no_vault"
+      ],
+      "memory.operational-search": [
+        "tests/test_sondas_de_producao.py::test_wiki_query_cli_acha_por_alias"
+      ],
+      "conversation.branch-keeper": [
+        "tests/test_branch_state.py::TestComandosDaSkillRodamMesmo::test_add_pela_linha_de_comando_cria_o_registro",
+        "tests/test_sondas_de_producao.py::test_branch_state_cli_recusa_abrir_alem_do_limite"
+      ],
+      "safety.command-policy": [
+        "tests/test_host_contract_resilience.py::TestGitGuardFailsLoud::test_bloqueia_destrutivo"
+      ],
+      "integration.harness-lite": [
+        "tests/test_harness_lite_adapter.py::test_a_passed_bundle_with_artifacts_is_acceptable"
+      ],
+      "integration.science-harness": [
+        "tests/test_contract_adapter.py::test_science_intent_routes_evidence_prompts"
+      ],
+      "lifecycle.full-hooks": [
+        "tests/test_sondas_de_producao.py::test_todo_comando_de_hooks_json_roda"
+      ],
+      "observability.health-telemetry": [
+        "tests/test_sondas_de_producao.py::test_check_hook_liveness_cli_sai_zero_e_reprova_evento_mudo"
+      ],
+      "editorial.drop-constrain-retain": [
+        "tests/test_sondas_de_producao.py::test_classify_hook_manda_carregar_workflow_com_drop_constrain_retain"
+      ]
+    }
+  },
+  "entradas": {
+    "harness4codex": {
+      "classification.deterministic-suggestion": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "classification.semantic-confirmation": [
+        "harness4codex/cli.py::run"
+      ],
+      "classification.human-override": [
+        "harness4codex/cli.py::run"
+      ],
+      "state.session-worktree-isolation": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "state.transactional-fsm": [
+        "harness4codex/cli.py::run",
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "state.ttl-signals": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "workflow.sdd-v3": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "workflow.human-gates": [
+        "harness4codex/hook.py::handle_payload",
+        "harness4codex/cli.py::run"
+      ],
+      "workflow.adversarial-agents": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "workflow.spec-verification": [
+        "harness4codex/cli.py::run"
+      ],
+      "context.graphify": [
+        "harness4codex/cli.py::run"
+      ],
+      "context.skill-router": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "capability.arsenal": [
+        "harness4codex/cli.py::run"
+      ],
+      "memory.wiki-vault": [
+        "harness4codex/cli.py::run"
+      ],
+      "memory.operational-search": [
+        "harness4codex/hook.py::handle_payload",
+        "harness4codex/cli.py::run"
+      ],
+      "conversation.branch-keeper": [
+        "harness4codex/cli.py::run"
+      ],
+      "safety.command-policy": [
+        "harness4codex/hook.py::handle_payload"
+      ],
+      "integration.harness-lite": {
+        "pendente": {
+          "dono": "O4 (P4, P7)",
+          "causa": "previa no hook desligada pela decisao 1; 0 sucessos em 68",
+          "substituta": "leitor de producao do Codex sobre bundle real do Lite (auditoria 4.3)"
+        }
+      },
+      "integration.science-harness": {
+        "pendente": {
+          "dono": "decisao 5 + L-63",
+          "causa": "a sonda prova o roteamento; o MCP registrado nao e exercitado",
+          "substituta": "test_hook.py:505 mais initialize e tools/list contra shs claims-mcp (auditoria 4.3)"
+        }
+      },
+      "lifecycle.full-hooks": [
+        "hooks/codex_harness_hook.py"
+      ],
+      "observability.health-telemetry": [
+        "harness4codex/cli.py::run"
+      ],
+      "editorial.drop-constrain-retain": [
+        "harness4codex/hook.py::handle_payload"
+      ]
+    },
+    "harness4claude": {
+      "classification.deterministic-suggestion": [
+        "hooks/harness-classify.sh"
+      ],
+      "classification.semantic-confirmation": [
+        "scripts/confirm_classification.py"
+      ],
+      "classification.human-override": [
+        "scripts/confirm_classification.py"
+      ],
+      "state.session-worktree-isolation": [
+        "hooks/harness-classify.sh"
+      ],
+      "state.transactional-fsm": [
+        "hooks/harness-transactional.py::handle_payload",
+        "hooks/harness-transactional.py::handle_payload"
+      ],
+      "state.ttl-signals": [
+        "hooks/harness-session-start.sh"
+      ],
+      "workflow.sdd-v3": [
+        "hooks/harness-classify.sh"
+      ],
+      "workflow.human-gates": [
+        "scripts/branch_state.py"
+      ],
+      "workflow.adversarial-agents": [
+        "scripts/workflows/wf-context-scan.js"
+      ],
+      "workflow.spec-verification": [
+        "scripts/workflows/wf-verify-multimodel.js"
+      ],
+      "context.graphify": [
+        "hooks/harness-graphify-autosetup.sh"
+      ],
+      "context.skill-router": [
+        "hooks/skill_router.py::main"
+      ],
+      "capability.arsenal": [
+        "hooks/harness-arsenal-gate.sh"
+      ],
+      "memory.wiki-vault": [
+        "hooks/harness-precompact.sh"
+      ],
+      "memory.operational-search": [
+        "tools/wiki_query.py"
+      ],
+      "conversation.branch-keeper": [
+        "scripts/branch_state.py",
+        "scripts/branch_state.py"
+      ],
+      "safety.command-policy": [
+        "hooks/harness-git-guard.sh"
+      ],
+      "integration.harness-lite": {
+        "pendente": {
+          "dono": "O4 (P6, P7)",
+          "causa": "adaptador sem chamador de producao (tools/orfaos.json)",
+          "substituta": "fase do harness-workflow que delega ao Lite, contra Lite em loopback (auditoria 4.3)"
+        }
+      },
+      "integration.science-harness": {
+        "pendente": {
+          "dono": "decisao 5 + L-63",
+          "causa": "a sonda prova o roteamento; o MCP science_harness nao e exercitado",
+          "substituta": "science_intent com e sem MCP, mais initialize e tools/list contra shs claims-mcp (auditoria 4.3)"
+        }
+      },
+      "lifecycle.full-hooks": [
+        "hooks/hooks.json"
+      ],
+      "observability.health-telemetry": [
+        "scripts/check_hook_liveness.py"
+      ],
+      "editorial.drop-constrain-retain": [
+        "hooks/harness-classify.sh"
+      ]
     }
   }
 }

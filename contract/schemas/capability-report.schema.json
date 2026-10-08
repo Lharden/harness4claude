@@ -11,19 +11,47 @@
     "conformant"
   ],
   "properties": {
-    "contract_version": {"type": "string"},
-    "adapter": {"type": "string", "minLength": 1},
-    "snapshot_lock_valid": {"const": true},
-    "pipeline_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "conformant": {"const": true},
+    "contract_version": {
+      "type": "string"
+    },
+    "adapter": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshot_lock_valid": {
+      "const": true
+    },
+    "pipeline_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "conformant": {
+      "const": true
+    },
     "capabilities": {
       "type": "object",
       "additionalProperties": {
         "type": "object",
-        "required": ["status", "evidence"],
+        "required": [
+          "status",
+          "evidence"
+        ],
         "properties": {
-          "status": {"enum": ["native", "equivalent", "degraded", "unconfigured", "error"]},
-          "evidence": {"type": "array", "items": {"type": "string"}}
+          "status": {
+            "enum": [
+              "native",
+              "equivalent",
+              "degraded",
+              "unconfigured",
+              "error"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
         "additionalProperties": true
       }

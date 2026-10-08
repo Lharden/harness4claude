@@ -22,8 +22,8 @@ def test_contract_snapshot_lock_and_capability_report_are_complete():
     adapter = _load("contract_adapter", ROOT / "scripts" / "contract_adapter.py")
     report = adapter.build_capability_report(ROOT)
 
-    # 1.2.0 (2026-09-23): `superseded` entrou no enum de status do task-state.
-    assert report["contract_version"] == "1.2.0"
+    # 1.3.0 (2026-10-08): sondas de producao e a chave `entradas` (1.2.0: `superseded` no enum de status).
+    assert report["contract_version"] == "1.3.0"
     assert report["adapter"] == "harness4claude"
     assert report["snapshot_lock_valid"] is True
     assert report["conformant"] is True
