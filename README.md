@@ -238,6 +238,11 @@ Tests cover:
 - Hook integration
 - Resilience to host-contract changes (renamed payload fields, CRLF, fail-open guards)
 
+**Canonical probe changes.** Before merging any change that touches a test of a node in
+`contract/behavioral-probes.json`, `hooks/hooks.json`, or a production file edited by master-harness
+`mh/sabotagens.py`, run `mh paridade --dinamica --host claude --ref <branch>` and merge only on exit 0 (see
+"Mudança de sonda" in master-harness `contract/README.md`).
+
 ### Three layers of "is it actually running?"
 
 The audit of 2026-07-28 started from a plugin that was present, tested, and not
