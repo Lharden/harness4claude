@@ -404,19 +404,113 @@ def test_branch_state_cli_recusa_abrir_alem_do_limite(tmp_path):
 # --------------------------------------------------------------------------- lifecycle / observability
 
 
+SESSAO_HOOKS = "s-hooks"
+
+
+def _linhas_do_ciclo_de_vida(balde: Path, evento: str) -> int:
+    banco = balde / "lifecycle.db"
+    if not banco.exists():
+        return 0
+    con = sqlite3.connect(banco)
+    try:
+        return con.execute(
+            "SELECT COUNT(*) FROM lifecycle_events WHERE event = ? AND session_id = ?",
+            (evento, SESSAO_HOOKS),
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+
+def _efeito_classificacao(harness: Path, balde: Path) -> str | None:
+    """UserPromptSubmit: a classificacao do prompt fica no estado da sessao."""
+    arquivo = balde / "state.json"
+    if not arquivo.exists():
+        return "o prompt nao deixou estado de tarefa no balde da sessao"
+    if not _estado(balde).get("classification"):
+        return "o estado da sessao nao tem classificacao do prompt"
+    return None
+
+
+def _efeito_snapshot(harness: Path, balde: Path) -> str | None:
+    """PreCompact: o snapshot de handoff da tarefa corrente fica no balde."""
+    trace = balde / "trace-current.md"
+    if not trace.exists():
+        return "nenhum snapshot de handoff no balde"
+    tarefa = _estado(balde).get("task_id") if (balde / "state.json").exists() else None
+    if not tarefa or tarefa not in trace.read_text(encoding="utf-8"):
+        return f"o snapshot de handoff nao nomeia a tarefa corrente ({tarefa})"
+    return None
+
+
+def _efeito_contexto_injetado(evento: str):
+    def conferir(harness: Path, balde: Path) -> str | None:
+        extrato = harness / "emissions.jsonl"
+        linhas = []
+        if extrato.exists():
+            linhas = [json.loads(x) for x in extrato.read_text(encoding="utf-8").splitlines() if x.strip()]
+        if not any(r.get("event") == evento and r.get("session_id") == SESSAO_HOOKS
+                   and r.get("channel") == "additionalContext" and r.get("chars", 0) > 0 for r in linhas):
+            return "nenhum contexto injetado registrado no extrato de emissoes"
+        return None
+    return conferir
+
+
+def _efeito_ciclo_de_vida(evento: str):
+    def conferir(harness: Path, balde: Path) -> str | None:
+        if _linhas_do_ciclo_de_vida(balde, evento) < 1:
+            return "o evento nao ficou registrado no ciclo de vida da sessao"
+        return None
+    return conferir
+
+
+def _so_batimento(harness: Path, balde: Path) -> str | None:
+    """Evento cujo efeito no estado, com payload benigno, e so o batimento."""
+    return None
+
+
+# Efeito que o handler de cada evento deixa no estado do harness, alem do
+# batimento `heartbeats/<evento>` que todos deixam (e que o check_hook_liveness
+# le). Evento registrado sem entrada aqui reprova: comando novo precisa dizer
+# qual efeito prova que ele rodou.
+EFEITO_POR_EVENTO = {
+    "UserPromptSubmit": _efeito_classificacao,
+    "PreToolUse": _so_batimento,
+    "PostToolUse": _so_batimento,
+    "PostToolUseFailure": _so_batimento,
+    "PreCompact": _efeito_snapshot,
+    "PostCompact": _efeito_ciclo_de_vida("PostCompact"),
+    "SubagentStart": _efeito_ciclo_de_vida("SubagentStart"),
+    "SubagentStop": _efeito_ciclo_de_vida("SubagentStop"),
+    "SessionStart": _efeito_contexto_injetado("SessionStart"),
+    "Stop": _so_batimento,
+    "SessionEnd": _efeito_ciclo_de_vida("SessionEnd"),
+}
+
+
 @exige_bash
 def test_todo_comando_de_hooks_json_roda(tmp_path):
-    """Cada comando registrado em hooks.json roda como o Claude Code o roda, com payload minimo."""
+    """Cada comando registrado em hooks.json roda como o Claude Code o roda E deixa efeito.
+
+    Saida 0 nao prova nada: um comando que nao chama handler nenhum tambem sai 0.
+    Por isso, para cada evento registrado, a sonda exige no `HARNESS_DIR` do teste
+    o batimento do evento (apagado antes de os comandos dele rodarem) e o efeito
+    que o handler daquele evento deixa no estado (`EFEITO_POR_EVENTO`).
+    """
     registrados = json.loads((ROOT / HOOKS_JSON).read_text(encoding="utf-8"))["hooks"]
     cwd = _repo(tmp_path, "hooks")
+    harness = tmp_path / "harness"
     falhas = []
     total = 0
+    sem_efeito_declarado = sorted(set(registrados) - set(EFEITO_POR_EVENTO))
+    assert not sem_efeito_declarado, f"evento registrado sem efeito conferido: {sem_efeito_declarado}"
     for evento, grupos in registrados.items():
+        batimento = harness / "heartbeats" / evento
+        batimento.unlink(missing_ok=True)
         for grupo in grupos:
             for hook in grupo["hooks"]:
                 total += 1
                 payload = {
-                    "session_id": "s-hooks", "cwd": str(cwd), "hook_event_name": evento,
+                    "session_id": SESSAO_HOOKS, "cwd": str(cwd), "hook_event_name": evento,
                     "prompt": "ola", "source": "startup",
                     "tool_name": "Bash", "tool_input": {"command": "echo oi"},
                     "tool_response": {"stdout": "oi"},
@@ -429,6 +523,11 @@ def test_todo_comando_de_hooks_json_roda(tmp_path):
                 )
                 if res.returncode != 0 or "Traceback" in res.stderr:
                     falhas.append(f"{evento}: {hook['command']} -> {res.returncode}\n{res.stderr[-400:]}")
+        if not batimento.exists():
+            falhas.append(f"{evento}: nenhum comando deixou o batimento do evento no HARNESS_DIR")
+        defeito = EFEITO_POR_EVENTO[evento](harness, _balde(tmp_path, cwd, SESSAO_HOOKS))
+        if defeito:
+            falhas.append(f"{evento}: {defeito}")
     assert total >= 15, "hooks.json perdeu comandos"
     assert not falhas, "\n".join(falhas)
 
