@@ -24,6 +24,10 @@ o subagente assumir o pipeline do pai. A linha do NodeResult contradizia o schem
 não tem consumidor em código. Origem: `058356a` (2026-08-31), paridade de contrato
 com o harness4codex.
 
+> **Desfecho (2026-10-09):** o schema saiu do contrato na versão 1.4.0 (L-70 do
+> master-harness, decisão do usuário). Ele não tinha consumidor e descrevia um formato
+> diferente do `NodeResult` da skill `codex-harness-workflow` (L-64).
+
 ## 3. Medição
 
 Instrumento: o `usage` gravado pela produção em cada mensagem do transcript,

@@ -22,13 +22,30 @@ def test_contract_snapshot_lock_and_capability_report_are_complete():
     adapter = _load("contract_adapter", ROOT / "scripts" / "contract_adapter.py")
     report = adapter.build_capability_report(ROOT)
 
-    # 1.3.0 (2026-10-08): sondas de producao e a chave `entradas` (1.2.0: `superseded` no enum de status).
-    assert report["contract_version"] == "1.3.0"
+    # O relatorio le a arvore que a maquina resolve (`load_contract()` sem raiz prefere a canonica do
+    # master-harness), entao a versao dele e a dessa arvore, nao um literal. O pino de versao mora no teste
+    # da copia vendorizada, abaixo. Ate 2026-10-09 o literal ficava aqui, e toda subida de versao deixava este
+    # teste vermelho no main do harness4claude ate os dois repositorios mesclarem.
+    assert report["contract_version"] == adapter.load_contract()["capabilities"]["contract_version"]
     assert report["adapter"] == "harness4claude"
     assert report["snapshot_lock_valid"] is True
     assert report["conformant"] is True
     assert len(report["capabilities"]) == 22
     assert all(item["status"] in {"native", "equivalent"} for item in report["capabilities"].values())
+
+
+def test_vendored_contract_pins_version_and_lock():
+    """A copia que o plugin leva, por caminho: `load_contract(ROOT)` e `vizinho:raiz-explicita`."""
+    adapter = _load("contract_adapter", ROOT / "scripts" / "contract_adapter.py")
+    vendorizada = adapter.load_contract(ROOT)
+
+    assert vendorizada["origem"] == "vizinho:raiz-explicita"
+    assert adapter.verify_lock(vendorizada) is True
+    # 1.2.0: `superseded` no enum de status. 1.3.0 (2026-10-08): sondas de producao e a chave `entradas`.
+    # 1.4.0 (2026-10-09): `schemas/node-result.schema.json` saiu, sem consumidor (L-70 do master-harness).
+    assert vendorizada["capabilities"]["contract_version"] == "1.4.0"
+    assert not (ROOT / "contract" / "schemas" / "node-result.schema.json").exists()
+    assert "schemas/node-result.schema.json" not in vendorizada["lock"]["files"]
 
 
 def test_claude_pipelines_are_the_canonical_contract_pipelines():
