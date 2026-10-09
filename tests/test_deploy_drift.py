@@ -252,5 +252,9 @@ class TestOQueRodaEOQueFoiPublicado:
             [sys.executable, str(ROOT / "scripts" / "deploy_to_cache.py"), "--check"],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
+        # `--check` acusa tambem o que um deploy implantou e o repo removeu
+        # (tests/test_deploy_remocao.py); comparar so com `drift` daria
+        # discordancia exatamente no estado que o defeito de 2026-10-09 deixa.
         divergentes = dtc.drift(ROOT, _instalado(), dtc.shipped_files(ROOT))
+        divergentes += dtc.removidos_do_repo(ROOT, _instalado())
         assert proc.returncode == (1 if divergentes else 0), proc.stdout + proc.stderr

@@ -22,10 +22,30 @@ fechar.
 
 ## O que ele NAO faz
 
-Nao apaga nada no destino. Um arquivo que existe no cache e nao no repo pode
-ser trabalho de outra sessao ainda nao commitado, e apagar seria repetir o
+Nao apaga o que ele nao implantou. Um arquivo que existe no cache e nao no repo
+pode ser trabalho de outra sessao ainda nao commitado, e apagar seria repetir o
 incidente com o sinal trocado. O `--check` reporta divergencia em uma direcao
 so: repo -> cache.
+
+## Remocao propaga (2026-10-09)
+
+Ate aqui "nao apaga nada" tambem valia para o que o proprio deploy implantou. O
+contrato foi de 1.3.0 para 1.4.0 removendo `node-result.schema.json`, e o
+arquivo seguiu no cache: `--apply` so copiava, e o `--publicado` acusava o
+arquivo e mandava rodar o mesmo `--apply` que nao o apagava.
+
+Agora sai o que um deploy implantou antes e o repo deixou de versionar:
+
+- **Manifesto** (`MANIFESTO`, na raiz do cache): o que o ultimo `--apply`
+  entregou. Mesmo nome e mesmo formato que `mh deploy` escreve no mesmo cache
+  (`master-harness/mh/deploy.py`): `{"versao": 1, "arquivos": [...]}`.
+- **Legado**, cache anterior ao manifesto: so sai se o historico git prova que o
+  caminho foi versionado e removido **e** o conteudo do cache e igual a uma
+  versao historica dele.
+
+"Removido do repo" se mede contra o `git ls-files` inteiro, nao contra o
+inventario filtrado por `NAO_VIAJAM`: o outro deploy entrega `.github/` e este
+nao, e ausencia do inventario filtrado nao e remocao.
 """
 from __future__ import annotations
 
@@ -34,6 +54,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -46,6 +67,11 @@ import harness_paths  # noqa: E402
 #: Nao viajam para o plugin: infra de CI, worktrees aninhados, bytecode.
 NAO_VIAJAM = ("__pycache__", ".github", "worktrees", ".ruff_cache", ".pytest_cache")
 
+#: Na raiz do cache: o que um deploy implantou ali. Mesmo nome e formato que o
+#: `mh deploy` usa (`master-harness/mh/deploy.py`, constante `MANIFESTO`).
+MANIFESTO = ".mh-deploy-manifest.json"
+_VERSAO_MANIFESTO = 1
+
 #: Existem SO no cache e nunca no repo: estado de execucao que o host escreve.
 #:
 #: `.in_use/<pid>` e a trava que marca o plugin em uso por uma sessao viva —
@@ -56,7 +82,7 @@ NAO_VIAJAM = ("__pycache__", ".github", "worktrees", ".ruff_cache", ".pytest_cac
 #: repo nao tem porque foi REMOVIDO e divergencia; arquivo que o repo nao tem
 #: porque NUNCA e dele nao e. Sem esta lista, o guarda acusaria toda sessao
 #: aberta — e portao que reprova sempre e portao que ninguem le.
-SO_DO_CACHE = (".in_use",)
+SO_DO_CACHE = (".in_use", MANIFESTO)
 
 
 def repo_root() -> Path:
@@ -247,6 +273,158 @@ def apply(origem: Path, destino: Path, arquivos) -> list[Path]:
     return copiados
 
 
+def ler_manifesto(destino: Path) -> set[str]:
+    """O que um deploy implantou em `destino`. Ausente ou ilegivel: conjunto vazio.
+
+    Ilegivel nao derruba o deploy: sem manifesto nada sai pelo caminho do
+    manifesto, que e o lado seguro de errar.
+    """
+    try:
+        dados = json.loads((destino / MANIFESTO).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    itens = dados.get("arquivos") if isinstance(dados, dict) else None
+    if not isinstance(itens, list):
+        return set()
+    return {i for i in itens if isinstance(i, str)}
+
+
+def gravar_manifesto(destino: Path, arquivos: set[str]) -> None:
+    texto = json.dumps(
+        {"versao": _VERSAO_MANIFESTO, "arquivos": sorted(arquivos)}, ensure_ascii=False, indent=1,
+    ) + "\n"
+    alvo = destino / MANIFESTO
+    try:
+        if alvo.read_bytes() == texto.encode("utf-8"):
+            return
+    except OSError:
+        pass
+    destino.mkdir(parents=True, exist_ok=True)
+    tmp = destino / (MANIFESTO + ".tmp")
+    tmp.write_bytes(texto.encode("utf-8"))
+    os.replace(tmp, alvo)
+
+
+def _git_bytes(root: Path, *args: str) -> bytes | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.quotepath=false", *args], cwd=str(root),
+            capture_output=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _rastreados(root: Path) -> set[str] | None:
+    """Todo o `git ls-files`, sem o filtro de `NAO_VIAJAM`. None se o git falhar."""
+    bruto = _git_bytes(root, "ls-files", "-z")
+    if bruto is None:
+        return None
+    return {c.decode("utf-8", "replace") for c in bruto.split(b"\0") if c}
+
+
+def _provados_pelo_historico(root: Path, destino: Path, candidatos: list[Path]) -> list[Path]:
+    """Candidatos que o historico git prova terem sido implantados por um deploy.
+
+    Para cache anterior ao manifesto. O caminho precisa ter sido apagado em algum
+    commit **e** o conteudo do cache precisa ser igual (CRLF normalizado) a uma
+    versao historica dele. So o nome nao basta: um arquivo de outra sessao pode
+    reusar o nome de um que saiu do repo.
+    """
+    if not candidatos:
+        return []
+    bruto = _git_bytes(
+        root, "log", "--diff-filter=D", "--no-renames", "--name-only", "-z", "--format=",
+    )
+    if not bruto:
+        return []
+    apagados = {c.decode("utf-8", "replace") for c in bruto.split(b"\0") if c}
+    provados = []
+    for rel in candidatos:
+        nome = rel.as_posix()
+        if nome not in apagados:
+            continue
+        try:
+            atual = (destino / rel).read_bytes().replace(b"\r\n", b"\n")
+        except OSError:
+            continue
+        commits = _git_bytes(
+            root, "log", "--no-renames", "--max-count=200", "--format=%H", "--", nome,
+        )
+        for sha in (commits or b"").decode("ascii", "replace").split():
+            versao = _git_bytes(root, "show", f"{sha}:{nome}")
+            if versao is not None and versao.replace(b"\r\n", b"\n") == atual:
+                provados.append(rel)
+                break
+    return provados
+
+
+def removidos_do_repo(origem: Path, destino: Path) -> list[Path]:
+    """Arquivos que um deploy anterior implantou em `destino` e o repo deixou de versionar.
+
+    So sai candidato que **ja e extra**: existe no destino e nao esta no `git
+    ls-files` de `origem`. Entrada de manifesto que aponte para fora do destino
+    (`..`, caminho absoluto) nao aparece na varredura do destino, entao fica de
+    fora sem tratamento especial. `.in_use`, bytecode e o proprio manifesto nunca
+    sao candidatos.
+    """
+    rastreados = _rastreados(origem)
+    if rastreados is None or not destino.is_dir():
+        return []
+    manifesto = ler_manifesto(destino)
+    extras = [rel for rel in files_in_tree(destino)
+              if rel.as_posix() not in rastreados
+              and not any(parte in SO_DO_CACHE for parte in rel.parts)]
+    do_manifesto = [rel for rel in extras if rel.as_posix() in manifesto]
+    sem_prova = [rel for rel in extras if rel.as_posix() not in manifesto]
+    return sorted(do_manifesto + _provados_pelo_historico(origem, destino, sem_prova))
+
+
+def remover(destino: Path, removidos) -> list[Path]:
+    """Apaga os arquivos e poda os diretorios que ficaram vazios, sem tocar a raiz."""
+    apagados = []
+    for rel in removidos:
+        alvo = destino / rel
+        try:
+            try:
+                alvo.unlink()
+            except PermissionError:
+                alvo.chmod(stat.S_IWRITE)
+                alvo.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            continue
+        apagados.append(rel)
+        pai = alvo.parent
+        while pai != destino and destino in pai.parents:
+            try:
+                pai.rmdir()
+            except OSError:
+                break
+            pai = pai.parent
+    return apagados
+
+
+def sincronizar(origem: Path, destino: Path) -> tuple[list[Path], list[Path]]:
+    """Copia o que diverge, apaga o que saiu do repo e grava o manifesto.
+
+    Devolve (copiados, apagados). Idempotente: a segunda chamada faz as duas
+    listas voltarem vazias.
+    """
+    arquivos = shipped_files(origem)
+    a_remover = removidos_do_repo(origem, destino)
+    copiados = apply(origem, destino, drift(origem, destino, arquivos))
+    apagados = remover(destino, a_remover)
+    rastreados = _rastreados(origem)
+    if arquivos and rastreados is not None:
+        pendentes = {rel.as_posix() for rel in a_remover} - {rel.as_posix() for rel in apagados}
+        anterior = {m for m in ler_manifesto(destino) if m in rastreados}
+        gravar_manifesto(destino, anterior | {rel.as_posix() for rel in arquivos} | pendentes)
+    return copiados, apagados
+
+
 def _parser() -> argparse.ArgumentParser:
     """Fora do `main` para que um teste possa validar um comando SEM executa-lo.
 
@@ -299,22 +477,32 @@ def main(argv=None) -> int:
 
     arquivos = shipped_files(raiz)
     divergentes = drift(raiz, alvo, arquivos)
+    a_remover = removidos_do_repo(raiz, alvo)
     print(f"repo:   {raiz}")
     print(f"plugin: {alvo}")
-    print(f"{len(arquivos)} arquivos versionados, {len(divergentes)} divergentes")
+    print(f"{len(arquivos)} arquivos versionados, {len(divergentes)} divergentes, "
+          f"{len(a_remover)} removidos do repo")
     for rel in divergentes[:40]:
         print(f"  {rel}")
     if len(divergentes) > 40:
         print(f"  ... e mais {len(divergentes) - 40}")
-    if not divergentes:
-        return 0
+    for rel in a_remover:
+        print(f"  removido do repo (o --apply apaga): {rel}")
+    pendente = bool(divergentes or a_remover)
     if not a.apply:
+        if not pendente:
+            return 0
         print("\nrode com --apply para sincronizar")
         return 1
-    copiados = apply(raiz, alvo, divergentes)
+    # Mesmo sem nada pendente o --apply passa por aqui: e ele que grava o manifesto
+    # num cache que ainda nao tem um.
+    copiados, apagados = sincronizar(raiz, alvo)
     restante = drift(raiz, alvo, arquivos)
-    print(f"\ncopiados: {len(copiados)}; divergentes apos copia: {len(restante)}")
-    return 1 if restante else 0
+    resto_a_remover = removidos_do_repo(raiz, alvo)
+    if pendente:
+        print(f"\ncopiados: {len(copiados)}; removidos: {len(apagados)}; "
+              f"divergentes apos copia: {len(restante) + len(resto_a_remover)}")
+    return 1 if (restante or resto_a_remover) else 0
 
 
 if __name__ == "__main__":
