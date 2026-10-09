@@ -299,10 +299,24 @@
   },
   {
    "modulo": "deploy_to_cache",
+   "nome": "gravar_manifesto",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Grava na raiz do cache o manifesto do que o deploy implantou (`.mh-deploy-manifest.json`, mesmo formato que `mh deploy` escreve no mesmo cache). Consumidor: `sincronizar`, que `python scripts/deploy_to_cache.py --apply` (rodado pelo operador) chama a cada apply; coberto por tests/test_deploy_remocao.py. Sem o manifesto o apply nao sabe o que e seu e nao pode apagar o arquivo que o repo removeu (defeito de 2026-10-09: node-result.schema.json)."
+  },
+  {
+   "modulo": "deploy_to_cache",
    "nome": "installed_root",
    "arquivo": "scripts/deploy_to_cache.py",
    "categoria": "FERRAMENTA_DE_MAO",
    "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "ler_manifesto",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Le o manifesto do que o deploy implantou no cache; ausente ou ilegivel vale conjunto vazio, o lado seguro de errar. Consumidor: `removidos_do_repo` e `sincronizar`, chamados por `python scripts/deploy_to_cache.py --check` e `--apply` (rodados pelo operador); coberto por tests/test_deploy_remocao.py, que inclui o manifesto corrompido e o escrito pelo `mh deploy`."
   },
   {
    "modulo": "deploy_to_cache",
@@ -317,6 +331,20 @@
    "arquivo": "scripts/deploy_to_cache.py",
    "categoria": "FERRAMENTA_DE_MAO",
    "motivo": "Responde 'o que roda e publicado?' comparando o cache instalado com `main`. Dois consumidores: `python scripts/deploy_to_cache.py --publicado`, para um humano inspecionar, e o portao `test_deploy_drift.py::test_o_cache_reflete_o_publicado`. Nasceu em 2026-09-16 porque o portao anterior comparava o WORKTREE com o cache, e ramo tem trabalho nao implantado por definicao — reprovava sempre, e vermelho permanente treina a ignorar vermelho."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "remover",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Apaga no cache os arquivos que um deploy implantou e o repo removeu, e poda os diretorios que ficaram vazios sem tocar a raiz. Consumidor: `sincronizar`, chamado por `python scripts/deploy_to_cache.py --apply` (rodado pelo operador); coberto por tests/test_deploy_remocao.py, incluindo o extra que o deploy nunca implantou, que fica intacto."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "removidos_do_repo",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Responde 'o que o cache tem, foi implantado por um deploy e o repo deixou de versionar?', por manifesto ou, no cache anterior ao manifesto, por prova do historico git. Consumidores: `python scripts/deploy_to_cache.py --check` (acusa) e `--apply` (apaga), rodados pelo operador, e tests/test_deploy_drift.py::test_o_check_pela_linha_de_comando_concorda_com_a_funcao; coberto por tests/test_deploy_remocao.py."
   },
   {
    "modulo": "deploy_to_cache",
@@ -338,6 +366,13 @@
    "arquivo": "scripts/deploy_to_cache.py",
    "categoria": "FERRAMENTA_DE_MAO",
    "motivo": "Leva o repo para o plugin instalado e prova que chegou. O comando esta em parent-session-por-ramo-riscos.md:706 e tests/test_deploy_drift.py:103 imprime a linha a rodar quando acusa drift."
+  },
+  {
+   "modulo": "deploy_to_cache",
+   "nome": "sincronizar",
+   "arquivo": "scripts/deploy_to_cache.py",
+   "categoria": "FERRAMENTA_DE_MAO",
+   "motivo": "Passo completo do apply: copia o que diverge, apaga o que saiu do repo e grava o manifesto. Consumidor: `python scripts/deploy_to_cache.py --apply`, rodado pelo operador depois de um merge em main; coberto por tests/test_deploy_remocao.py, que entra por main() com repo e cache fabricados."
   },
   {
    "modulo": "diagnose_ollama",
