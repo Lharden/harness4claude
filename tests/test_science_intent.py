@@ -144,6 +144,7 @@ def test_CONTROLE_codigo_antigo_emitia_sem_mcp(tmp_path, repo):
         conteudo = subprocess.run(
             ["git", "show", f"{OLD_REF}:hooks/{nome}"],
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+            stdin=subprocess.DEVNULL,
         ).stdout
         (antigo / nome).write_text(conteudo, encoding="utf-8")
     config = _config(tmp_path, {"mcpServers": {}})

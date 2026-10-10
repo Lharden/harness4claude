@@ -41,6 +41,7 @@ def _run(balde: Path, *argumentos: str) -> subprocess.CompletedProcess:
         [sys.executable, str(ROOT / "scripts" / "record_signal.py"), *argumentos,
          "--harness-dir", str(balde), "--signals-dir", str(balde / "sinais")],
         capture_output=True, text=True, timeout=60, encoding="utf-8", env=ENV_UTF8,
+        stdin=subprocess.DEVNULL,
     )
 
 

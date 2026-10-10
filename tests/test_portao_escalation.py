@@ -96,6 +96,7 @@ def test_cli_gate_aprova_escalation_como_o_usuario_rodou(tmp_path: Path):
         capture_output=True,
         text=True,
         check=False,
+        stdin=subprocess.DEVNULL,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr

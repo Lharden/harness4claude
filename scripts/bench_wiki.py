@@ -34,6 +34,7 @@ for rotulo, pergunta in CASOS:
         proc = subprocess.run(
             [sys.executable, TOOL, pergunta, "--json"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL,
         )
         tempos.append((time.perf_counter() - inicio) * 1000)
         try:

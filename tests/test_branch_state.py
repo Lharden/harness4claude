@@ -640,6 +640,7 @@ class TestComandosDaSkillRodamMesmo:
         return subprocess.run(
             [sys.executable, str(script), *args, "--cwd", str(cwd_projeto)],
             capture_output=True, text=True, encoding="utf-8", env=env, timeout=60,
+            stdin=subprocess.DEVNULL,
         )
 
     def test_o_marcador_plugin_root_resolve(self):

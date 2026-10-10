@@ -180,6 +180,7 @@ class TestCli:
         return subprocess.run(
             [sys.executable, str(CONFIRM_PATH), "--harness-dir", str(harness_dir), *args],
             capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL,
         )
 
     def test_grava_no_state(self, harness_dir):

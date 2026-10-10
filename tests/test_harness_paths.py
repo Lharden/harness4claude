@@ -179,7 +179,7 @@ class TestCli:
         env = dict(os.environ)
         env.pop("HARNESS_SCOPE", None)
         return subprocess.run([sys.executable, str(PATHS_PY), *args],
-                              capture_output=True, text=True, check=False, env=env)
+                              capture_output=True, text=True, check=False, env=env, stdin=subprocess.DEVNULL)
 
     def test_imprime_diretorio_e_cria(self, tmp_path):
         r = _repo(tmp_path, "alpha")
@@ -296,7 +296,7 @@ class TestPinDeSessao:
         env = dict(os.environ)
         env.pop("HARNESS_SCOPE", None)
         res = subprocess.run([sys.executable, "-c", code], capture_output=True,
-                             text=True, env=env)
+                             text=True, env=env, stdin=subprocess.DEVNULL)
         assert res.returncode == 0, res.stderr
         assert Path(res.stdout.strip()) == esperado
 
@@ -409,7 +409,7 @@ class TestPinDeSessao:
             res = subprocess.run(
                 [sys.executable, str(PATHS_PY), "--root", str(root),
                  "--cwd", str(r), "--session-id", "86459dbf"],
-                capture_output=True, text=True, env=env)
+                capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
             assert res.returncode == 0, res.stderr
             saidas.append(res.stdout.strip())
         assert saidas[0] == saidas[1]

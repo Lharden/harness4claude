@@ -344,6 +344,7 @@ def _state_cli(balde: Path, *argumentos: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "state_cli.py"), "--home", str(balde), *argumentos],
         capture_output=True, text=True, timeout=60, encoding="utf-8", env=ENV_UTF8,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -432,6 +433,7 @@ def _record_signal(balde: Path, sinais: Path, task_id: str) -> subprocess.Comple
          "--steps", ",".join(PIPELINE_L1_BUG), "--expect-task", task_id,
          "--harness-dir", str(balde), "--signals-dir", str(sinais)],
         capture_output=True, text=True, timeout=60, encoding="utf-8", env=ENV_UTF8,
+        stdin=subprocess.DEVNULL,
     )
 
 

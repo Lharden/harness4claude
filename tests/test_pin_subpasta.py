@@ -70,7 +70,7 @@ def _hook(nome: str, payload: dict, harness: Path) -> str:
 
 def _script(args: list[str], harness: Path) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, *args], capture_output=True, text=True,
-                          timeout=60, env=_env(harness))
+                          timeout=60, env=_env(harness), stdin=subprocess.DEVNULL)
 
 
 @pytest.fixture()

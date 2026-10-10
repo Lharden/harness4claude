@@ -155,7 +155,8 @@ def _rodar(linha: str) -> subprocess.CompletedProcess:
     """Roda a linha como quem a copiou da mensagem: tokens do shell, sem shell."""
     argv = [a.strip('"') for a in shlex.split(linha, posix=False)]
     assert argv[0] == "python", linha
-    return subprocess.run([sys.executable, *argv[1:]], capture_output=True, text=True, timeout=60)
+    return subprocess.run([sys.executable, *argv[1:]], capture_output=True, text=True, timeout=60,
+                          stdin=subprocess.DEVNULL)
 
 
 @pytest.mark.parametrize("fase", ["tdd", "verify-multimodel"])

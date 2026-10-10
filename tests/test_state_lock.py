@@ -55,6 +55,7 @@ def _run_lock(args: list[str], harness_dir: Path, **extra) -> subprocess.Complet
         capture_output=True,
         text=True,
         timeout=15,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -75,6 +76,7 @@ class TestBasicLifecycle:
             [BASH, "-c", script],
             env=_env(harness_dir),
             capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
@@ -168,12 +170,14 @@ class TestConcurrency:
         proc_a = subprocess.Popen(
             [BASH, "-c", script_a],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
         )
         # B so nasce depois que A COMPROVADAMENTE segura o lock (sem sleep cego).
         _espera_marca(marks / "a_holds", proc_a, "A")
         proc_b = subprocess.Popen(
             [BASH, "-c", script_b],
             env=env_b, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
         )
         _, err_a = proc_a.communicate(timeout=90)
         _, err_b = proc_b.communicate(timeout=90)
@@ -213,6 +217,7 @@ class TestConcurrency:
         proc_hold = subprocess.Popen(
             [BASH, "-c", hold_script],
             env=_env(harness_dir), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
         )
         try:
             _espera_marca(marks / "holds", proc_hold, "holder")
@@ -302,6 +307,7 @@ class TestWriteRaceProtection:
                 [BASH, "-c", worker_template],
                 env=worker_env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                stdin=subprocess.DEVNULL,
             )
             procs.append(p)
 
@@ -371,6 +377,7 @@ class TestCustoDoLock:
         """
         result = subprocess.run(
             [BASH, "-c", script], env=env, capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0, result.stderr
         assert self._counts(log) == {}, f"acquire+release forkaram: {self._counts(log)}"
@@ -388,6 +395,7 @@ class TestCustoDoLock:
         result = subprocess.run(
             [BASH, str(LOCK_SH), "acquire"],
             env=env, capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL,
         )
         elapsed = time.monotonic() - t0
         assert result.returncode == 1
@@ -415,6 +423,7 @@ class TestReentrancySemantics:
             [BASH, "-c", script],
             env=_env(harness_dir),
             capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0, "lockdir foi removido indevidamente"
 
@@ -443,6 +452,7 @@ class TestIntervaloDeEspera:
             [BASH, "-c", script],
             env=_env(harness_dir, STATE_LOCK_POLL_MS=poll_ms, STATE_LOCK_TIMEOUT_SECS="30"),
             capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == esperado
@@ -474,6 +484,7 @@ class TestCaminhoSemDisputaNaoLancaProcessos:
             [BASH, "-c", script],
             env=_env(harness_dir, SPY=spy.as_posix()),
             capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0, result.stderr
         assert spy.read_text(encoding="utf-8").split() == ["mkdir", "rm"]
@@ -618,6 +629,7 @@ def _dono_morto(harness_dir: Path, preambulo: str = "") -> Path:
     """
     r = subprocess.run(
         [BASH, "-c", script], env=_env(harness_dir), capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     assert r.returncode == 0, f"dono morto nao pegou o lock: {r.stderr}"
     lockdir = harness_dir / "state.json.lockdir"
@@ -653,6 +665,7 @@ def _script_segura(m: str, nome: str) -> str:
 def _popen(script: str, env: dict[str, str]) -> subprocess.Popen:
     return subprocess.Popen(
         [BASH, "-c", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -703,6 +716,7 @@ class TestCorridaDaQuebraDeStale:
             # W1 tambem julga stale, quebra o lock velho, entra e sai.
             w1 = subprocess.run(
                 [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+                stdin=subprocess.DEVNULL,
             )
             assert w1.returncode == 0, w1.stderr
             # Um terceiro pega o lock e fica com ele.
@@ -750,6 +764,7 @@ class TestCorridaDaQuebraDeStale:
             _espera_marca(marcas_w2 / "leu-idade", w2, "W2")
             w1 = subprocess.run(
                 [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+                stdin=subprocess.DEVNULL,
             )
             assert w1.returncode == 0, w1.stderr
             w3 = _popen(_script_segura(m, "w3"), env)
@@ -790,6 +805,7 @@ class TestCorridaDaQuebraDeStale:
             _espera_marca(marcas_w2 / "pausado", w2, "W2")
             w1 = subprocess.run(
                 [BASH, "-c", _script_entra(m, "w1")], env=env, capture_output=True, text=True, timeout=90,
+                stdin=subprocess.DEVNULL,
             )
             assert w1.returncode == 0, w1.stderr
             # A cria o lockdir e para antes de gravar o dono.
@@ -890,5 +906,6 @@ class TestOpcoesDeGlobDeQuemFazSource:
             [BASH, "-c", script],
             env=_env(harness_dir, STATE_LOCK_STALE_SECS="300", STATE_LOCK_TIMEOUT_SECS="10"),
             capture_output=True, text=True, timeout=60,
+            stdin=subprocess.DEVNULL,
         )
         assert result.returncode == 0, result.stderr
