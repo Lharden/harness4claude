@@ -160,7 +160,7 @@ def iniciar_sessao(payload: object, *, agora: datetime | None = None) -> None:
         if g is None or payload.get("source") not in ("startup", "clear"):  # type: ignore[union-attr]
             return
         p, sid = g
-        if not (p / f"{sid}.jsonl").exists():
+        if not (p / f"{sid}.jsonl").exists() and not (p / f"{sid}.excluida").exists():
             (p / f"{sid}.nova").touch()
     except Exception:
         pass
@@ -190,6 +190,8 @@ def _registrar(payload: object, *, agora: datetime) -> None:
     if not isinstance(texto, str):
         return
     arq, marcador = p / f"{sid}.jsonl", p / f"{sid}.nova"
+    if (p / f"{sid}.excluida").exists():
+        return                                   # excluída pelo usuário: nunca volta, nem por um .nova que sobrou
     tem_spool = arq.exists()
     if not tem_spool and not marcador.exists():
         return                                   # fora da amostra: sem gravar e sem contar

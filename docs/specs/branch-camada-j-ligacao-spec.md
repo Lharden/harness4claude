@@ -62,16 +62,17 @@ Esta spec mede isso sem que o usuário veja nada:
   - o filtro de turno humano e a escrita do spool, só com a biblioteca padrão;
   - nada de rede, nada de processo, nada de chave;
   - toda exceção do caminho é engolida.
-- `harness4claude/scripts/branch_sensor.py::main`:
-  - no ramo que fixa a âncora do sensor (primeiro prompt da sessão), chama o spool para criar o arquivo da sessão;
-  - nos turnos seguintes, chama o spool para acrescentar;
-  - a decisão de `ramo` e a saída do hook não mudam.
+- `harness4claude/scripts/branch_sensor.py::main` (v4): chama o spool uma vez por `UserPromptSubmit`, antes de
+  qualquer saída antecipada, sem olhar a âncora do sensor; a decisão de `ramo` e a saída do hook não mudam.
+- `harness4claude/hooks/branch_j_inicio.py` (novo, v4) e a entrada no `SessionStart` do `hooks/hooks.json`, com
+  `matcher: startup|clear`: o marcador `<sid>.nova` do AC-1.0.
 - `harness4claude/scripts/branch_config.py`: ganha a flag `HARNESS_BRANCH_LAYER_J` (BOOL, padrão `False`).
 - `master-harness/mh/avaliacao/camada_j_sombra.py` (novo): verbos `abrir`, `status`, `excluir-sessao`, `seco`,
   `ver-amostra`, `rodar`, `rotular`, `medir` e `purgar`. O design-doc decide o que da `camada_j.py` vira função
   compartilhada.
 - `master-harness/mh/avaliacao/cli_avaliacao.py`: registra os verbos novos.
-- `master-harness/mh/saude.py`: ganha o aviso `spool_com_texto_retido` (AC-5.3), lendo só o `janela.json`.
+- `master-harness/mh/saude.py`: ganha o aviso `spool_com_texto_retido` (AC-5.4), lendo o `janela.json` e só os
+  **nomes** dos arquivos da pasta (v4), nunca o conteúdo.
 
 ### Dependências (quem garante cada uma)
 
@@ -79,7 +80,9 @@ Esta spec mede isso sem que o usuário veja nada:
   espera.
 - **D2. Release e deploy do harness4claude com o spool no cache do plugin.** Garante o orquestrador, com OK do
   usuário, porque o deploy muda o hook de todas as sessões. O `abrir` confere, no cache apontado por
-  `~/.claude/harness/plugin-root`, que existem o `branch_j_spool.py` e a chamada a ele no `branch_sensor.py`.
+  `~/.claude/harness/plugin-root`, que existem o `branch_j_spool.py`, a chamada a ele no `branch_sensor.py` e (v4) o
+  `hooks/branch_j_inicio.py` registrado no `hooks.json`. Lê o filtro do spool como texto (AST), sem executar código
+  do plugin no processo que tem a chave.
 - **D3. `HARNESS_BRANCH_LAYER_J=1` no `env` do `~/.claude/settings.json`, e `HARNESS_BRANCH` diferente de `0`.**
   Garante o usuário. O `abrir` lê o arquivo e recusa `flag_ausente` ou `branch_keeper_desligado`. O `env` é lido
   quando a sessão começa, e só sessões novas gravam (AC-1.2).
@@ -324,7 +327,7 @@ interpretação explícita da L-46 e vai registrada no `jev-integracao.md`, junt
 - Rede, processo novo, leitura da chave ou criação de diretório dentro do hook. O hook só escreve se a pasta e o
   `janela.json` já existirem.
 - Ler a pasta `sombra/` com qualquer coisa além do hook (escrita), dos verbos `sombra` e do `mh saude` (só o
-  `janela.json`). Ela não entra em vault, grafo, `signals.json`, `emissions.jsonl`, semente de ramo, transcript de
+  `janela.json` e os nomes dos arquivos, v4). Ela não entra em vault, grafo, `signals.json`, `emissions.jsonl`, semente de ramo, transcript de
   sessão nem backup do harness.
 - Editar `mh/s1/` ou `mh/replay/`.
 - Mudar o que o REQ-008 congela; abrir uma segunda janela nesta spec; medir mais de uma vez.
