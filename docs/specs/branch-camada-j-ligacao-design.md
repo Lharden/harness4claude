@@ -248,7 +248,11 @@ Saída: 0 ok, 2 recusa com `recusa: <causa>` numa linha, 3 pane. Todo verbo marc
 A checagem de D2 no `abrir` é feita assim:
 1. lê `~/.claude/harness/plugin-root`;
 2. exige `<root>/scripts/branch_j_spool.py` e a string `branch_j_spool` em `<root>/scripts/branch_sensor.py`;
-3. carrega o módulo pelo caminho (`importlib`, como o `medir_cli` da avaliação) para obter o `SHA_FILTRO`.
+3. (v4) exige `<root>/hooks/branch_j_inicio.py` e um comando com `branch_j_inicio.py` no `SessionStart` do
+   `<root>/hooks/hooks.json`;
+4. (rodada 3) lê `PREFIXOS` e `MIN_LEN` do spool por `ast` (`literal_eval`) e calcula o `SHA_FILTRO` como o spool
+   calcula. Até a rodada 3 o módulo era carregado por `importlib`; trocado porque executava código do plugin no
+   processo que lê a chave do Jev. Filtro que não é literal recusa `plugin_sem_spool`.
 
 A checagem de D3 lê `~/.claude/settings.json` e exige, no bloco `env`, `HARNESS_BRANCH_LAYER_J` verdadeiro e
 `HARNESS_BRANCH` ausente ou verdadeiro.
