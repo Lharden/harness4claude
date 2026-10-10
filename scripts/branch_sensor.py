@@ -679,13 +679,14 @@ def cli_may_offer(argv: list[str]) -> int:
     return 0
 
 
-def _spool_j(payload: dict, *, ancora: bool) -> None:
-    """Spool da camada J (modo sombra). `registrar` ja nao levanta; este try e a
-    segunda trava do contrato "o sensor nunca quebra o prompt"."""
+def _spool_j(payload: dict) -> None:
+    """Spool da camada J (modo sombra). Decide sozinho se a sessao esta na amostra
+    (marcador do SessionStart), sem olhar a ancora do sensor. `registrar` ja nao
+    levanta; este try e a segunda trava do contrato "o sensor nunca quebra o prompt"."""
     if branch_j_spool is None:
         return
     try:
-        branch_j_spool.registrar(payload, ancora=ancora)
+        branch_j_spool.registrar(payload)
     except Exception:
         pass
 
@@ -724,6 +725,11 @@ def main() -> int:
             (hb / str(evento)).write_text(str(int(__import__("time").time())), encoding="utf-8")
         except OSError:
             pass
+
+    # Camada J em modo sombra: so guarda, nunca decide; so no UserPromptSubmit (o
+    # Stop nao foi medido). Antes de qualquer saida antecipada do sensor.
+    if evento == "UserPromptSubmit":
+        _spool_j(payload)
 
     cwd = payload.get("cwd") or os.getcwd()
     session_id = payload.get("session_id")
@@ -765,13 +771,7 @@ def main() -> int:
             session_id=session_id,
             embedding=vec,
         )
-        _spool_j(payload, ancora=True)
         return 0
-
-    # Camada J em modo sombra: so guarda, nunca decide. Fica antes de toda saida
-    # antecipada da avaliacao, e so no UserPromptSubmit (o Stop nao foi medido).
-    if (payload.get("hook_event_name") or "") == "UserPromptSubmit":
-        _spool_j(payload, ancora=False)
 
     # Ancora nascida com o Ollama fora ficava com embedding nulo e, por nao
     # ser None, nunca era recriada: cosine(vec, None) devolvia None e a

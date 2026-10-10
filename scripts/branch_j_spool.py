@@ -83,6 +83,15 @@ def _janela_aberta(p: Path, agora: datetime) -> bool:
     return j.get("estado") == "aberta" and agora < fim and j.get("sha_filtro") == SHA_FILTRO
 
 
+
+
+def _int(x: object) -> int:
+    try:
+        return int(x)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
 def _contar(p: Path, sid: str, *chaves: str) -> None:
     arq = p / f"{sid}.contagens.json"
     try:
@@ -92,9 +101,9 @@ def _contar(p: Path, sid: str, *chaves: str) -> None:
     except (OSError, ValueError):
         dados = {}
     for c in chaves:
-        dados[c] = int(dados.get(c, 0)) + 1
-    tmp = arq.with_name(arq.name + ".tmp")
-    tmp.write_text(json.dumps(dados, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        dados[c] = _int(dados.get(c, 0)) + 1
+    tmp = arq.with_name(f"{arq.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(dados, ensure_ascii=True, sort_keys=True), encoding="utf-8")
     os.replace(tmp, arq)
 
 
@@ -112,106 +121,91 @@ def _projeto(cwd: object) -> str:
         return "?"
 
 
-def _texto_do_usuario(evento: dict) -> str | None:
-    """O texto de uma entrada `user` do transcript que é prompt (string, ou lista com itens `text`), ou None."""
-    msg = evento.get("message") if isinstance(evento.get("message"), dict) else {}
-    c = msg.get("content")
-    if isinstance(c, str):
-        return None if evento.get("isMeta") else c
-    if isinstance(c, list):
-        textos = [x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text"]
-        if textos and not any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
-            return "\n".join(textos)
-    return None
-
-
-def _sessao_nova(payload: dict) -> bool:
-    """O prompt é o primeiro da sessão? Sem transcript, sim; com ele, se nenhum prompt anterior difere deste.
-
-    Só roda quando o sensor fixa a âncora e o spool da sessão não existe (uma vez por sessão, ou numa
-    reancoragem de sessão que começou antes da janela): o custo de ler o transcript não cai no turno comum."""
-    tp = payload.get("transcript_path")
-    if not isinstance(tp, str) or not tp:
-        return True
-    atual = str(payload.get("prompt") or "").strip()
-    try:
-        with open(tp, encoding="utf-8", errors="replace") as fh:
-            for linha in fh:
-                if '"user"' not in linha:
-                    continue
-                try:
-                    ev = json.loads(linha)
-                except ValueError:
-                    continue
-                if not isinstance(ev, dict) or ev.get("type") != "user":
-                    continue
-                texto = _texto_do_usuario(ev)
-                if texto is not None and texto.strip() and texto.strip() != atual:
-                    return False
-    except FileNotFoundError:
-        return True
-    return True
-
-
-def _acrescentar(arq: Path, linha: dict) -> None:
+def _linha(linha: dict) -> bytes:
     # ASCII com escapes: um surrogate solto no prompt não derruba a escrita, e o JSON continua lendo igual
-    dados = (json.dumps(linha, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
-    fd = os.open(arq, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+    return (json.dumps(linha, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
+
+
+def _escrever(arq: Path, dados: bytes, *, criar: bool) -> None:
+    """`criar`: O_CREAT|O_EXCL (a âncora, uma vez). Senão O_APPEND **sem** O_CREAT: um spool apagado por
+    `excluir-sessao` ou `purgar` nunca é recriado por um turno que chegou depois (AC-5.1, AC-5.2)."""
+    flags = os.O_WRONLY | getattr(os, "O_BINARY", 0) | (os.O_CREAT | os.O_EXCL if criar else os.O_APPEND)
+    fd = os.open(arq, flags, 0o600)
     try:
         os.write(fd, dados)
     finally:
         os.close(fd)
 
 
-def registrar(payload: object, *, ancora: bool, agora: datetime | None = None) -> None:
-    """Grava o turno do `UserPromptSubmit` no spool da sessão, se tudo permitir. Nunca levanta (AC-1.6)."""
+def _gate(payload: object, evento: str, agora: datetime) -> tuple[Path, str] | None:
+    """(pasta, sid) se a flag está ligada, o evento confere, a janela está aberta e o `session_id` é válido."""
+    if not branch_config.get_bool("HARNESS_BRANCH_LAYER_J"):
+        return None
+    if not isinstance(payload, dict) or payload.get("hook_event_name") != evento:
+        return None
+    sid = payload.get("session_id")
+    if not isinstance(sid, str) or not _SESSAO.fullmatch(sid):
+        return None
+    p = pasta()
+    if not p.is_dir() or not _janela_aberta(p, agora):
+        return None
+    return p, sid
+
+
+def iniciar_sessao(payload: object, *, agora: datetime | None = None) -> None:
+    """AC-1.0: no `SessionStart` de uma sessão nova (`startup` ou `clear`) com a janela aberta, o marcador `<sid>.nova`.
+    É ele que põe a sessão na amostra; retomada e compactação não entram. Nunca levanta."""
     try:
-        _registrar(payload, ancora=ancora, agora=agora or _agora())
+        g = _gate(payload, "SessionStart", agora or _agora())
+        if g is None or payload.get("source") not in ("startup", "clear"):  # type: ignore[union-attr]
+            return
+        p, sid = g
+        if not (p / f"{sid}.jsonl").exists():
+            (p / f"{sid}.nova").touch()
+    except Exception:
+        pass
+
+
+def registrar(payload: object, *, agora: datetime | None = None) -> None:
+    """Grava o turno do `UserPromptSubmit` no spool da sessão, se ela está na amostra. Nunca levanta (AC-1.6)."""
+    try:
+        _registrar(payload, agora=agora or _agora())
     except Exception:
         try:
             sid = payload.get("session_id") if isinstance(payload, dict) else None
-            if isinstance(sid, str) and _SESSAO.fullmatch(sid) and pasta().is_dir():
-                _contar(pasta(), sid, "falha_spool")
+            p = pasta()
+            if isinstance(sid, str) and _SESSAO.fullmatch(sid) and (
+                    (p / f"{sid}.nova").exists() or (p / f"{sid}.jsonl").exists()):
+                _contar(p, sid, "falha_spool")
         except Exception:
             pass
 
 
-def _registrar(payload: object, *, ancora: bool, agora: datetime) -> None:
-    if not branch_config.get_bool("HARNESS_BRANCH_LAYER_J"):
+def _registrar(payload: object, *, agora: datetime) -> None:
+    g = _gate(payload, "UserPromptSubmit", agora)
+    if g is None:
         return
-    if not isinstance(payload, dict) or payload.get("hook_event_name") != "UserPromptSubmit":
+    p, sid = g
+    texto = payload.get("prompt")  # type: ignore[union-attr]
+    if not isinstance(texto, str):
         return
-    p = pasta()
-    if not p.is_dir() or not _janela_aberta(p, agora):
-        return
-    sid, texto = payload.get("session_id"), payload.get("prompt")
-    if not isinstance(sid, str) or not _SESSAO.fullmatch(sid) or not isinstance(texto, str):
-        return
-    arq = p / f"{sid}.jsonl"
+    arq, marcador = p / f"{sid}.jsonl", p / f"{sid}.nova"
+    tem_spool = arq.exists()
+    if not tem_spool and not marcador.exists():
+        return                                   # fora da amostra: sem gravar e sem contar
     motivo = motivo_de_filtro(texto)
     if motivo is not None:
-        _contar(p, sid, *((motivo, "sessao_sem_ancora_humana") if ancora and not arq.exists() else (motivo,)))
+        _contar(p, sid, motivo)                  # não consome o marcador: a âncora é o primeiro prompt humano
         return
     if _tamanho(p) >= LIMITE_BYTES:
         _contar(p, sid, "spool_cheio")
         return
-    try:
-        atual = arq.read_bytes()
-    except FileNotFoundError:
-        atual = None
-    if atual is None:
-        # Arquivo nasce só no primeiro prompt da sessão. Uma reancoragem do sensor (duas sessões no mesmo cwd
-        # se alternando) de sessão que começou antes da janela não vira âncora.
-        if not ancora:
-            return
-        if not _sessao_nova(payload):
-            _contar(p, sid, "sessao_preexistente")
-            return
-        idx, tipo = 0, "ancora"
-    else:
-        # Arquivo existente: é turno, mesmo que o sensor tenha re-ancorado (ele não sabe do spool).
-        if atual.startswith(b'{"excluida"'):
-            return
-        idx, tipo = atual.count(b"\n"), "turno"
-    _acrescentar(arq, {"tipo": tipo, "turno_idx": idx, "instante": _instante(agora), "sessao": sid,
-                       "projeto": _projeto(payload.get("cwd")), "texto": texto})
+    projeto = _projeto(payload.get("cwd"))  # type: ignore[union-attr]
+    if tem_spool:
+        idx = arq.read_bytes().count(b"\n")
+        _escrever(arq, _linha({"tipo": "turno", "turno_idx": idx, "instante": _instante(agora), "sessao": sid,
+                               "projeto": projeto, "texto": texto}), criar=False)
+        return
+    _escrever(arq, _linha({"tipo": "ancora", "turno_idx": 0, "instante": _instante(agora), "sessao": sid,
+                           "projeto": projeto, "texto": texto}), criar=True)
+    marcador.unlink(missing_ok=True)
