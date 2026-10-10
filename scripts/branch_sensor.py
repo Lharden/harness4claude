@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import branch_config
+import branch_j_spool
 import branch_state
 
 # ---------------------------------------------------------------------------
@@ -673,6 +674,15 @@ def cli_may_offer(argv: list[str]) -> int:
     return 0
 
 
+def _spool_j(payload: dict, *, ancora: bool) -> None:
+    """Spool da camada J (modo sombra). `registrar` ja nao levanta; este try e a
+    segunda trava do contrato "o sensor nunca quebra o prompt"."""
+    try:
+        branch_j_spool.registrar(payload, ancora=ancora)
+    except Exception:
+        pass
+
+
 def main() -> int:
     # Le os bytes e decodifica em UTF-8 a mao. `json.load(sys.stdin)` usa o
     # encoding do processo, que no Windows nasce cp1252: sem PYTHONIOENCODING
@@ -748,7 +758,13 @@ def main() -> int:
             session_id=session_id,
             embedding=vec,
         )
+        _spool_j(payload, ancora=True)
         return 0
+
+    # Camada J em modo sombra: so guarda, nunca decide. Fica antes de toda saida
+    # antecipada da avaliacao, e so no UserPromptSubmit (o Stop nao foi medido).
+    if (payload.get("hook_event_name") or "") == "UserPromptSubmit":
+        _spool_j(payload, ancora=False)
 
     # Ancora nascida com o Ollama fora ficava com embedding nulo e, por nao
     # ser None, nunca era recriada: cosine(vec, None) devolvia None e a
