@@ -1,6 +1,6 @@
 # Camada J do Branch Keeper: o Jev julga o ramo (avaliação offline)
 
-**Status:** proposta, aguardando aprovação · 2026-10-09 · task `t-20261009-142619139824` (L1-feature)
+**Status:** aprovada pelo usuário em 2026-10-10 (confirmada na janela desta sessão às 08:41) · 2026-10-09 · task `t-20261009-142619139824` (L1-feature)
 **Origem:** item C4 de `master-harness/docs/specs/jev-integracao.md:89`, cujo gatilho ("depois do selo-1 de P1")
 disparou em 2026-10-01 (`fe86ed2`) sem dono. É a R2 da auditoria do uso do Jev de 2026-10-09, aprovada pelo usuário.
 **Plano de avaliação:** [`branch-camada-j-avaliacao-plano.md`](branch-camada-j-avaliacao-plano.md)
@@ -110,7 +110,17 @@ e prazo. Fatos medidos que essa decisão tem de pesar:
   (`fabrica-plano.md:75`), e importa `mh.s1.estatistica` sem editar o kit. Justifica: REQ-001, REQ-004.
 - **ASSUMPTION-003** (inferência): k é o volume de disparos da camada A, e não um limiar escolhido sobre o J. A
   comparação fica no mesmo volume de interrupções, sem ajustar nada aos dados. Justifica: S1, S2.
-- **[NEEDS CLARIFICATION-1]** Com `avança`, a spec de ligação pode começar em modo sombra (o J pontua e registra, sem
-  oferecer) e medir a precisão nos prompts do meio de sessão? Ou você quer antes um conjunto rotulado à mão, como o
-  `harvest_branch_labels.py` prevê para o juiz final? Recomendo o modo sombra: não custa rotulação, e a ressalva da
-  ENTREGA fica medida e não presumida.
+- **ASSUMPTION-004** (usuário, 2026-10-10, resolve a CLARIF-1): com `avança`, a spec de ligação começa em modo
+  sombra. O J pontua e registra os prompts do meio de sessão, sem oferecer nada, e o rótulo manual vale só para os
+  itens que ele sinalizar. Condições do usuário:
+  - a chamada fica fora do caminho do hook, sem latência no prompt;
+  - a flag começa desligada;
+  - a redação roda antes do envio;
+  - há teto de gasto por janela;
+  - o critério e o tamanho da janela são fixados antes de olhar;
+  - a âncora e o prompt ficam guardados localmente, para julgar depois.
+
+  Justifica: REQ-001, ENTREGA, Gateway.
+- **ASSUMPTION-005** (usuário, 2026-10-10): a rodada real sobre os 703 pares está liberada, a ~US$ 0,08 com teto de
+  US$ 0,15. A revisão da amostra do seco, que o REQ-003 exige antes do envio, continua valendo. Justifica: REQ-003,
+  REQ-005.
