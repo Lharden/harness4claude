@@ -1,16 +1,18 @@
 # Spec: Camada J do Branch Keeper em modo sombra
 
-**Status**: Draft v2 (grill-me rodada 1 incorporada; aguarda approve-spec)
+**Status**: Draft v3 (grill-me rodadas 1 e 2 incorporadas; aguarda approve-spec)
 **Created**: 2026-10-10
 **Branch**: harness4claude `spec/camada-j-sombra`. No master-harness, o ramo sai do `main` **depois** do merge de
-`feat/avaliacao-camada-j`, que é feito pelo orquestrador.
+`feat/avaliacao-camada-j` (até `3ef033c`), que é feito pelo orquestrador.
 **Author**: AI-generated, reviewed by Leonardo
 **Task**: `t-20261010-164331842535` (L2-feature)
-**Grill**: rodada 1, 2026-10-10, com 5 lentes em contexto limpo: 70 perguntas, 8 bloqueantes, nenhuma lente sem
-retorno. A seção [Grill](#grill--rodada-1) traz o destino de cada bloqueante.
+**Grill**: duas rodadas de 5 lentes em contexto limpo, nenhuma lente sem retorno:
+- rodada 1: 70 perguntas, 8 bloqueantes;
+- rodada 2, sobre a v2: 71 perguntas, 9 bloqueantes.
+
+O destino de cada bloqueante está em [Grill](#grill).
 **Antecessora**: [`branch-camada-j-spec-light.md`](branch-camada-j-spec-light.md), com veredito `avança` (precisão@25
-de 0,36, exatamente no corte; `master-harness/docs/avaliacao/camada-j-resultado.md`). Ela reservou para esta spec o
-nome `…-ligacao-spec-light.md`; a spec saiu completa (L2).
+de 0,36, exatamente no corte; `master-harness/docs/avaliacao/camada-j-resultado.md`).
 
 ---
 
@@ -21,8 +23,8 @@ mostrou o que importa em produção: se o J acha ramo **no meio** de uma sessão
 
 Esta spec mede isso sem que o usuário veja nada:
 - o usuário abre uma janela de 14 dias;
-- enquanto a janela está aberta e a flag ligada, o hook guarda localmente cada turno humano, sem rede, sem processo
-  novo e sem latência perceptível;
+- em cada sessão que começa depois disso, o hook guarda localmente a âncora e os turnos humanos, sem rede, sem
+  processo novo e sem latência perceptível;
 - quando a janela fecha, um lote no `mh` pontua tudo de uma vez, pelo mesmo caminho medido na avaliação;
 - o usuário rotula, sem saber qual é qual, até 40 turnos que o J sinalizou e 20 chamarizes que ele não sinalizou;
 - um critério fixado aqui decide se vale escrever a spec que faz o J **oferecer** ramo.
@@ -30,16 +32,16 @@ Esta spec mede isso sem que o usuário veja nada:
 ## Context
 
 **Hoje.**
-- `scripts/branch_sensor.py::main` roda em `UserPromptSubmit` e em `Stop`.
-- A camada A (regex) é o portão de `ramo` (`verdict()` exige `hit_a`), e a camada B está desligada.
-- A âncora do sensor (`set_anchor`, `branch_sensor.py:194`) é o primeiro prompt substantivo da sessão, cortado em
-  2 000 caracteres. Ela fica num arquivo por `state_dir(cwd)` e só vale para a mesma `session_id` (`load_anchor`).
-- Na avaliação, a âncora foi o primeiro prompt **inteiro** da sessão (`harvest_branch_labels.py`), com o filtro
-  `ABERTURA_NAO_HUMANA`.
+- `scripts/branch_sensor.py::main` roda em `UserPromptSubmit` e em `Stop`, chamado pelo wrapper
+  `hooks/harness-branch-sensor.sh`, que sai antes do Python quando `HARNESS_BRANCH=0`.
+- No primeiro `UserPromptSubmit` substantivo de uma sessão, `main` fixa a âncora do sensor (`set_anchor`: texto
+  cortado em 2 000 caracteres, por `state_dir(cwd)`, válida só para a mesma `session_id`) e retorna.
+- A camada A (regex) é o portão de `ramo`, e a camada B está desligada.
+- Na avaliação, a âncora foi o primeiro prompt **inteiro** da sessão (`harvest_branch_labels.py`).
 
 **O que a avaliação deixou pronto** (master-harness, `feat/avaliacao-camada-j`):
 - o molde `mh/avaliacao/moldes/camada_j_par.json`;
-- a `PonteJev` (redação, lista de bloqueio, truncagem, guarda da chave, log auditado na porta `C4`), pela
+- a `PonteJev` do kit (redação, lista de bloqueio, truncagem, guarda da chave, log auditado na porta `C4`), pela
   `mh/avaliacao/camada_j.py`;
 - o livro de gasto (`mh/hints/livro.py`) e a estatística do kit.
 
@@ -48,174 +50,201 @@ Esta spec mede isso sem que o usuário veja nada:
 - **L-43:** redação local antes de qualquer envio.
 - **L-44:** envelope de US$ 5 por mês.
 - **L-45:** `jev-1.13.0` fixo, chave só no arquivo dela.
-- **L-46:** o gateway nasce com o 2º consumidor de produção.
+- **L-46:** o gateway nasce com o 2º consumidor de produção; ver [Gateway](#gateway-l-46).
 
 ### Files/Modules Impactados
 
-- `harness4claude/scripts/branch_j_spool.py` (novo): filtro de turno humano e escrita do spool, só com a biblioteca
-  padrão. Nada de rede e nada de processo.
-- `harness4claude/scripts/branch_sensor.py::main`: chama o spool em `UserPromptSubmit`, atrás da flag, antes de
-  qualquer saída antecipada. A decisão de `ramo` e a saída do hook não mudam.
+- `harness4claude/scripts/branch_j_spool.py` (novo):
+  - o filtro de turno humano e a escrita do spool, só com a biblioteca padrão;
+  - nada de rede, nada de processo, nada de chave;
+  - toda exceção do caminho é engolida.
+- `harness4claude/scripts/branch_sensor.py::main`:
+  - no ramo que fixa a âncora do sensor (primeiro prompt da sessão), chama o spool para criar o arquivo da sessão;
+  - nos turnos seguintes, chama o spool para acrescentar;
+  - a decisão de `ramo` e a saída do hook não mudam.
 - `harness4claude/scripts/branch_config.py`: ganha a flag `HARNESS_BRANCH_LAYER_J` (BOOL, padrão `False`).
-- `master-harness/mh/avaliacao/camada_j_sombra.py` (novo): verbos `abrir`, `seco`, `ver-amostra`, `rodar`, `rotular`,
-  `medir` e `purgar`. O design-doc decide o que da `camada_j.py` vira função compartilhada.
+- `master-harness/mh/avaliacao/camada_j_sombra.py` (novo): verbos `abrir`, `status`, `excluir-sessao`, `seco`,
+  `ver-amostra`, `rodar`, `rotular`, `medir` e `purgar`. O design-doc decide o que da `camada_j.py` vira função
+  compartilhada.
 - `master-harness/mh/avaliacao/cli_avaliacao.py`: registra os verbos novos.
+- `master-harness/mh/saude.py`: ganha o aviso `spool_com_texto_retido` (AC-5.3), lendo só o `janela.json`.
 
 ### Dependências (quem garante cada uma)
 
-- **D1. Merge de `feat/avaliacao-camada-j` no `main` do master-harness.** Garante o orquestrador. A implementação
-  desta spec espera esse merge.
-- **D2. Release do harness4claude com o `branch_j_spool.py`, instalado no cache do plugin.** Garante o deploy do
-  harness4claude. O `sombra abrir` confere, pelo `~/.claude/harness/plugin-root`, que o cache tem o módulo, e recusa
-  `plugin_sem_spool` se não tiver.
-- **D3. A flag no `env` do `~/.claude/settings.json`**, o bloco global que todo processo de hook herda. Garante o
-  usuário. Sessões abertas antes da mudança não gravam, e o relatório conta as sessões que gravaram.
-- **D4. A chave do Jev e o `jev-1.13.0` servido no dia do lote.** Ninguém garante. A sonda recusa
-  `modelo_remoto_divergente` e a janela vira `inconclusivo`.
+- **D1. Merge de `feat/avaliacao-camada-j` no `main` do master-harness.** Garante o orquestrador; a implementação
+  espera.
+- **D2. Release e deploy do harness4claude com o spool no cache do plugin.** Garante o orquestrador, com OK do
+  usuário, porque o deploy muda o hook de todas as sessões. O `abrir` confere, no cache apontado por
+  `~/.claude/harness/plugin-root`, que existem o `branch_j_spool.py` e a chamada a ele no `branch_sensor.py`.
+- **D3. `HARNESS_BRANCH_LAYER_J=1` no `env` do `~/.claude/settings.json`, e `HARNESS_BRANCH` diferente de `0`.**
+  Garante o usuário. O `abrir` lê o arquivo e recusa `flag_ausente` ou `branch_keeper_desligado`. O `env` é lido
+  quando a sessão começa, e só sessões novas gravam (AC-1.2).
+- **D4. A chave do Jev e o `jev-1.13.0` servido no dia do lote.** O `abrir` recusa `chave_ausente`. Se o modelo for
+  retirado, a sonda recusa e a janela fecha por `purgar --abandonar --motivo modelo_retirado`.
 
 ---
 
 ## User Stories
 
-### US-0: Abrir a janela (Priority: P1)
+### US-0: Abrir a janela e provar que ela está viva (Priority: P1)
 
-**Como** usuário
-**Quero** um comando explícito que abre a janela de 14 dias
-**Para que** o início da coleta seja um ato meu, registrado, e não um efeito colateral de ligar uma variável
+- **AC-0.1**: Given D2, D3 e D4 satisfeitas e nenhuma janela anterior, When `mh avaliar camada-j sombra abrir` roda
+  num terminal humano (REQ-010), Then:
+  - nasce `<casa>/avaliacao/camada-j/sombra/`, com ACL só do usuário, herdável (`icacls … /inheritance:r /grant:r
+    <usuário>:(OI)(CI)F`; `0700` fora do Windows);
+  - grava-se `janela.json` com `{estado: "aberta", inicio, fim = inicio + 14 × 24 h, tau: 0.77, semente: 20261010,
+    sha_filtro, spec_commit}`, instantes em ISO-8601 UTC;
+  - `sha_filtro` é o sha256 da lista de prefixos e do MIN_LEN do REQ-003, como o código do hook os calcula;
+  - `spec_commit` é o SHA do commit da spec aprovada, constante no código.
+- **AC-0.2**: Given a casa do `mh` diferente de `~/.master-harness`, When `abrir`, Then recusa `casa_nao_padrao`.
+  Hook e `mh` resolvem a mesma casa só porque os dois usam o padrão.
+- **AC-0.3**: Given um `janela.json` existente, em qualquer estado, When `abrir`, Then recusa `janela_ja_existe`.
+- **AC-0.4**: Given D2, D3 ou D4 faltando, When `abrir`, Then recusa com a causa: `plugin_sem_spool`,
+  `flag_ausente`, `branch_keeper_desligado` ou `chave_ausente`.
+- **AC-0.5**: Given a janela aberta, When `sombra status`, Then aparecem, sem texto:
+  - estado, início e fim;
+  - quantas sessões têm spool, quantas linhas cada uma tem e as contagens do hook;
+  - o tamanho da pasta.
 
-**Acceptance Criteria**:
-- **AC-0.1**: Given nenhuma janela anterior, o plugin instalado com o spool e a chave presente, When
-  `mh avaliar camada-j sombra abrir`, Then:
-  - nasce a pasta `<casa>/avaliacao/camada-j/sombra/`, onde `<casa>` é `MASTER_HARNESS_HOME`, senão
-    `~/.master-harness`;
-  - a pasta recebe ACL só do usuário, pela mesma rotina da avaliação (`icacls` no Windows; roda no `mh`, nunca no
-    hook);
-  - grava-se `janela.json` com `{estado: "aberta", inicio, fim = inicio + 14 × 24 h (UTC, ISO-8601), tau: 0.77,
-    semente: 20261010, prefixos, sha256 desta spec}`.
-- **AC-0.2**: Given um `janela.json` existente, em qualquer estado, When `sombra abrir`, Then recusa
-  `janela_ja_existe`. Uma janela por spec; outra janela é outra spec.
-- **AC-0.3**: Given o cache do plugin sem `branch_j_spool.py`, When `sombra abrir`, Then recusa `plugin_sem_spool`.
+  O `abrir` termina mandando abrir uma sessão nova, mandar um prompt e rodar `status`. Esse é o teste de vida do dia 0.
 
 ### US-1: Guardar o turno sem custo no prompt (Priority: P1) — MVP
 
-**Como** usuário do Claude Code
-**Quero** que, com a janela aberta e a flag ligada, cada prompt meu seja guardado localmente com a âncora da sessão
-**Para que** o J possa ser medido sobre o meio de sessão sem que eu sinta nada
-
-**Acceptance Criteria**:
-- **AC-1.1**: Given a flag desligada, ou `janela.json` ausente, ou `estado` ≠ `aberta`, ou o instante ≥ `fim`, When
-  chega um `UserPromptSubmit`, Then nada é escrito na pasta do spool, e a saída do hook é idêntica byte a byte à de
-  hoje.
-- **AC-1.2**: Given a janela aberta, a flag ligada e um turno humano (REQ-003), When chega um `UserPromptSubmit`,
-  Then uma linha `{tipo, instante (ISO-8601 UTC), sessao, projeto (slug do cwd), turno_idx, texto}` é acrescentada a
-  `sombra/<session_id>.jsonl`:
-  - o primeiro turno humano gravado da sessão tem `tipo: "ancora"` e `turno_idx` 0, e é a âncora, com o texto
-    inteiro, como na avaliação;
-  - os seguintes têm `tipo: "turno"` e `turno_idx` 1, 2, …, contados pelas linhas já gravadas no arquivo.
-- **AC-1.3**: Given um `session_id` fora de `[A-Za-z0-9-]{8,64}`, When o hook roda, Then nada é gravado e sobe o
-  contador `sessao_invalida`.
-- **AC-1.4**: Given um turno que, depois de `lstrip()`, começa por um prefixo do REQ-003 (comparação com
-  maiúsculas e minúsculas), ou que tem menos de 12 code points depois de `strip()`, When o hook roda, Then ele não é
-  gravado, e sobe o contador do prefixo ou o `curto`.
-- **AC-1.5**: Given um `Stop`, When o hook roda, Then nada é gravado.
-- **AC-1.6**: Given qualquer erro de escrita, When o hook roda, Then o erro é engolido, o hook sai como sairia sem a
-  flag, e sobe `falha_spool` no arquivo de contagens da sessão (se esse arquivo também falhar, nada mais é tentado).
-- **AC-1.7**: Given a pasta do spool com ≥ 200 MB, When o hook roda, Then nada é gravado e sobe `spool_cheio`.
-- **AC-1.8**: Given a flag ligada, When o hook roda, Then nenhuma conexão de rede é aberta, nenhum processo é lançado
-  e a chave não é lida.
+- **AC-1.1**: Given a flag desligada, ou `janela.json` ausente ou ilegível, ou `estado` ≠ `aberta`, ou o instante
+  ≥ `fim`, ou o `sha_filtro` do código ≠ o do `janela.json`, When chega um `UserPromptSubmit`, Then nada é escrito na
+  pasta do spool, e a saída do hook é idêntica byte a byte à de hoje.
+- **AC-1.2**: Given a janela aberta, When `main` fixa a âncora do sensor para uma sessão (o primeiro prompt
+  substantivo dela) e esse prompt é humano (REQ-003), Then nasce `sombra/<session_id>.jsonl` com a linha `{tipo:
+  "ancora", turno_idx: 0, instante, sessao, projeto, texto}`:
+  - `texto` é o prompt cru, como chegou, e inteiro;
+  - `projeto` é o slug de `harness_paths` para o cwd;
+  - se o prompt não for humano, a sessão não grava nada, e sobe `sessao_sem_ancora_humana`.
+- **AC-1.3**: Given um `<session_id>.jsonl` existente, When chega um `UserPromptSubmit` humano dessa sessão, Then uma
+  linha `{tipo: "turno", turno_idx, instante, sessao, projeto, texto}` é acrescentada. `turno_idx` = número de linhas
+  já no arquivo. Sem o arquivo, nada é gravado, e o resultado é que sessões abertas antes do `abrir`, retomadas ou
+  compactadas não entram.
+- **AC-1.4**: Given um turno que, depois de `lstrip()`, começa por um prefixo do REQ-003 (`startswith` literal, com
+  maiúsculas e minúsculas como estão), ou que tem menos de 12 code points depois de `strip()`, When o hook roda, Then
+  ele não é gravado, e sobe o contador do prefixo ou o `curto`.
+- **AC-1.5**: Given um `session_id` fora de `[A-Za-z0-9-]{8,64}`, um prompt ausente ou não string, ou um `Stop`, When
+  o hook roda, Then nada é gravado (sem contador, porque não há arquivo de sessão válido).
+- **AC-1.6**: Given qualquer exceção no caminho do spool, When o hook roda, Then ela é engolida e a saída do hook
+  fica idêntica à de hoje. Sobe `falha_spool` no arquivo de contagens da sessão; se essa escrita também falhar,
+  nada mais é tentado.
+- **AC-1.7**: Given os `*.jsonl` da pasta somando ≥ 200 × 2^20 bytes (o tamanho é conferido só no arquivo da sessão
+  mais um total guardado em `contagens`), When o hook roda, Then nada é gravado e sobe `spool_cheio`.
+- **AC-1.8**: Given a flag ligada, When o hook roda 1 000 vezes num banco de medida, Then o p95 do tempo a mais sobre
+  o hook de hoje fica ≤ 20 ms, sem rede, sem processo e sem ler a chave.
 
 Os contadores ficam em `sombra/<session_id>.contagens.json`, um arquivo por sessão e com um só escritor.
 
 ### US-2: Pontuar a janela pelo caminho medido (Priority: P1)
 
-**Acceptance Criteria**:
-- **AC-2.1**: Given o instante < `fim`, When `sombra seco`, Then recusa `janela_aberta`. Depois de `fim`, o hook não
-  grava mais, o spool fica congelado e os shas ficam estáveis.
+- **AC-2.1**: Given o instante < `fim`, When `sombra seco`, Then recusa `janela_aberta`.
 - **AC-2.2**: Given a janela fechada, When `sombra seco`, Then:
-  - cada `turno` (nunca a `ancora`) é montado com o par `{ancora da sua sessão, turno}` pela `PonteJev`, dentro da
-    `captura()`, sem rede e com o molde `camada_j_par.json`;
+  - sessões com linha 0 que não é `ancora`, linha corrompida ou `turno_idx` repetido são descartadas inteiras e
+    contadas;
+  - cada `turno` válido é montado com o par `{ancora da sua sessão, turno}` pela `PonteJev`, dentro da `captura()`,
+    sem rede e com o molde `camada_j_par.json`;
   - os corpos redigidos vão a `sombra/seco.jsonl`;
+  - grava-se `seco_meta.json` com os sha256 de `redacao.py`, `jev.py` e da lista de bloqueio, e com o maior `mtime`
+    dos spools;
   - roda a varredura de resíduo (REQ-007);
-  - saem a estimativa, o gasto da janela, o gasto do mês e o código de uma amostra de 20.
-
-  Um seco novo substitui o código anterior.
-- **AC-2.3**: Given a varredura com ≥ 1 resíduo, When `sombra rodar`, Then recusa `residuo_de_credencial` antes de
-  qualquer chamada.
-- **AC-2.4**: Given o código da amostra que o usuário revisou, When `sombra rodar --confirmo <codigo>`, Then cada
-  turno é pontuado na porta `C4`, com log auditado. Cada `sha_enviado` é conferido contra o do seco
-  (`envio_divergente`). Só números e shas vão a `sombra/escores.jsonl`. Item já pontuado é pulado, e
-  `--refazer-falhas` repontua só as falhas de infraestrutura, com o mesmo código.
-- **AC-2.5**: Given uma estimativa que, somada ao gasto da janela (linhas do livro com `lote` começando por
-  `camada-j-sombra-<inicio>`), passa de US$ 0,50, ou que, somada ao gasto do mês UTC (`livro.gasto_do_mes`, todos os
-  corpora), passa de US$ 5, When `sombra rodar`, Then recusa antes da sonda (`teto_da_janela_excedido` ou
-  `envelope_excedido`). Não há override.
-- **AC-2.6**: Given a sonda com `model` ≠ `jev-1.13.0`, ou sem resposta, When `sombra rodar`, Then recusa
-  `modelo_remoto_divergente` ou `sonda_sem_resposta`.
+  - saem a estimativa (a fórmula `jev.estimativa` sobre os itens a pontuar, mais a sonda), o gasto da janela, o gasto
+    do mês e o código da amostra.
+- **AC-2.3**: Given a varredura com resíduo num corpo, When `seco`, Then esse item sai da pontuação com
+  `residuo_excluido`, contado no relatório, e nunca é enviado. O resto segue.
+- **AC-2.4**: Given o seco, When o código da amostra é gerado, Then:
+  - a amostra são 20 itens sorteados com `random.Random(20261010).sample` sobre os ids enviáveis, em ordem
+    (sessão, `turno_idx` numérico), ou todos, se houver menos de 20;
+  - o código é `sha256(json([sha256(seco.jsonl), ids]))[:12]`: o mesmo spool dá o mesmo código, e um seco diferente dá
+    outro;
+  - `ver-amostra` mostra os 20 corpos redigidos, exatamente como sairiam.
+- **AC-2.5**: Given o código revisado, When `sombra rodar --confirmo <codigo>`, Then:
+  - recusa `kit_mudou` se os sha de `seco_meta.json` divergem dos atuais;
+  - recusa `spool_mudou` se algum spool tem `mtime` maior que o registrado;
+  - recusa `fila_montada` se `fila.json` existe;
+  - senão, cada turno é pontuado na porta `C4`, com log auditado e com o `sha_enviado` conferido contra o seco
+    (`envio_divergente`);
+  - só números e shas vão a `escores.jsonl`;
+  - item já pontuado é pulado;
+  - `--refazer-falhas` repontua só `rede`, `timeout`, `http_408`, `http_429` e `http_5xx`;
+  - as outras falhas são definitivas e contadas.
+- **AC-2.6**: Given a estimativa dos itens que ainda faltam, somada ao gasto da janela (linhas do livro com `lote`
+  começando por `camada-j-sombra-<inicio compacto AAAAMMDDTHHMMSSZ>`), acima de US$ 0,50, ou somada ao gasto do mês
+  UTC (`livro.gasto_do_mes`, todos os corpora) acima de US$ 5, When `rodar`, Then recusa antes da sonda
+  (`teto_da_janela_excedido` ou `envelope_excedido`). Não há override.
+- **AC-2.7**: Given a sonda com `model` ≠ `jev-1.13.0`, sem resposta, ou `vazamento_pendente` no kit, When `rodar`,
+  Then recusa com a causa.
 
 ### US-3: Rotular às cegas (Priority: P1)
 
-**Acceptance Criteria**:
-- **AC-3.1**: Given os escores, When `sombra rotular` roda pela primeira vez, Then a fila é montada uma vez e gravada
-  em `fila.json`:
-  - **sinalizados**: os turnos com P ≥ 0,77, comparando o P cru (sem arredondar). Se forem mais de 40, entram 40,
-    sorteados com `random.Random(20261010).sample` sobre os ids ordenados;
-  - **chamarizes**: 20 turnos com P < 0,77, sorteados na mesma sequência do gerador;
-  - **ordem**: os 60 itens são embaralhados com o mesmo gerador;
-  - o id de um item é `<sessao>:<turno_idx>`.
-- **AC-3.2**: Given a fila, When um item aparece, Then são mostrados a âncora e o turno, lidos do spool local, e
-  nada mais: nem P, nem grupo, nem posição no grupo. As respostas aceitas são `s`, `n` e `pular`.
-- **AC-3.3**: Given rótulos já gravados, When `sombra rotular` roda de novo, Then ele retoma do primeiro item sem
-  rótulo. `sombra rotular --corrigir <id>` regrava um rótulo, e vale a última linha por id. `rotulos.jsonl` guarda
-  `{id, rotulo, instante}`, sem texto.
+- **AC-3.1**: Given infra pendente em `escores.jsonl` (falha retomável não repontuada), When `sombra rotular`, Then
+  recusa `escores_incompletos`.
+- **AC-3.2**: Given os escores completos, When `rotular` roda pela primeira vez, Then a fila é montada uma vez e
+  gravada em `fila.json`:
+  - **sinalizados**: P ≥ 0,77, P cru. Até 40, sorteados com `random.Random(20261010)` sobre os ids em ordem
+    (sessão, `turno_idx` numérico);
+  - **chamarizes**: até 20 com P < 0,77, sorteados com o mesmo gerador, na mesma ordem;
+  - se um grupo tem menos itens que o teto, entram todos;
+  - **ordem**: os itens são embaralhados com o mesmo gerador.
+- **AC-3.3**: Given a fila, When um item aparece, Then são mostrados a âncora e o turno do spool local, e nada mais:
+  nem P, nem grupo, nem posição. As respostas são `s`, `n` e `pular`, e `pular` conta como resposta.
+- **AC-3.4**: Given rótulos gravados e nenhum veredito, When `rotular` roda de novo, Then retoma do primeiro item sem
+  resposta. `--corrigir <id>` regrava, e vale a última linha por id. `rotulos.jsonl` guarda `{id, rotulo, instante}`,
+  sem texto.
 
 ### US-4: Decidir pelo critério fixado (Priority: P1)
 
-**Acceptance Criteria**:
-- **AC-4.1**: Given algum item da fila sem rótulo, When `sombra medir`, Then recusa `fila_incompleta`. Há uma medida
-  só, com a fila inteira: nada de parada opcional.
-- **AC-4.2**: Given a fila completa, When `sombra medir`, Then:
-  - `prec_J` = s / (s + n) entre os sinalizados;
-  - `base` = s / (s + n) entre os chamarizes;
-  - o Δ = `prec_J` − `base` ganha IC 95 % por bootstrap de sessões (`estatistica.bootstrap_pareado`, B = 10 000,
-    semente `20261010`, IC percentil);
-  - **avança** se `prec_J` ≥ 0,35 **e** o limite inferior do IC de Δ > 0;
-  - **inconclusivo** se os sinalizados têm s + n < 20, ou os chamarizes têm s + n < 10, ou a fila de sinalizados está
-    vazia;
-  - **não avança** nos outros casos.
-- **AC-4.3**: Given a medida, When o relatório é escrito em `master-harness/docs/avaliacao/camada-j-sombra-resultado.md`,
-  Then ele traz:
-  - o veredito, `prec_J` com IC, `base` com IC e Δ com IC;
-  - quantos itens foram sinalizados, rotulados e pulados, e quantos sinalizados houve no total;
-  - a taxa de disparo (sinalizados ÷ turnos pontuados, sem âncoras) ao lado dos ~3,7 % da avaliação, só para leitura;
-  - as contagens do hook somadas (por prefixo, `curto`, `sessao_invalida`, `falha_spool`, `spool_cheio`);
-  - o número de sessões com spool e o gasto;
-  - nenhum texto de turno.
-- **AC-4.4**: Given qualquer veredito, When ele é gravado, Then nenhuma configuração ou código de produção muda. Os
-  próximos passos (desligar a flag, abrir a spec de oferta) são impressos para o usuário fazer.
+- **AC-4.1**: Given algum item sem resposta, When `sombra medir`, Then recusa `fila_incompleta`.
+- **AC-4.2**: Given a fila completa, When `medir`, Then, **nesta ordem**:
+  1. **inconclusivo**, se a fila de sinalizados está vazia, se os sinalizados têm s + n < 20, ou se os chamarizes têm
+     s + n < 10;
+  2. senão, calcula-se:
+     - `prec_J` = s / (s + n) dos sinalizados;
+     - `base` = s / (s + n) dos chamarizes;
+     - Δ = `prec_J` − `base`, com IC 95 % por bootstrap de sessões (B = 10 000, semente `20261010`, IC percentil).
+       Cada réplica reamostra sessões com reposição e recalcula as duas razões; réplica com 0/0 num grupo vale NaN e
+       é descartada;
+     - se mais de 5 % das réplicas forem NaN, o veredito é **inconclusivo** (`bootstrap_degenerado`);
+  3. **avança**, se `prec_J` ≥ 0,35 **e** o limite inferior do IC de Δ > 0;
+  4. **não avança**, nos outros casos.
+- **AC-4.3**: Given a medida, When o veredito é gravado (`veredito.json` e
+  `master-harness/docs/avaliacao/camada-j-sombra-resultado.md`), Then o relatório traz:
+  - o veredito; `prec_J`, `base` e Δ com IC; a fração de réplicas descartadas;
+  - os itens sinalizados (total e na fila), os chamarizes, os pulados e os excluídos por causa;
+  - a taxa de disparo (sinalizados ÷ turnos pontuados), ao lado dos ~3,7 % da avaliação, só para leitura;
+  - as contagens do hook, as sessões com spool e descartadas, e o gasto;
+  - nenhum texto.
+- **AC-4.4**: Given `veredito.json` existente, When `rotular --corrigir`, `rotular`, `medir`, `rodar` ou `seco`, Then
+  recusa `veredito_gravado`. Há uma medida só.
+- **AC-4.5**: Given qualquer veredito, When ele é gravado, Then nenhuma configuração ou código de produção muda. Os
+  próximos passos (desligar a flag, abrir a spec de oferta, `purgar`) são impressos para o usuário fazer.
 
-### US-5: Limpeza (Priority: P2)
+### US-5: Exclusão, limpeza e retenção (Priority: P2)
 
-**Acceptance Criteria**:
-- **AC-5.1**: Given o veredito gravado, When o usuário roda `sombra purgar`, Then:
-  - o texto é apagado: os `<session_id>.jsonl` e o `seco.jsonl`;
-  - `escores.jsonl`, `rotulos.jsonl`, `fila.json`, as contagens e o relatório ficam;
-  - `janela.json` passa a `estado: "encerrada"`, e o hook nunca mais grava nesta spec.
-- **AC-5.2**: Given nenhum veredito, When `sombra purgar`, Then recusa `sem_veredito`. A saída é
-  `sombra purgar --abandonar`, que encerra a janela sem veredito e o registra.
-- **AC-5.3**: Given `estado: "aberta"` 30 dias depois de `fim`, When `mh saude` roda, Then aparece o aviso
+- **AC-5.1**: Given a janela aberta, When `sombra excluir-sessao <id>` roda num terminal humano, Then o arquivo da
+  sessão vira um marcador `{excluida, instante}`, sem texto, e o hook não grava mais nada nela.
+- **AC-5.2**: Given `veredito.json`, When `sombra purgar` roda num terminal humano, Then, nesta ordem:
+  1. `janela.json` passa a `estado: "encerrada"`;
+  2. os `<session_id>.jsonl` e o `seco.jsonl` são apagados;
+  3. escores, rótulos, fila, contagens, metas e relatório ficam.
+- **AC-5.3**: Given nenhum veredito, When `purgar`, Then recusa `sem_veredito`. A saída é
+  `purgar --abandonar --motivo <texto>`, que faz o mesmo que o AC-5.2 e grava `veredito.json` com
+  `{veredito: "inconclusivo", abandonada: true, motivo}`.
+- **AC-5.4**: Given `estado: "aberta"` 30 dias depois de `fim`, When `mh saude`, Then aparece o aviso
   `spool_com_texto_retido`.
 
 ---
 
 ## Requirements
 
-- **REQ-001**: o hook grava o turno humano e a âncora da própria sessão num spool local, um arquivo por sessão, atrás
-  de `HARNESS_BRANCH_LAYER_J` (padrão desligado) e de uma janela aberta. Sem rede, sem processo novo, sem ler a chave,
-  sem mudar a saída do hook. `consumidor: o lote do REQ-004`.
-- **REQ-002**: flag desligada, ou janela não aberta, deixa o comportamento de hoje intacto: nada é escrito na pasta do
-  spool.
-- **REQ-003**: a lista fixa de prefixos não humanos é aplicada no hook depois de `lstrip()`, com o MIN_LEN de 12 code
-  points depois de `strip()`. Os prefixos:
+- **REQ-001**: o hook grava num spool local a âncora e os turnos humanos das sessões que começam com a janela aberta,
+  atrás de `HARNESS_BRANCH_LAYER_J`. Sem rede, sem processo novo, sem ler a chave, sem mudar a saída do hook e com
+  p95 a mais ≤ 20 ms. `consumidor: o lote do REQ-004`.
+- **REQ-002**: com a flag desligada, ou a janela não aberta, nada muda e nada é escrito.
+- **REQ-003**: a lista fixa de prefixos não humanos, no código do `branch_j_spool.py` e comparada por `startswith`
+  literal depois de `lstrip()`:
   - `<task-notification>`
   - `<command-`
   - `<cross-session-message`
@@ -226,80 +255,88 @@ Os contadores ficam em `sombra/<session_id>.contagens.json`, um arquivo por sess
   - `[Request interrupted`
   - `Continue from where you left off.`
 
-  `consumidor: REQ-001`.
-- **REQ-004**: os verbos `mh avaliar camada-j sombra {abrir, seco, ver-amostra, rodar, rotular, medir, purgar}`, no
-  master-harness e fora de `mh/s1/`. `consumidor: o usuário, que roda abrir no início e o resto depois do fim`.
+  O MIN_LEN é 12 code points depois de `strip()`. O sha da lista e do MIN_LEN é conferido contra o do `janela.json`
+  (AC-1.1). `consumidor: REQ-001`.
+- **REQ-004**: os verbos `mh avaliar camada-j sombra {abrir, status, excluir-sessao, seco, ver-amostra, rodar,
+  rotular, medir, purgar}`, no master-harness e fora de `mh/s1/`. `consumidor: o usuário`.
 - **REQ-005**: τ = 0,77 exato, comparado com o P cru. É o P do 25º par em ordem decrescente na avaliação offline
-  (`escores.jsonl` de `3ef033c`; 26 pares têm P ≥ 0,77).
-- **REQ-006**: teto de US$ 0,50 por janela, sem override, e envelope de US$ 5 por mês UTC, com todos os corpora do
-  livro. O gasto vai ao livro com `corpus: "camada-j-sombra"` e `lote: "camada-j-sombra-<inicio>-<instante>"`.
-- **REQ-007**: antes de cada `rodar`, a revisão de amostra pelo usuário (código) e a varredura de resíduo com zero
-  achados. A varredura é código novo no `camada_j_sombra.py`, com teste de duas metades. Resíduo é qualquer
-  ocorrência, no estado redigido, destes padrões:
+  (`3ef033c`).
+- **REQ-006**: teto de US$ 0,50 por janela, sem override, e envelope de US$ 5 por mês UTC, somando todos os corpora.
+  O gasto vai ao livro com `corpus: "camada-j-sombra"` e `lote: "camada-j-sombra-<inicio>-<instante do rodar>"`, os
+  dois no formato compacto `AAAAMMDDTHHMMSSZ`.
+- **REQ-007**: a varredura de resíduo é código novo, com teste de duas metades. Resíduo é qualquer ocorrência destes
+  padrões no estado redigido:
   - chave Anthropic, OpenAI, GitHub, AWS, Google ou Slack;
   - JWT;
   - bloco PEM de chave privada;
   - `senha|password|passwd|pwd` seguido de `:` ou `=` e de um valor;
   - `Bearer <token>`;
-  - credencial em URL (`usuario:senha@`);
+  - credencial em URL;
   - e-mail.
-- **REQ-008**: no `abrir`, ficam congelados, com o sha da spec gravado em `janela.json`: τ, semente, tamanhos da fila
-  (40 + 20), critério, janela, prefixos e MIN_LEN, molde `camada_j_par.json` e teto. A redação e a lista de bloqueio
-  são as do kit no dia do lote; o sha da lista vai a cada escore.
-- **REQ-009**: o veredito é consumido pelo usuário. Com `avança`, abre-se a spec de **oferta** (o J decide ramo no
-  hook), e é ela que leva a decisão do gateway (L-46). Com `não avança` ou `inconclusivo`, o usuário desliga a flag, e
-  a C4 fica registrada com o resultado no `jev-integracao.md`. `consumidor: decisão do usuário sobre a spec de oferta`.
+
+  Item com resíduo é excluído, nunca enviado (AC-2.3).
+- **REQ-008**: no `abrir` ficam congelados: τ, semente, tamanhos da fila (40 + 20), critério, janela, filtro (pelo
+  sha), molde `camada_j_par.json`, teto e `spec_commit`. A redação e a lista de bloqueio são as do kit no dia do seco,
+  e o `rodar` recusa se mudarem entre o seco e ele (AC-2.5).
+- **REQ-009**: o veredito é consumido pelo usuário. Com `avança`, abre-se a spec de **oferta**, que leva a decisão do
+  gateway. Com `não avança` ou `inconclusivo`, o usuário desliga a flag, e a C4 fica registrada no
+  `jev-integracao.md`. `consumidor: decisão do usuário`.
+- **REQ-010**: `abrir`, `excluir-sessao`, `ver-amostra`, `rodar`, `rotular` e `purgar` só rodam num terminal humano:
+  stdin é TTY e `CLAUDECODE` não está no ambiente. Em qualquer outro caso recusam `terminal_nao_humano`. É o que
+  impede um agente de revisar, confirmar ou rotular no lugar do usuário, e impede que o texto do spool caia num
+  transcript.
 
 ---
 
 ## Gateway (L-46)
 
-O modo sombra **não** é o 2º consumidor de produção do Jev, e por isso não dispara o gateway. Quem chama o Jev é um
-lote Python no venv do `mh`, da mesma classe da Onda 6. O hook não chama o Jev, não abre conexão e não lê a chave.
-Decisão do usuário de 2026-10-10 (ASSUMPTION-001). O gatilho vai para a spec de oferta, que é quando o hook precisaria
-do julgamento em tempo de prompt.
+**Decisão do usuário, 2026-10-10, no grill rodada 2.** O modo sombra é medida, não consumo de produção: nenhuma
+decisão usa o J durante a janela, e quem chama o Jev é um lote Python do `mh`, da mesma classe da Onda 6. Por isso ele
+não dispara a decisão B2. O gatilho fica na spec de oferta, quando o J passaria a decidir no hook. Essa é uma
+interpretação explícita da L-46 e vai registrada no `jev-integracao.md`, junto da C4.
 
 ---
 
 ## Boundaries
 
 ### ALWAYS
-- Redação, lista de bloqueio e guarda da chave pela `PonteJev` antes de qualquer envio; varredura de resíduo e revisão
-  de amostra pelo usuário antes de cada `rodar`.
-- Spool, seco, fila e rótulos na pasta `sombra/` da casa do `mh`, com ACL só do usuário (aplicada pelo `abrir`) e fora
-  do git.
+- Redação, lista de bloqueio e guarda da chave pela `PonteJev` antes de qualquer envio, mais a varredura de resíduo.
+- Revisão de amostra e rótulo só pelo usuário, em terminal humano (REQ-010).
+- Pasta `sombra/` na casa padrão do `mh`, com ACL herdável só do usuário e fora do git.
 - O relatório diz quantos itens ficaram de fora e por quê.
 
 ### NEVER
 - Oferecer ramo, injetar contexto ou mostrar qualquer coisa ao usuário a partir do J durante a janela.
-- Rede, processo novo ou leitura da chave dentro do hook.
-- Ler a pasta `sombra/` com qualquer coisa além do hook (escrita), dos verbos `sombra` (leitura) e do `mh saude`
-  (só `janela.json`). Ela não entra em vault, grafo, `signals.json`, `emissions.jsonl`, semente de ramo nem backup do
-  harness.
+- Rede, processo novo, leitura da chave ou criação de diretório dentro do hook. O hook só escreve se a pasta e o
+  `janela.json` já existirem.
+- Ler a pasta `sombra/` com qualquer coisa além do hook (escrita), dos verbos `sombra` e do `mh saude` (só o
+  `janela.json`). Ela não entra em vault, grafo, `signals.json`, `emissions.jsonl`, semente de ramo, transcript de
+  sessão nem backup do harness.
 - Editar `mh/s1/` ou `mh/replay/`.
-- Mudar qualquer item do REQ-008 depois do `abrir`; abrir uma segunda janela nesta spec; medir com a fila incompleta.
+- Mudar o que o REQ-008 congela; abrir uma segunda janela nesta spec; medir mais de uma vez.
 - Passar do teto da janela ou do envelope.
 - Mudar configuração ou código de produção a partir do veredito.
 
 ### ASK
-- `sombra abrir`, que começa a janela, e ligar a flag.
-- `sombra rodar`, com o código da amostra.
-- `sombra purgar`, que é irreversível.
+- Deploy do harness4claude com o spool (D2): muda o hook de todas as sessões.
+- `abrir` e ligar a flag.
+- `rodar`, com o código da amostra.
+- `excluir-sessao` e `purgar`.
 
 ---
 
 ## Nível de garantia
 
 **A entrega pode ser afirmada como:** "a precisão do J nos turnos do meio de sessão que ele sinalizaria, contra uma
-linha de base de turnos não sinalizados, as duas por rótulo cego do usuário, numa janela de 14 dias, com IC por
-sessão".
+linha de base de turnos não sinalizados, as duas por rótulo cego do usuário, em sessões abertas numa janela de 14
+dias, com IC por sessão".
 
 **Não está incluído:**
 - o recall: os chamarizes dão só um indício;
-- a latência de produção;
+- a latência de produção do J;
 - qualquer efeito no usuário;
 - generalização para além deste usuário e desta janela;
-- sessões abertas antes da flag.
+- sessões abertas antes do `abrir`, retomadas ou compactadas.
 
 ---
 
@@ -307,66 +344,85 @@ sessão".
 
 - **ASSUMPTION-001** (usuário, 2026-10-10): spool com lote, fora do hook. Justifica: REQ-001, REQ-004, Gateway.
 - **ASSUMPTION-002** (usuário, 2026-10-10): todos os projetos podem ir ao Jev, incluindo o `slb-mestrado-projeto`
-  com conteúdo interno da SLB (L-43). Justifica: REQ-001, REQ-004.
-- **ASSUMPTION-003** (usuário, 2026-10-10): janela de 14 dias, τ = 0,77, teto de rótulo de 40 sinalizados.
-  Justifica: REQ-005, REQ-008, AC-0.1, AC-3.1.
-- **ASSUMPTION-004** (usuário, 2026-10-10): teto de US$ 0,50 por janela. Justifica: REQ-006, AC-2.5.
-- **ASSUMPTION-005** (usuário, 2026-10-10, confirmada no grill): "40 sinais" limita a fila de rótulo, não a coleta.
-  A coleta dura os 14 dias, e o lote roda uma vez, depois do fim. Justifica: AC-2.1, AC-3.1.
-- **ASSUMPTION-006** (usuário, 2026-10-10, no grill): rótulo cego com 20 chamarizes, e o critério compara os
-  sinalizados com essa linha de base humana, não com o 0,08 da supervisão distante. Justifica: AC-3.1, AC-3.2,
-  AC-4.2.
-- **ASSUMPTION-007** (inferência): a âncora do spool é o primeiro turno humano gravado da sessão, inteiro, no próprio
-  arquivo da sessão. É a mesma definição da avaliação, e não depende de `branch-anchor.json` (cortado em 2 000 e
-  compartilhado no `state_dir`). Justifica: AC-1.2, AC-2.2, REQ-005.
-- **ASSUMPTION-008** (inferência): os prefixos do REQ-003 cobrem os turnos não humanos vistos na amostra revisada da
-  avaliação. Prefixo novo grava como humano e aparece para o usuário na rotulagem; ali ele pode responder `pular`.
-  Justifica: REQ-003.
-- **ASSUMPTION-009** (inferência): ~165 prompts por dia, um teto que inclui texto injetado. Projeta ~US$ 0,16 em 14
-  dias e uns 80 sinalizados, a ~3,7 %. Se a taxa no meio de sessão for muito menor, o veredito pode sair
-  `inconclusivo`. Justifica: REQ-006, AC-4.2.
-- **ASSUMPTION-010** (inferência): a pasta `sombra/` fica na casa do `mh`, e não em `~/.claude/harness`, porque a
-  casa do `mh` não é lida pelos espelhamentos do harness. O hook resolve o caminho pela mesma regra de
-  `redacao.pasta_dos_segredos` (`MASTER_HARNESS_HOME`, senão `~/.master-harness`). Justifica: NEVER (leitores),
-  AC-0.1.
+  (L-43). Justifica: REQ-001, REQ-004.
+- **ASSUMPTION-003** (usuário, 2026-10-10): janela de 14 dias, τ = 0,77, teto de 40 sinalizados. Justifica: REQ-005,
+  REQ-008, AC-0.1, AC-3.2.
+- **ASSUMPTION-004** (usuário, 2026-10-10): teto de US$ 0,50 por janela. Justifica: REQ-006, AC-2.6.
+- **ASSUMPTION-005** (usuário, 2026-10-10, grill 1): "40 sinais" limita a fila de rótulo, não a coleta. Justifica:
+  AC-2.1, AC-3.2.
+- **ASSUMPTION-006** (usuário, 2026-10-10, grill 1): rótulo cego com 20 chamarizes; critério contra essa linha de
+  base. Justifica: AC-3.2, AC-3.3, AC-4.2.
+- **ASSUMPTION-007** (usuário, 2026-10-10, grill 2): o modo sombra não dispara o gateway (L-46). Justifica: Gateway,
+  REQ-009.
+- **ASSUMPTION-008** (inferência): a âncora do spool é o mesmo prompt em que o sensor fixa a dele, só que inteiro, e
+  só quando é humano. É a definição da avaliação, e um turno de meio de sessão nunca vira âncora. Justifica: AC-1.2,
+  AC-1.3.
+- **ASSUMPTION-009** (inferência): os prefixos do REQ-003 cobrem os turnos não humanos vistos na avaliação. Prefixo
+  novo grava como humano e aparece na rotulagem, onde se responde `pular`. Justifica: REQ-003.
+- **ASSUMPTION-010** (inferência): ~165 prompts por dia, um teto que inclui texto injetado. Projeta ~US$ 0,16 e uns 80
+  sinalizados. O pior caso, com todo turno truncado em 24 000 code points, cabe no teto até ~1 800 turnos. Volume ou
+  taxa muito diferentes levam a `teto_da_janela_excedido` ou a `inconclusivo`, nunca a um veredito errado. Justifica:
+  REQ-006, AC-4.2.
+- **ASSUMPTION-011** (inferência): guardar o prompt cru por até 14 dias, mais o tempo até o `purgar`, não cria classe
+  nova de exposição. O mesmo texto já está nos transcripts de `~/.claude/projects`, no mesmo perfil e sob a mesma
+  política de backup da máquina. A pasta fica fora dos leitores do harness (NEVER). Justifica: AC-1.2, NEVER.
+- **ASSUMPTION-012** (inferência): o `janela.json` editado à mão não é detectado. A proteção é contra acidente, não
+  contra o próprio usuário. Justifica: REQ-008.
 
 ---
 
-## Grill — rodada 1
+## Grill
 
-Bloqueantes e destino:
+### Rodada 1 (v1 → v2): 8 bloqueantes
 
 | # | Pergunta, em resumo | Destino |
 |---|---|---|
-| 1 | onde começa a janela | US-0: `abrir` grava `janela.json`; o fim é `inicio` + 14 × 24 h UTC |
-| 2 | o spool pode vazar por outro caminho do ecossistema | pasta na casa do `mh` (ASSUMPTION-010) e NEVER de leitores |
-| 3 | `purgar` reabre a janela em silêncio | `janela.json` passa a `encerrada`; NEVER de segunda janela; `purgar` é ASK e exige veredito |
-| 4–5 | a âncora é da sessão e tem a forma da avaliação | âncora no próprio arquivo da sessão, inteira (ASSUMPTION-007) |
-| 6 | ordem do deploy do plugin | D2; o `abrir` recusa `plugin_sem_spool` |
-| 7 | ACL sem processo no hook | a ACL é aplicada pelo `abrir`, no `mh`; o hook herda |
-| 8 | a varredura de resíduo não existe | é código novo, com os padrões definidos no REQ-007 |
+| 1 | onde começa a janela | `abrir` grava `janela.json`; o fim é início + 14 × 24 h UTC |
+| 2 | vazamento por outro caminho | pasta na casa do `mh`; NEVER de leitores |
+| 3 | `purgar` reabre a janela | `encerrada`; NEVER de segunda janela |
+| 4–5 | âncora da sessão e na forma da avaliação | ASSUMPTION-008 |
+| 6 | ordem do deploy | D2, conferido no `abrir` |
+| 7 | ACL sem processo no hook | ACL herdável, aplicada no `abrir` |
+| 8 | a varredura não existia | REQ-007, código novo |
 
-As altas e médias foram resolvidas nos ACs:
-- contadores com um arquivo por sessão;
-- `session_id` validado;
-- MIN_LEN, `lstrip` e τ exato;
-- id `<sessao>:<turno_idx>`;
-- sorteio e ordem da fila;
-- medida única com a fila completa;
-- teto sem override;
-- gasto por janela pelo `lote`;
-- retomada do `rodar`;
-- primeiro turno = âncora, nunca pontuado;
-- flag no `settings.json`;
-- base do master-harness depois do merge;
-- IC por sessão no lugar de Wilson;
-- veredito sem efeito em produção;
-- prazo de retenção com aviso no `mh saude`.
+### Rodada 2 (v2 → v3): 9 bloqueantes
+
+| # | Pergunta, em resumo | Destino |
+|---|---|---|
+| 1 | onde ficam os prefixos | no código; o sha é conferido contra o `janela.json` (AC-1.1) |
+| 2 | `pular` é resposta? | sim (AC-3.3) |
+| 3 | precedência dos vereditos | ordem fixa no AC-4.2 |
+| 4 | geração do código e `ver-amostra` | AC-2.4 |
+| 5 | agente rotulando ou confirmando | REQ-010: terminal humano, sem `CLAUDECODE` |
+| 6 | corrigir e medir de novo depois do veredito | AC-4.4: `veredito_gravado` |
+| 7 | hook e `mh` em casas diferentes | AC-0.2: só a casa padrão |
+| 8 | um resíduo travava a janela | AC-2.3: o item é excluído |
+| 9 | a flag nunca chega ao hook | D3 conferida no `abrir`; teste de vida no dia 0 com `status` (AC-0.5) |
+
+Altas e médias da rodada 2, resolvidas no texto:
+- comparação de prefixo com caixa literal;
+- contadores sem sessão válida;
+- ordem numérica dos ids;
+- falhas de infraestrutura nomeadas;
+- estimativa do restante;
+- a dependência do `HARNESS_BRANCH`;
+- sessões anteriores, retomadas e compactadas fora (AC-1.3);
+- `--abandonar` apaga o texto e registra;
+- exclusão de sessão durante a janela;
+- NaN no bootstrap;
+- `rotular` bloqueado com infra pendente;
+- fila menor que o teto;
+- kit ou spool que mudam entre seco e rodar;
+- `mh saude` nos arquivos impactados;
+- chave verificada no `abrir`;
+- teto de latência numérico.
 
 Ficaram como limite declarado:
-- sessões não interativas que passem no filtro são gravadas, aparecem na rotulagem e podem ser puladas;
-- a retirada do `jev-1.13.0` durante a janela;
-- a política de dados da empresa, que é decisão do usuário (ASSUMPTION-002).
+- edição manual do `janela.json` (ASSUMPTION-012);
+- corrida de dois lotes de corpora diferentes sobre o envelope, já que um lote roda por vez, por regra de
+  orquestração;
+- preço fixo do kit (L-44 é projeção);
+- deriva de calibração do J no meio de sessão: é o que a janela mede, e a taxa de disparo vai ao relatório.
 
 ---
 
