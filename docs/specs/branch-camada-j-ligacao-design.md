@@ -379,3 +379,32 @@ O merge de cada fase é do orquestrador. Esta sessão commita no ramo e avisa.
   - nenhuma fase é "faz tudo";
   - não há migração de schema, só arquivos novos com `schema: 1`.
 - **Validado em:** 2026-10-10.
+
+## Emenda v4 (2026-10-10): âncora pelo SessionStart
+
+Spec v4: AC-1.0, AC-1.2, AC-1.3, AC-5.1, AC-5.2, AC-5.4, REQ-007, ASSUMPTION-013 e ASSUMPTION-014. Motivo: duas rodadas
+da verify-multimodel acharam, cada uma, um caminho novo de perda ou contaminação na decisão "qual é o primeiro
+prompt da sessão" enquanto ela dependia da âncora do sensor e do transcript. É defeito de desenho, não de hipótese.
+
+- **Hook novo** `hooks/branch_j_inicio.py`, registrado no `SessionStart` por `py.sh` [traces: AC-1.0]. Lê o payload
+  e chama `branch_j_spool.iniciar_sessao(payload)`, que cria `sombra/<sid>.nova`, vazio, se a flag está ligada, a
+  janela está aberta, `source ∈ {startup, clear}` e o `sid` é válido. Nunca levanta e não escreve nada em stdout.
+- **`branch_j_spool.registrar(payload)`** perde o parâmetro `ancora` [traces: AC-1.2, AC-1.3]:
+  - com `<sid>.jsonl`: `O_APPEND` sem `O_CREAT`;
+  - sem ele e com `<sid>.nova`: cria com `O_CREAT|O_EXCL` a linha `ancora` e apaga o `.nova`;
+  - sem os dois: não faz nada e não conta nada.
+
+  As contagens só existem para sessões com marcador ou spool. `_sessao_nova`, que lia o transcript, sai.
+- **`branch_sensor.main`** chama `_spool_j(payload)` uma vez por `UserPromptSubmit`, antes do bloco da âncora, sem
+  saber nada de âncora. O import continua protegido.
+- **mh**:
+  - `excluir_sessao`: renomeia e apaga, depois grava `<sid>.excluida`;
+  - `purgar`: apaga também os `.nova` e segue quando um arquivo não apaga (sai 3);
+  - `checar_sombra`: com a janela `encerrada`, acusa qualquer `.jsonl` de sessão ou `seco.jsonl` que restou;
+  - `varredura`: ganha `cpf`, `cartao` (Luhn) e `telefone`;
+  - `medir`: grava o relatório **antes** do `veredito.json` (o selo vem por último), com a saída padrão na raiz do
+    repositório e não no cwd;
+  - `_itens_do_spool`: tolera chave ausente, texto que não é string e surrogate solto (vira `?`), e usa o nome do
+    arquivo como sessão;
+  - `abrir`: recusa `casa_divergente_no_hook` quando o `env` do settings define `MASTER_HARNESS_HOME` diferente da
+    casa padrão.
