@@ -129,7 +129,7 @@ def test_stub_reproduz_o_alias_da_store(tmp_path):
     assert BASH is not None
     res = subprocess.run(
         [BASH, "-c", "python -c 'print(1)'"],
-        capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT,
         env=_env(tmp_path, marcador=True),
     )
     assert res.returncode != 0
