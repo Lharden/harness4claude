@@ -156,8 +156,14 @@ def test_main_gates_layer_b_on_layer_a_hit(tmp_path, monkeypatch, capsys):
     assert calls == []  # embed_query genuinely not invoked (not just its exception swallowed)
 
 
-def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch):
-    """Camada A vazia => camada B roda.
+def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch, capsys):
+    """Camada A vazia => camada B roda E a escolha dela chega ao contexto do modelo.
+
+    Consultar a camada B nao basta: a promessa e a sugestao injetada. Por isso a
+    sonda le o que `main()` entrega como `additionalContext` e exige a skill que
+    a camada B escolheu (vetor alinhado ao prompt), sem as skills ortogonais.
+    Ate 2026-10-09 o cenario tinha uma skill so, que a camada B nunca escolhia:
+    a sonda passava com o roteamento sem injetar nada.
 
     `ollama_reachable` e mockado de proposito. Isto e um teste da LOGICA de
     roteamento, nao da disponibilidade do Ollama: sem o mock ele falhava toda
@@ -169,9 +175,14 @@ def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch):
     de ser testada nas rodadas normais, que e justamente o que este teste cobre.
     """
     monkeypatch.setattr(sr, "ollama_reachable", lambda *a, **k: True)
-    idx = {"skills": [_skill("p:foo")], "dim": 2}
-    idx["skills"][0]["vec_row"] = 0
-    monkeypatch.setattr(sr, "load_index", lambda *a, **k: (idx, [(1.0, 0.0)]))
+    # Tres skills: a escolha da camada B e relativa as demais (uma skill so, ou
+    # duas, nunca se destaca do resto e nada seria sugerido). So `p:foo` aponta
+    # na direcao do prompt; `p:bar` e `p:baz` sao ortogonais a ele.
+    idx = {"skills": [_skill("p:foo"), _skill("p:bar"), _skill("p:baz")], "dim": 2}
+    for linha, skill in enumerate(idx["skills"]):
+        skill["vec_row"] = linha
+    monkeypatch.setattr(sr, "load_index",
+                        lambda *a, **k: (idx, [(1.0, 0.0), (0.0, 1.0), (0.0, 1.0)]))
     called = {"embed": 0}
     def _fake_embed(prompt):
         called["embed"] += 1
@@ -181,8 +192,16 @@ def test_main_runs_layer_b_when_layer_a_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(sr, "passes_guards", lambda *a, **k: True)
     monkeypatch.setattr("sys.stdin",
                         io.StringIO(json.dumps({"session_id": "h", "prompt": "algo totalmente novo aqui"})))
-    sr.main()
+    assert sr.main() == 0
     assert called["embed"] == 1
+    saida = capsys.readouterr().out
+    assert saida.strip(), "roteamento nao injetou sugestao nenhuma no contexto do modelo"
+    hso = json.loads(saida)["hookSpecificOutput"]
+    assert hso["hookEventName"] == "UserPromptSubmit"
+    contexto = hso["additionalContext"]
+    assert "p:foo" in contexto  # a skill que a camada B escolheu
+    for ortogonal in ("p:bar", "p:baz"):  # a camada B nao as escolhe
+        assert ortogonal not in contexto
 
 
 def _harness_paths():
