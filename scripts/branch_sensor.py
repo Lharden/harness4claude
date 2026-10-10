@@ -37,8 +37,13 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import branch_config
-import branch_j_spool
 import branch_state
+
+try:
+    # Camada J (modo sombra). Um spool que nao importa nao pode derrubar o sensor.
+    import branch_j_spool
+except Exception:
+    branch_j_spool = None
 
 # ---------------------------------------------------------------------------
 # Camada B: reuso do router, nao reimplementacao
@@ -677,6 +682,8 @@ def cli_may_offer(argv: list[str]) -> int:
 def _spool_j(payload: dict, *, ancora: bool) -> None:
     """Spool da camada J (modo sombra). `registrar` ja nao levanta; este try e a
     segunda trava do contrato "o sensor nunca quebra o prompt"."""
+    if branch_j_spool is None:
+        return
     try:
         branch_j_spool.registrar(payload, ancora=ancora)
     except Exception:

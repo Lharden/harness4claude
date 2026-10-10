@@ -112,8 +112,50 @@ def _projeto(cwd: object) -> str:
         return "?"
 
 
+def _texto_do_usuario(evento: dict) -> str | None:
+    """O texto de uma entrada `user` do transcript que é prompt (string, ou lista com itens `text`), ou None."""
+    msg = evento.get("message") if isinstance(evento.get("message"), dict) else {}
+    c = msg.get("content")
+    if isinstance(c, str):
+        return None if evento.get("isMeta") else c
+    if isinstance(c, list):
+        textos = [x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text"]
+        if textos and not any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
+            return "\n".join(textos)
+    return None
+
+
+def _sessao_nova(payload: dict) -> bool:
+    """O prompt é o primeiro da sessão? Sem transcript, sim; com ele, se nenhum prompt anterior difere deste.
+
+    Só roda quando o sensor fixa a âncora e o spool da sessão não existe (uma vez por sessão, ou numa
+    reancoragem de sessão que começou antes da janela): o custo de ler o transcript não cai no turno comum."""
+    tp = payload.get("transcript_path")
+    if not isinstance(tp, str) or not tp:
+        return True
+    atual = str(payload.get("prompt") or "").strip()
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as fh:
+            for linha in fh:
+                if '"user"' not in linha:
+                    continue
+                try:
+                    ev = json.loads(linha)
+                except ValueError:
+                    continue
+                if not isinstance(ev, dict) or ev.get("type") != "user":
+                    continue
+                texto = _texto_do_usuario(ev)
+                if texto is not None and texto.strip() and texto.strip() != atual:
+                    return False
+    except FileNotFoundError:
+        return True
+    return True
+
+
 def _acrescentar(arq: Path, linha: dict) -> None:
-    dados = (json.dumps(linha, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    # ASCII com escapes: um surrogate solto no prompt não derruba a escrita, e o JSON continua lendo igual
+    dados = (json.dumps(linha, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
     fd = os.open(arq, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
     try:
         os.write(fd, dados)
@@ -153,15 +195,21 @@ def _registrar(payload: object, *, ancora: bool, agora: datetime) -> None:
     if _tamanho(p) >= LIMITE_BYTES:
         _contar(p, sid, "spool_cheio")
         return
-    if ancora:
-        if arq.exists():
+    try:
+        atual = arq.read_bytes()
+    except FileNotFoundError:
+        atual = None
+    if atual is None:
+        # Arquivo nasce só no primeiro prompt da sessão. Uma reancoragem do sensor (duas sessões no mesmo cwd
+        # se alternando) de sessão que começou antes da janela não vira âncora.
+        if not ancora:
+            return
+        if not _sessao_nova(payload):
+            _contar(p, sid, "sessao_preexistente")
             return
         idx, tipo = 0, "ancora"
     else:
-        try:
-            atual = arq.read_bytes()
-        except FileNotFoundError:
-            return
+        # Arquivo existente: é turno, mesmo que o sensor tenha re-ancorado (ele não sabe do spool).
         if atual.startswith(b'{"excluida"'):
             return
         idx, tipo = atual.count(b"\n"), "turno"

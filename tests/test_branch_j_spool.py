@@ -150,7 +150,9 @@ def test_ancora_nao_recriada_se_o_arquivo_ja_existe(spool):
     abrir(spool)
     spool.registrar(payload(HUMANO), ancora=True)
     spool.registrar(payload("outra abertura qualquer de sessao"), ancora=True)
-    assert len(linhas(spool)) == 1
+    ls = linhas(spool)
+    assert ls[0]["tipo"] == "ancora" and ls[0]["texto"] == HUMANO          # a âncora não muda
+    assert [x["tipo"] for x in ls] == ["ancora", "turno"]                  # e o prompt não some
 
 
 def test_sessao_excluida_nao_recebe_mais_linhas(spool):
@@ -359,5 +361,96 @@ def test_main_nao_levanta_se_o_spool_explode(sensor, spool, monkeypatch, capsys,
     abrir(spool)
     monkeypatch.setattr(sensor, "embed", lambda _t: None)
     monkeypatch.setattr(sensor.branch_j_spool, "registrar", lambda *a, **k: 1 / 0)
+    rc, _ = _main(sensor, monkeypatch, capsys, payload(HUMANO, cwd=str(tmp_path)))
+    assert rc == 0
+
+
+# --- gap-closure da verify-multimodel (2026-10-10) ------------------------------------------------------------------
+
+def _transcript(tmp_path, nome, prompts):
+    """Transcript com `prompts` humanos anteriores (formato do Claude Code: content em lista de itens `text`)."""
+    arq = tmp_path / f"{nome}.jsonl"
+    linhas = [json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": p}]}}) for p in prompts]
+    linhas.append(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}}))
+    arq.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    return str(arq)
+
+
+def test_ancora_com_arquivo_existente_vira_turno(spool):
+    """Sessões no mesmo cwd se alternam e o sensor re-ancora: o turno não pode sumir sem contagem."""
+    abrir(spool)
+    spool.registrar(payload(HUMANO), ancora=True)
+    spool.registrar(payload("segundo turno depois da reancoragem"), ancora=True)
+    assert [(x["tipo"], x["turno_idx"]) for x in linhas(spool)] == [("ancora", 0), ("turno", 1)]
+
+
+def test_reancoragem_de_sessao_antiga_nao_cria_ancora(spool, tmp_path):
+    abrir(spool)
+    p = payload("um turno do meio de uma sessao antiga")
+    p["transcript_path"] = _transcript(tmp_path, "antiga", ["primeiro prompt de ontem", "segundo prompt de ontem"])
+    spool.registrar(p, ancora=True)
+    assert linhas(spool) is None and contagens(spool).get("sessao_preexistente") == 1
+
+
+def test_primeiro_prompt_com_transcript_so_dele_cria_ancora(spool, tmp_path):
+    abrir(spool)
+    p = payload(HUMANO)
+    p["transcript_path"] = _transcript(tmp_path, "nova", [HUMANO])
+    spool.registrar(p, ancora=True)
+    assert linhas(spool)[0]["tipo"] == "ancora"
+
+
+def test_main_duas_sessoes_no_mesmo_cwd_nao_perdem_turnos(sensor, spool, monkeypatch, capsys, tmp_path):
+    abrir(spool)
+    monkeypatch.setattr(sensor, "embed", lambda _t: None)
+    a, b = "sessao-aaaa-aaaa", "sessao-bbbb-bbbb"
+    cwd = str(tmp_path / "mesmo")
+    (tmp_path / "mesmo").mkdir()
+    pa = payload("objetivo da sessao A agora", sid=a, cwd=cwd)
+    pa["transcript_path"] = _transcript(tmp_path, "a1", [])
+    _main(sensor, monkeypatch, capsys, pa)
+    pb = payload("objetivo da sessao B agora", sid=b, cwd=cwd)
+    pb["transcript_path"] = _transcript(tmp_path, "b1", [])
+    _main(sensor, monkeypatch, capsys, pb)
+    pa2 = payload("segundo turno da sessao A", sid=a, cwd=cwd)
+    pa2["transcript_path"] = _transcript(tmp_path, "a2", ["objetivo da sessao A agora"])
+    _main(sensor, monkeypatch, capsys, pa2)
+    assert [x["tipo"] for x in linhas(spool, a)] == ["ancora", "turno"]
+    assert [x["tipo"] for x in linhas(spool, b)] == ["ancora"]
+
+
+def test_surrogate_solto_e_gravado(spool):
+    abrir(spool)
+    spool.registrar(payload("texto com surrogate \ud800 solto no meio"), ancora=True)
+    assert linhas(spool)[0]["texto"] == "texto com surrogate \ud800 solto no meio"
+
+
+def test_p95_com_muitas_sessoes_na_pasta(spool):
+    p = abrir(spool)
+    for i in range(300):
+        (p / f"sessao-velha-{i:06d}.jsonl").write_bytes(b"x" * 2000)
+    spool.registrar(payload(HUMANO), ancora=True)
+    tempos = []
+    for i in range(300):
+        t0 = time.perf_counter()
+        spool.registrar(payload(f"turno numero {i} da medida"), ancora=False)
+        tempos.append(time.perf_counter() - t0)
+    tempos.sort()
+    assert tempos[284] <= 0.020, f"p95 = {tempos[284] * 1000:.1f} ms"
+
+
+def test_import_quebrado_do_spool_nao_quebra_o_sensor(spool, monkeypatch, capsys, tmp_path):
+    real = builtins.__import__
+
+    def importar(nome, *a, **k):
+        if nome == "branch_j_spool":
+            raise ImportError("spool quebrado")
+        return real(nome, *a, **k)
+
+    sys.modules.pop("branch_j_spool", None)
+    monkeypatch.setattr(builtins, "__import__", importar)
+    sensor = _carregar("branch_sensor")
+    monkeypatch.setattr(builtins, "__import__", real)
+    monkeypatch.setattr(sensor, "embed", lambda _t: None)
     rc, _ = _main(sensor, monkeypatch, capsys, payload(HUMANO, cwd=str(tmp_path)))
     assert rc == 0
