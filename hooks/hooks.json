@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/science_intent.py\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" science_intent.py",
             "timeout": 10,
             "statusMessage": "Science evidence routing..."
           }
@@ -104,7 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-transactional.py\" --event PostToolUse",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-transactional.py --event PostToolUse",
             "timeout": 15,
             "statusMessage": "Registrando evidência transacional..."
           }
@@ -117,7 +117,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-transactional.py\" --event PostToolUseFailure",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-transactional.py --event PostToolUseFailure",
             "timeout": 15,
             "statusMessage": "Revogando evidência transacional inválida..."
           }
@@ -141,7 +141,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event PostCompact",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-lifecycle.py --event PostCompact",
             "timeout": 10,
             "statusMessage": "Registrando evento de pós-compactação..."
           }
@@ -153,7 +153,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event SubagentStart",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-lifecycle.py --event SubagentStart",
             "timeout": 10
           }
         ]
@@ -164,7 +164,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event SubagentStop",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-lifecycle.py --event SubagentStop",
             "timeout": 10
           }
         ]
@@ -213,7 +213,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-transactional.py\" --event Stop",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-transactional.py --event Stop",
             "timeout": 15,
             "statusMessage": "Validando evidência de conclusão..."
           }
@@ -225,7 +225,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-lifecycle.py\" --event SessionEnd",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" harness-lifecycle.py --event SessionEnd",
             "timeout": 10,
             "statusMessage": "Fechando telemetria do Harness..."
           }
