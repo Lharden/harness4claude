@@ -78,12 +78,13 @@ def arquivos_alterados(ref: str | None, cwd: Path) -> tuple[list[str], list[str]
     avisos: list[str] = []
     alvo = ["git", "diff", "--name-only"] + ([ref] if ref else ["HEAD"])
     try:
-        saida = subprocess.run(alvo, cwd=cwd, capture_output=True, text=True, timeout=30)
+        saida = subprocess.run(alvo, cwd=cwd, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
         if saida.returncode != 0:
             return [], [f"git diff falhou: {saida.stderr.strip()[:120]}"]
         arquivos = [linha.strip() for linha in saida.stdout.splitlines() if linha.strip()]
         novos = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"], cwd=cwd, capture_output=True, text=True, timeout=30
+            ["git", "ls-files", "--others", "--exclude-standard"], cwd=cwd, capture_output=True, text=True, timeout=30,
+            stdin=subprocess.DEVNULL,
         )
         if novos.returncode == 0:
             arquivos += [linha.strip() for linha in novos.stdout.splitlines() if linha.strip()]

@@ -184,7 +184,7 @@ def carregar_docs(raiz: Path, specs_dir: str) -> tuple[list[dict], list[str], li
 
 
 def _git(raiz: Path, args: list[str]) -> list[str]:
-    r = subprocess.run(["git", *args], cwd=raiz, capture_output=True, text=True)
+    r = subprocess.run(["git", *args], cwd=raiz, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if r.returncode != 0:
         return []
     return [p.replace("\\", "/") for p in r.stdout.split("\0") if p]

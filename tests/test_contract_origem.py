@@ -84,7 +84,8 @@ class TestDegradacao:
             " 'caps': len(r['capabilities'])}))\n"
         )
         p = subprocess.run(
-            [sys.executable, "-c", codigo], capture_output=True, text=True, timeout=180
+            [sys.executable, "-c", codigo], capture_output=True, text=True, timeout=180,
+            stdin=subprocess.DEVNULL,
         )
 
         assert p.returncode == 0, p.stderr
@@ -197,6 +198,7 @@ class TestPeloMarcador:
         p = subprocess.run(
             [sys.executable, "-c", _BLOQUEIO_DO_MH, str(falso), str(ROOT / "scripts")],
             capture_output=True, text=True, timeout=120, env=env,
+            stdin=subprocess.DEVNULL,
         )
         assert p.returncode == 0, p.stderr
         return json.loads(p.stdout.strip().splitlines()[-1])

@@ -29,7 +29,8 @@ def test_validator_passes():
     if not node:
         pytest.skip("node nao disponivel no PATH")
     result = subprocess.run(
-        [node, str(VALIDATOR)], capture_output=True, text=True, encoding="utf-8"
+        [node, str(VALIDATOR)], capture_output=True, text=True, encoding="utf-8",
+        stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, f"validador falhou:\n{result.stdout}\n{result.stderr}"
     assert "ERRO" not in result.stdout

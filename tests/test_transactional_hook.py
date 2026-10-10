@@ -1373,6 +1373,7 @@ def test_comando_que_a_mensagem_imprime_de_fato_roda(tmp_path: Path):
         p = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "state_cli.py"), *argv],
             capture_output=True, text=True, timeout=60,
+            stdin=subprocess.DEVNULL,
         )
         assert p.returncode == 0, f"o comando sugerido nao roda:\n{p.stderr}"
     else:

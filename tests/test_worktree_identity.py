@@ -64,6 +64,7 @@ def _git(cwd: Path, *args: str) -> str:
             "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@t",
         },
+        stdin=subprocess.DEVNULL,
     ).stdout
 
 

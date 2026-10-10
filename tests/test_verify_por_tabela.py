@@ -47,6 +47,7 @@ def _run(wf_file: Path, scenario: dict, tmp_path: Path) -> dict:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, f"harness falhou:\n{result.stdout}\n{result.stderr}"
     return json.loads(result.stdout)

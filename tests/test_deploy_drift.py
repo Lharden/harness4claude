@@ -111,6 +111,7 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
         cwd=str(repo), capture_output=True, text=True, timeout=120, check=True,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -251,6 +252,7 @@ class TestOQueRodaEOQueFoiPublicado:
         proc = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "deploy_to_cache.py"), "--check"],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
+            stdin=subprocess.DEVNULL,
         )
         # `--check` acusa tambem o que um deploy implantou e o repo removeu
         # (tests/test_deploy_remocao.py); comparar so com `drift` daria

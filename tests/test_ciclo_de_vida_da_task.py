@@ -535,6 +535,7 @@ class TestRevisaoFechamento:
              "--reason", "user_switch", "--expect-task", task["task_id"],
              "--harness-dir", str(tmp_path), "--signals-dir", str(tmp_path)],
             capture_output=True, text=True, timeout=60,
+            stdin=subprocess.DEVNULL,
         )
         assert res.returncode == 0, res.stderr
         assert HarnessDatabase(tmp_path).task(task["task_id"])["status"] == "abandoned"

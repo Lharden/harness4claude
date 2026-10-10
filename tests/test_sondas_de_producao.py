@@ -105,7 +105,8 @@ def _repo_git(tmp_path: Path, nome: str) -> Path:
     """Repositorio de verdade, para o hook que pergunta `git rev-parse` ao git."""
     d = tmp_path / nome
     d.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(d)], check=True, timeout=TIMEOUT, capture_output=True)
+    subprocess.run(["git", "init", "-q", str(d)], check=True, timeout=TIMEOUT, capture_output=True,
+                   stdin=subprocess.DEVNULL)
     return d
 
 
@@ -134,6 +135,7 @@ def _script(tmp_path: Path, arquivo: str, *args: str, cwd: Path | None = None) -
         [sys.executable, str(ROOT / arquivo), *args],
         capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT,
         env=_env(tmp_path), cwd=cwd,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -158,6 +160,7 @@ def _rodar_wf(tmp_path: Path, arquivo: str, cenario: dict) -> dict:
     res = subprocess.run(
         [NODE, str(WF_HARNESS), str(ROOT / arquivo), str(cenario_json)],
         capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT,
+        stdin=subprocess.DEVNULL,
     )
     assert res.returncode == 0, f"wf_run_harness falhou:\n{res.stdout}\n{res.stderr}"
     return json.loads(res.stdout)
@@ -385,6 +388,7 @@ def test_branch_state_cli_recusa_abrir_alem_do_limite(tmp_path):
         return subprocess.run(
             [sys.executable, str(ROOT / CLI_BRANCH_STATE), *args, "--cwd", str(projeto)],
             capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT, env=env,
+            stdin=subprocess.DEVNULL,
         )
 
     primeiro = rodar("add", "--name", "Primeiro", "--topic", "tema um", "--origin-turn", "10")

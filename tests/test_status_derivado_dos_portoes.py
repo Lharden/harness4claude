@@ -102,7 +102,8 @@ def _linhas_de_comando(mensagem: str) -> list[str]:
 def _rodar(linha: str) -> subprocess.CompletedProcess:
     argv = [a.strip('"') for a in shlex.split(linha, posix=False)]
     assert argv[0] == "python", linha
-    return subprocess.run([sys.executable, *argv[1:]], capture_output=True, text=True, timeout=60)
+    return subprocess.run([sys.executable, *argv[1:]], capture_output=True, text=True, timeout=60,
+                          stdin=subprocess.DEVNULL)
 
 
 # --- Metade 1: quem nao lia `gates` -------------------------------------------
@@ -228,6 +229,7 @@ def test_complete_recusa_com_escalation_pendente_e_a_linha_destrava(tmp_path: Pa
     recusada = subprocess.run(
         [*base, "complete", "--task", "t-1", "--expect-revision", str(task["revision"])],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert recusada.returncode == 2, recusada.stdout + recusada.stderr
@@ -434,6 +436,7 @@ def test_cli_de_confirmacao_projeta_o_status_do_banco(tmp_path: Path):
     r = subprocess.run(
         [sys.executable, str(CONFIRM), "--final", "L1-bug", "--expect-task", "t-1", "--harness-dir", str(tmp_path)],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert r.returncode == 0, r.stdout + r.stderr

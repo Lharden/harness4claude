@@ -60,7 +60,7 @@ def _repo_git(base: Path, nome: str) -> Path:
     """Um repositorio git de verdade: o repin exige projeto OUTRO, nao subpasta."""
     d = base / nome
     d.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(d)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q", str(d)], check=True, capture_output=True, stdin=subprocess.DEVNULL)
     return d
 
 
@@ -77,6 +77,7 @@ def _roda(root: Path, script: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(script), *args],
         capture_output=True, text=True, encoding="utf-8", env=_env(root), timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
 

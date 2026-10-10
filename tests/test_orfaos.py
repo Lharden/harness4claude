@@ -389,6 +389,7 @@ class TestComandoDaMensagem:
             [sys.executable, str(ROOT / "tools" / "orfaos.py"), *argv[corte:],
              "--raiz", str(raiz)],
             capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL,
         )
         assert p.returncode == 0, f"o comando sugerido nao roda:\n{p.stdout}\n{p.stderr}"
 

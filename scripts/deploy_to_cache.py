@@ -137,6 +137,7 @@ def shipped_files(root: Path) -> list[Path]:
         saida = subprocess.run(
             ["git", "ls-files", "-z"], cwd=str(root),
             capture_output=True, text=True, encoding="utf-8", timeout=60, check=True,
+            stdin=subprocess.DEVNULL,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return []
@@ -188,6 +189,7 @@ def published_ref(root: Path) -> str | None:
             subprocess.run(
                 ["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
                 cwd=str(root), capture_output=True, timeout=30, check=True,
+                stdin=subprocess.DEVNULL,
             )
             return ref
         except (OSError, subprocess.SubprocessError):
@@ -213,6 +215,7 @@ def extract_ref(root: Path, ref: str, destino: Path) -> Path:
     proc = subprocess.run(
         ["git", "archive", "--format=tar", ref],
         cwd=str(root), capture_output=True, timeout=300, check=True,
+        stdin=subprocess.DEVNULL,
     )
     with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tf:
         try:
@@ -310,6 +313,7 @@ def _git_bytes(root: Path, *args: str) -> bytes | None:
         proc = subprocess.run(
             ["git", "-c", "core.quotepath=false", *args], cwd=str(root),
             capture_output=True, timeout=120,
+            stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.SubprocessError):
         return None

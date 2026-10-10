@@ -297,7 +297,7 @@ def test_nc4_nascimento_grava_modelo_e_esforco(amb):
         [sys.executable, str(ROOT / "scripts" / "roteamento.py"), "nascimento",
          "--session-id", "filha-7", "--cwd", str(ROOT), "--modelo", "claude-opus-4-7",
          "--esforco", "max", "--tipo", "busca-leve"],
-        capture_output=True, text=True, encoding="utf-8", env=env, check=False)
+        capture_output=True, text=True, encoding="utf-8", env=env, check=False, stdin=subprocess.DEVNULL)
     assert proc.returncode == 0, proc.stderr
     import harness_paths
     d = harness_paths.state_dir(str(harness), ROOT, session_id="filha-7")

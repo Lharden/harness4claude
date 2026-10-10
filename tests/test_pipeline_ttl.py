@@ -228,6 +228,7 @@ class TestCli:
         return subprocess.run(
             [sys.executable, str(EXPIRE_PATH), "--harness-dir", str(harness_dir), "--ttl-hours", "24"],
             capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL,
         )
 
     def test_expirado_imprime_task_id(self, harness_dir):

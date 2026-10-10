@@ -133,6 +133,7 @@ def test_state_cli_creates_database_and_projection(tmp_path: Path):
         capture_output=True,
         text=True,
         check=False,
+        stdin=subprocess.DEVNULL,
     )
 
     assert result.returncode == 0, result.stderr
@@ -200,6 +201,7 @@ def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
     init = subprocess.run(
         [*base, "init", "--scope", "s", "--task", "t-touch", "--classification", "L1-bug"],
         capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL,
     )
     assert init.returncode == 0, init.stderr
     evidence = subprocess.run(
@@ -208,12 +210,14 @@ def test_state_cli_touch_invalidates_fresh_verification(tmp_path: Path):
             "--exit-code", "0", "--tests-collected", "2", "--tests-passed", "2",
         ],
         capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL,
     )
     assert evidence.returncode == 0, evidence.stderr
 
     touched = subprocess.run(
         [*base, "touch", "--task", "t-touch", "--path", "src/app.py"],
         capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL,
     )
 
     assert touched.returncode == 0, touched.stderr
@@ -593,6 +597,7 @@ def test_state_cli_artifact_projeta_no_state_json(tmp_path: Path):
         [sys.executable, str(cli), "--home", str(tmp_path), "artifact",
          "--task", task["task_id"], "--type", "analysis", "--path", "dossie.md"],
         capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL,
     )
     assert res.returncode == 0, res.stderr
 

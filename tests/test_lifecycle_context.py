@@ -248,6 +248,7 @@ def test_CONTROLE_codigo_antigo_mandava_subagente_carregar_o_orquestrador(tmp_pa
         conteudo = subprocess.run(
             ["git", "show", f"{OLD_REF}:hooks/{nome}"],
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+            stdin=subprocess.DEVNULL,
         ).stdout
         (antigo / nome).write_text(conteudo, encoding="utf-8")
     harness_root, cwd, _ = _task_viva(tmp_path)

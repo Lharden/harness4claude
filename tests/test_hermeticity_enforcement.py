@@ -62,6 +62,7 @@ def _run_pytest(
         [sys.executable, "-m", "pytest", str(target), "-q", "-p", "no:cacheprovider",
          *(extra or [])],
         capture_output=True, text=True, timeout=120, env=env, cwd=str(ROOT),
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -197,6 +198,7 @@ def _run_pytest_vault(target: str, vault_env: dict[str, str]) -> subprocess.Comp
     return subprocess.run(
         [sys.executable, "-m", "pytest", target, "-q", "-p", "no:cacheprovider"],
         capture_output=True, text=True, timeout=300, env=env, cwd=str(ROOT),
+        stdin=subprocess.DEVNULL,
     )
 
 

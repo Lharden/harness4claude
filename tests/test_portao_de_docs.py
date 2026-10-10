@@ -138,6 +138,7 @@ def _rodar(linha: str) -> subprocess.CompletedProcess:
     assert argv[0] == "python", linha
     return subprocess.run(
         [sys.executable, *argv[1:]], capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -318,6 +319,7 @@ def test_AC8_evidencia_de_docs_sem_relatorio_em_disco_e_recusada(tmp_path: Path)
          "--command-text", str(cwd / "nao-existe.md"), "--exit-code", "0",
          "--tests-collected", "1", "--tests-passed", "1", "--tests-skipped", "0"],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert cli.returncode == 2, cli.stdout + cli.stderr
@@ -341,6 +343,7 @@ def test_AC8_evidencia_de_docs_grava_o_hash_do_relatorio(tmp_path: Path):
          "--command-text", str(relatorio), "--exit-code", "0",
          "--tests-collected", "1", "--tests-passed", "1", "--tests-skipped", "0"],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert cli.returncode == 0, cli.stdout + cli.stderr

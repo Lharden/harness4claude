@@ -35,6 +35,8 @@ def _run_sync(env_extra: dict[str, str], tmp_path: Path) -> None:
         env=env,
         cwd=tmp_path,
         timeout=60,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
     )
 
 
@@ -448,6 +450,7 @@ def _git(cwd: Path, *args: str) -> None:
         ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
         env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
              "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+             stdin=subprocess.DEVNULL,
     )
 
 
@@ -693,6 +696,7 @@ def test_cli_imprime_recusa_no_stderr_e_grava_manifesto_onde_mandado(tmp_path: P
          "--harness-dir", str(tmp_path / "harness"), "--manifesto", str(manifesto)],
         capture_output=True, text=True, encoding="utf-8", env={**os.environ, "PYTHONUTF8": "1"},
         cwd=cwd, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert proc.returncode == 0
@@ -770,6 +774,7 @@ def test_cli_com_cwd_ponto_escreve_o_mesmo_vault_que_com_caminho_absoluto(tmp_pa
              "--raiz", str(tmp_path / f"raiz-{nome}"), "--cwd", cwd_arg],
             capture_output=True, text=True, encoding="utf-8",
             env={**os.environ, "PYTHONUTF8": "1"}, cwd=pasta, timeout=60,
+            stdin=subprocess.DEVNULL,
         )
         assert proc.returncode == 0, proc.stderr
         return _arvore(vault)

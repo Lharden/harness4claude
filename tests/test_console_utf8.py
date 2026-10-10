@@ -123,6 +123,7 @@ def test_render_no_stdout_sobrevive_a_console_cp1252(tmp_path: Path, ferramenta:
         capture_output=True,
         env=env,
         timeout=120,
+        stdin=subprocess.DEVNULL,
     )
     erro = proc.stderr.decode("utf-8", "replace")
 
@@ -165,6 +166,7 @@ def test_roda_como_modulo(nome):
         [sys.executable, "-m", modulo, "--help"],
         cwd=str(RAIZ), capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     assert "ModuleNotFoundError" not in (proc.stderr or ""), (
         f"{modulo} nao roda com -m:\n{proc.stderr[-400:]}"
@@ -178,6 +180,7 @@ def test_roda_como_script(nome):
         [sys.executable, str(RAIZ / "tools" / nome), "--help"],
         cwd=str(RAIZ), capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     assert "ModuleNotFoundError" not in (proc.stderr or ""), (
         f"tools/{nome} nao roda como script:\n{proc.stderr[-400:]}"

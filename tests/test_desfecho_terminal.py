@@ -211,6 +211,7 @@ def test_incidente_complete_em_superseded_pela_linha_de_comando(tmp_path: Path):
         [sys.executable, str(CLI), "--home", str(tmp_path), "complete",
          "--task", morta["task_id"], "--expect-revision", str(morta["revision"])],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert saida.returncode == 2, saida.stdout + saida.stderr
@@ -233,6 +234,7 @@ def test_transition_em_superseded_com_task_viva_sai_2_e_nao_estoura(tmp_path: Pa
         [sys.executable, str(CLI), "--home", str(tmp_path), "transition",
          "--task", morta["task_id"], "--to", "verify", "--expect-revision", str(morta["revision"])],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
     assert saida.returncode == 2, saida.stdout + saida.stderr

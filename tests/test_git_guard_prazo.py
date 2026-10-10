@@ -139,7 +139,8 @@ def _carga_focada(cpus: list[int]):
     with _afinidade(cpus), tempfile.TemporaryDirectory() as tmp:
         sentinela = Path(tmp) / "carga-viva"
         sentinela.write_text("1", encoding="utf-8")
-        lacos = [subprocess.Popen([sys.executable, "-c", _LACO, str(sentinela), "180"])
+        lacos = [subprocess.Popen([sys.executable, "-c", _LACO, str(sentinela), "180"], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                  for _ in range(LACOS)]
         try:
             time.sleep(0.5)
@@ -156,8 +157,8 @@ def _carga_focada(cpus: list[int]):
 
 def _tempo(cmd: list[str], entrada: str | None, env: dict) -> tuple[float, int]:
     inicio = time.perf_counter()
-    res = subprocess.run(cmd, input=entrada, capture_output=True, text=True, env=env,
-                         timeout=PRAZO_DO_HOST_S * 6)
+    res = subprocess.run(cmd, input=entrada, stdin=subprocess.DEVNULL if entrada is None else None,
+                         capture_output=True, text=True, env=env, timeout=PRAZO_DO_HOST_S * 6)
     return time.perf_counter() - inicio, res.returncode
 
 

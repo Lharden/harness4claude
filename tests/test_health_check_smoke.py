@@ -59,6 +59,7 @@ def _run_health_check(plugin_dir: Path, **env_extra: str) -> subprocess.Complete
     return subprocess.run(
         [BASH, str(plugin_dir / "scripts" / "health-check.sh")],
         capture_output=True, text=True, timeout=300, env=env,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -246,6 +247,7 @@ class TestDisjuntorRespeitaOCooldown:
         proc = subprocess.run(
             [BASH, str(plugin_dir / "scripts" / "health-check.sh")],
             capture_output=True, text=True, timeout=300, env=env,
+            stdin=subprocess.DEVNULL,
         )
         return proc.stdout
 

@@ -239,7 +239,7 @@ def test_all_lista_todo_doc_que_declara_escopo(ds, tmp_path):
 
 def test_changed_le_o_diff_do_git(ds, tmp_path):
     def git(*args):
-        subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, check=True)
+        subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, check=True, stdin=subprocess.DEVNULL)
 
     git("init", "-q")
     git("config", "user.email", "t@t")
@@ -267,7 +267,7 @@ def test_changed_sem_git_nao_levanta(ds, tmp_path):
 
 def _repo(tmp_path, *arquivos: str):
     def git(*args):
-        subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, check=True)
+        subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, check=True, stdin=subprocess.DEVNULL)
 
     git("init", "-q")
     git("config", "user.email", "t@t")

@@ -122,7 +122,8 @@ def launch(*, branch: dict, cwd: str, launcher_path: str) -> bool:
     if not argv:
         return False
     try:
-        subprocess.Popen(argv, close_fds=True)
+        subprocess.Popen(argv, close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except (OSError, ValueError):
         return False

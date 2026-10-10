@@ -23,6 +23,7 @@ def _run(*args: str, harness_dir: Path | None = None) -> subprocess.CompletedPro
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         capture_output=True, text=True, timeout=60, env=env,
+        stdin=subprocess.DEVNULL,
     )
 
 

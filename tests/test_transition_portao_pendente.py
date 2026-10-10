@@ -86,6 +86,7 @@ def _rodar(linha: str, *, cwd: Path | None = None) -> subprocess.CompletedProces
     assert argv[0] == "python", linha
     return subprocess.run(
         [sys.executable, *argv[1:]], capture_output=True, text=True, timeout=60, cwd=cwd,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -153,6 +154,7 @@ def test_cli_recusa_e_a_linha_impressa_destrava_o_escalation(tmp_path: Path):
         [*base, "transition", "--task", task["task_id"], "--to", "tdd",
          "--expect-revision", str(task["revision"])],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     assert recusada.returncode == 2, recusada.stdout + recusada.stderr
     linhas = _linhas_de_comando(recusada.stdout)
@@ -166,6 +168,7 @@ def test_cli_recusa_e_a_linha_impressa_destrava_o_escalation(tmp_path: Path):
         [*base, "transition", "--task", task["task_id"], "--to", "tdd",
          "--expect-revision", str(revisao)],
         capture_output=True, text=True, timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     assert avancada.returncode == 0, avancada.stdout + avancada.stderr
     projecao = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
