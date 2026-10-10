@@ -224,6 +224,21 @@ def test_turno_nao_recria_spool_apagado(spool):
     assert linhas(spool) is None
 
 
+def test_turno_em_corrida_com_a_exclusao_nao_recria_o_arquivo(spool, monkeypatch):
+    """A corrida: o hook viu o spool, e o excluir-sessao apagou antes da escrita. Sem O_CREAT, nada renasce."""
+    abrir(spool)
+    sessao_nova(spool)
+    real = spool._linha
+
+    def apaga_no_meio(linha):            # depois de ler o spool e antes de abrir para escrever
+        (spool.pasta() / f"{SID}.jsonl").unlink()
+        return real(linha)
+
+    monkeypatch.setattr(spool, "_linha", apaga_no_meio)
+    spool.registrar(payload("turno que chegou junto com a exclusao"))
+    assert linhas(spool) is None
+
+
 def test_ancora_do_sensor_nao_participa(spool, tmp_path):
     """Duas sessões no mesmo cwd: cada uma tem o próprio spool, com todos os turnos, em qualquer ordem."""
     abrir(spool)
