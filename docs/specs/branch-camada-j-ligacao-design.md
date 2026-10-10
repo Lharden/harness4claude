@@ -354,10 +354,28 @@ Nenhuma bloqueante. As decisões de produto estão nas ASSUMPTION-001 a 007 da s
 | Fase | Story | Repositório | Entrega | Pré-condição |
 |---|---|---|---|---|
 | A | US-1 (P1) | harness4claude | `branch_j_spool.py`, ligação no `main`, flag, testes e sabotagem | — |
-| B | US-0 (P1) | master-harness | `comum.py` (refactor), `abrir` e `status` com D2 e D3 | A commitada (o teste de D2 usa um plugin-root falso) |
+| B | US-0 (P1), REQ-009 | master-harness | `comum.py` (refactor), registro dos verbos em `cli_avaliacao.py` (`mh avaliar camada-j sombra …`), `abrir` e `status` com D2 e D3; no `docs/specs/jev-integracao.md`, a C4 com o resultado da avaliação e a interpretação da L-46 decidida pelo usuário (ASSUMPTION-007) | nenhuma (o teste de D2 usa um plugin-root falso) |
 | C | US-2 (P1) | master-harness | `varredura.py`, `seco`, `ver-amostra`, `rodar` | B |
 | D | US-3 e US-4 (P1) | master-harness | `rotular`, `medir`, `avaliar_sombra` | C |
 | E | US-5 (P2) | master-harness | `excluir-sessao`, `purgar`, peça do `mh saude` | D |
 | — | operação | — | deploy D2 (ASK do usuário) → `abrir` (ASK) → 14 dias → seco/rodar (ASK) → rotular → medir | A a E integradas pelo orquestrador |
 
 O merge de cada fase é do orquestrador. Esta sessão commita no ramo e avisa.
+
+## Validation Report
+- **Status:** PASS (depois de uma revisão)
+- **Lacunas encontradas:**
+  1. O REQ-009 manda registrar a C4 e a interpretação da L-46 no `jev-integracao.md`, e nenhuma fase fazia isso.
+  2. O registro dos verbos novos no `cli_avaliacao.py` estava só implícito.
+- **Revisões aplicadas:** as duas entraram na fase B. A pré-condição de B passou a "nenhuma": o teste de D2 usa um
+  plugin-root falso, então A e B podem andar em paralelo.
+- **Cobertura conferida:**
+  - REQ-001 a REQ-010: A (001, 002, 003), B (004 parcial, 008, 009, 010), C (004, 006, 007, 008), D (004, 005),
+    E (004);
+  - AC-0.1 a AC-5.4, todos com fase e teste na Test Strategy;
+  - nenhum item de *Out of Scope* aparece numa fase.
+- **Viabilidade:**
+  - nenhuma biblioteca nova: stdlib no hook, e no `mh` o que já existe no venv;
+  - nenhuma fase é "faz tudo";
+  - não há migração de schema, só arquivos novos com `schema: 1`.
+- **Validado em:** 2026-10-10.
