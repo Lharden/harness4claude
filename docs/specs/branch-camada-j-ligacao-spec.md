@@ -1,6 +1,6 @@
 # Spec: Camada J do Branch Keeper em modo sombra
 
-**Status**: Draft v3 (grill-me rodadas 1 e 2 incorporadas; aguarda approve-spec)
+**Status**: Aprovada pelo usuário em 2026-10-10, nesta janela, sobre a v3 (`ae14140`). Grill: 2 rodadas.
 **Created**: 2026-10-10
 **Branch**: harness4claude `spec/camada-j-sombra`. No master-harness, o ramo sai do `main` **depois** do merge de
 `feat/avaliacao-camada-j` (até `3ef033c`), que é feito pelo orquestrador.
