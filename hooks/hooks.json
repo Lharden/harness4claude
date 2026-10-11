@@ -188,6 +188,17 @@
         ]
       },
       {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" branch_j_inicio.py",
+            "timeout": 10,
+            "statusMessage": "Branch Keeper: camada J (sombra)..."
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",

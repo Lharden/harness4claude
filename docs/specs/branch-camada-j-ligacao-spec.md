@@ -1,6 +1,10 @@
 # Spec: Camada J do Branch Keeper em modo sombra
 
 **Status**: Aprovada pelo usuário em 2026-10-10, nesta janela, sobre a v3 (`ae14140`). Grill: 2 rodadas.
+**Emenda v4** (2026-10-10, decisão do usuário na escalada da verify-multimodel, depois de 2 rodadas de gap-closure):
+a âncora vem do `SessionStart` e não mais da âncora do sensor (AC-1.0, AC-1.2, AC-1.3, ASSUMPTION-013,
+~~ASSUMPTION-008~~); dados pessoais na varredura (REQ-007, ASSUMPTION-014); exclusão e purga sem recriar arquivo
+(AC-5.1, AC-5.2) e retenção depois da purga no `mh saude` (AC-5.4). Itens marcados `(v4)`.
 **Created**: 2026-10-10
 **Branch**: harness4claude `spec/camada-j-sombra`. No master-harness, o ramo sai do `main` **depois** do merge de
 `feat/avaliacao-camada-j` (até `3ef033c`), que é feito pelo orquestrador.
@@ -58,16 +62,17 @@ Esta spec mede isso sem que o usuário veja nada:
   - o filtro de turno humano e a escrita do spool, só com a biblioteca padrão;
   - nada de rede, nada de processo, nada de chave;
   - toda exceção do caminho é engolida.
-- `harness4claude/scripts/branch_sensor.py::main`:
-  - no ramo que fixa a âncora do sensor (primeiro prompt da sessão), chama o spool para criar o arquivo da sessão;
-  - nos turnos seguintes, chama o spool para acrescentar;
-  - a decisão de `ramo` e a saída do hook não mudam.
+- `harness4claude/scripts/branch_sensor.py::main` (v4): chama o spool uma vez por `UserPromptSubmit`, antes de
+  qualquer saída antecipada, sem olhar a âncora do sensor; a decisão de `ramo` e a saída do hook não mudam.
+- `harness4claude/hooks/branch_j_inicio.py` (novo, v4) e a entrada no `SessionStart` do `hooks/hooks.json`, com
+  `matcher: startup|clear`: o marcador `<sid>.nova` do AC-1.0.
 - `harness4claude/scripts/branch_config.py`: ganha a flag `HARNESS_BRANCH_LAYER_J` (BOOL, padrão `False`).
 - `master-harness/mh/avaliacao/camada_j_sombra.py` (novo): verbos `abrir`, `status`, `excluir-sessao`, `seco`,
   `ver-amostra`, `rodar`, `rotular`, `medir` e `purgar`. O design-doc decide o que da `camada_j.py` vira função
   compartilhada.
 - `master-harness/mh/avaliacao/cli_avaliacao.py`: registra os verbos novos.
-- `master-harness/mh/saude.py`: ganha o aviso `spool_com_texto_retido` (AC-5.3), lendo só o `janela.json`.
+- `master-harness/mh/saude.py`: ganha o aviso `spool_com_texto_retido` (AC-5.4), lendo o `janela.json` e só os
+  **nomes** dos arquivos da pasta (v4), nunca o conteúdo.
 
 ### Dependências (quem garante cada uma)
 
@@ -75,7 +80,9 @@ Esta spec mede isso sem que o usuário veja nada:
   espera.
 - **D2. Release e deploy do harness4claude com o spool no cache do plugin.** Garante o orquestrador, com OK do
   usuário, porque o deploy muda o hook de todas as sessões. O `abrir` confere, no cache apontado por
-  `~/.claude/harness/plugin-root`, que existem o `branch_j_spool.py` e a chamada a ele no `branch_sensor.py`.
+  `~/.claude/harness/plugin-root`, que existem o `branch_j_spool.py`, a chamada a ele no `branch_sensor.py` e (v4) o
+  `hooks/branch_j_inicio.py` registrado no `hooks.json`. Lê o filtro do spool como texto (AST), sem executar código
+  do plugin no processo que tem a chave.
 - **D3. `HARNESS_BRANCH_LAYER_J=1` no `env` do `~/.claude/settings.json`, e `HARNESS_BRANCH` diferente de `0`.**
   Garante o usuário. O `abrir` lê o arquivo e recusa `flag_ausente` ou `branch_keeper_desligado`. O `env` é lido
   quando a sessão começa, e só sessões novas gravam (AC-1.2).
@@ -113,26 +120,31 @@ Esta spec mede isso sem que o usuário veja nada:
 - **AC-1.1**: Given a flag desligada, ou `janela.json` ausente ou ilegível, ou `estado` ≠ `aberta`, ou o instante
   ≥ `fim`, ou o `sha_filtro` do código ≠ o do `janela.json`, When chega um `UserPromptSubmit`, Then nada é escrito na
   pasta do spool, e a saída do hook é idêntica byte a byte à de hoje.
-- **AC-1.2**: Given a janela aberta, When `main` fixa a âncora do sensor para uma sessão (o primeiro prompt
-  substantivo dela) e esse prompt é humano (REQ-003), Then nasce `sombra/<session_id>.jsonl` com a linha `{tipo:
-  "ancora", turno_idx: 0, instante, sessao, projeto, texto}`:
+- **AC-1.0** (v4): Given a janela aberta e a flag ligada, When chega um `SessionStart` com `source` `startup` ou
+  `clear` e `session_id` válido, Then nasce o marcador vazio `sombra/<session_id>.nova`: a sessão nasceu dentro da
+  janela. Com `source` `resume` ou `compact` nada nasce. Sem rede, sem processo, nunca levanta (o mesmo contrato do
+  AC-1.6).
+- **AC-1.2** (v4): Given o marcador `<session_id>.nova` e nenhum `<session_id>.jsonl`, When chega o primeiro
+  `UserPromptSubmit` humano (REQ-003) da sessão, Then nasce `sombra/<session_id>.jsonl` com a linha `{tipo:
+  "ancora", turno_idx: 0, instante, sessao, projeto, texto}` e o marcador é apagado:
   - `texto` é o prompt cru, como chegou, e inteiro;
   - `projeto` é o slug de `harness_paths` para o cwd;
-  - se o prompt não for humano, a sessão não grava nada, e sobe `sessao_sem_ancora_humana`.
-- **AC-1.3**: Given um `<session_id>.jsonl` existente, When chega um `UserPromptSubmit` humano dessa sessão, Then uma
-  linha `{tipo: "turno", turno_idx, instante, sessao, projeto, texto}` é acrescentada. `turno_idx` = número de linhas
-  já no arquivo. Sem o arquivo, nada é gravado, e o resultado é que sessões abertas antes do `abrir`, retomadas ou
-  compactadas não entram.
+  - um prompt não humano antes dele (slash command, aviso do host) é contado e não consome o marcador.
+- **AC-1.3** (v4): Given um `<session_id>.jsonl` existente, When chega um `UserPromptSubmit` humano dessa sessão, Then
+  uma linha `{tipo: "turno", turno_idx, instante, sessao, projeto, texto}` é acrescentada **sem criar o arquivo**
+  (`O_APPEND` sem `O_CREAT`). `turno_idx` = número de linhas já no arquivo. Sem o arquivo e sem o marcador, nada é
+  gravado nem contado: sessões abertas antes do `abrir`, retomadas ou compactadas ficam fora da amostra. A âncora do
+  sensor (`branch-anchor.json`) não participa dessa decisão.
 - **AC-1.4**: Given um turno que, depois de `lstrip()`, começa por um prefixo do REQ-003 (`startswith` literal, com
   maiúsculas e minúsculas como estão), ou que tem menos de 12 code points depois de `strip()`, When o hook roda, Then
-  ele não é gravado, e sobe o contador do prefixo ou o `curto`.
+  ele não é gravado, e sobe o contador do prefixo ou o `curto`. Só sessões da amostra (com marcador ou spool) contam.
 - **AC-1.5**: Given um `session_id` fora de `[A-Za-z0-9-]{8,64}`, um prompt ausente ou não string, ou um `Stop`, When
   o hook roda, Then nada é gravado (sem contador, porque não há arquivo de sessão válido).
 - **AC-1.6**: Given qualquer exceção no caminho do spool, When o hook roda, Then ela é engolida e a saída do hook
   fica idêntica à de hoje. Sobe `falha_spool` no arquivo de contagens da sessão; se essa escrita também falhar,
   nada mais é tentado.
-- **AC-1.7**: Given os `*.jsonl` da pasta somando ≥ 200 × 2^20 bytes (o tamanho é conferido só no arquivo da sessão
-  mais um total guardado em `contagens`), When o hook roda, Then nada é gravado e sobe `spool_cheio`.
+- **AC-1.7** (v4): Given os `*.jsonl` da pasta somando ≥ 200 × 2^20 bytes (o tamanho sai de um `os.scandir` da pasta,
+  medido dentro do p95 do AC-1.8 com 300 sessões), When o hook roda, Then nada é gravado e sobe `spool_cheio`.
 - **AC-1.8**: Given a flag ligada, When o hook roda 1 000 vezes num banco de medida, Then o p95 do tempo a mais sobre
   o hook de hoje fica ≤ 20 ms, sem rede, sem processo e sem ler a chave.
 
@@ -223,16 +235,19 @@ Os contadores ficam em `sombra/<session_id>.contagens.json`, um arquivo por sess
 
 ### US-5: Exclusão, limpeza e retenção (Priority: P2)
 
-- **AC-5.1**: Given a janela aberta, When `sombra excluir-sessao <id>` roda num terminal humano, Then o arquivo da
-  sessão vira um marcador `{excluida, instante}`, sem texto, e o hook não grava mais nada nela.
-- **AC-5.2**: Given `veredito.json`, When `sombra purgar` roda num terminal humano, Then, nesta ordem:
+- **AC-5.1** (v4): Given a janela aberta, When `sombra excluir-sessao <id>` roda num terminal humano, Then o
+  `<id>.jsonl` é renomeado e apagado (o hook acrescenta sem `O_CREAT`, então não o recria), e nasce o marcador sem
+  texto `<id>.excluida`. Arquivo em uso no Windows recusa `arquivo_em_uso` (tente de novo).
+- **AC-5.2** (v4): Given `veredito.json`, When `sombra purgar` roda num terminal humano, Then, nesta ordem:
   1. `janela.json` passa a `estado: "encerrada"`;
-  2. os `<session_id>.jsonl` e o `seco.jsonl` são apagados;
+  2. os `<session_id>.jsonl`, os marcadores `.nova` e o `seco.jsonl` são apagados; um arquivo que não apaga é
+     contado, os outros seguem, e o verbo sai 3 dizendo quantos ficaram;
   3. escores, rótulos, fila, contagens, metas e relatório ficam.
 - **AC-5.3**: Given nenhum veredito, When `purgar`, Then recusa `sem_veredito`. A saída é
   `purgar --abandonar --motivo <texto>`, que faz o mesmo que o AC-5.2 e grava `veredito.json` com
   `{veredito: "inconclusivo", abandonada: true, motivo}`.
-- **AC-5.4**: Given `estado: "aberta"` 30 dias depois de `fim`, When `mh saude`, Then aparece o aviso
+- **AC-5.4** (v4): Given `estado: "aberta"` 30 dias depois de `fim`, ou `estado: "encerrada"` com algum
+  `<session_id>.jsonl` ou `seco.jsonl` ainda na pasta, When `mh saude`, Then aparece o aviso
   `spool_com_texto_retido`.
 
 ---
@@ -272,7 +287,9 @@ Os contadores ficam em `sombra/<session_id>.contagens.json`, um arquivo por sess
   - `senha|password|passwd|pwd` seguido de `:` ou `=` e de um valor;
   - `Bearer <token>`;
   - credencial em URL;
-  - e-mail.
+  - e-mail;
+  - (v4) CPF (formatado, ou 11 dígitos depois de "CPF"), número de cartão (13 a 19 dígitos que passam no Luhn) e
+    telefone brasileiro com DDD e separador.
 
   Item com resíduo é excluído, nunca enviado (AC-2.3).
 - **REQ-008**: no `abrir` ficam congelados: τ, semente, tamanhos da fila (40 + 20), critério, janela, filtro (pelo
@@ -310,7 +327,7 @@ interpretação explícita da L-46 e vai registrada no `jev-integracao.md`, junt
 - Rede, processo novo, leitura da chave ou criação de diretório dentro do hook. O hook só escreve se a pasta e o
   `janela.json` já existirem.
 - Ler a pasta `sombra/` com qualquer coisa além do hook (escrita), dos verbos `sombra` e do `mh saude` (só o
-  `janela.json`). Ela não entra em vault, grafo, `signals.json`, `emissions.jsonl`, semente de ramo, transcript de
+  `janela.json` e os nomes dos arquivos, v4). Ela não entra em vault, grafo, `signals.json`, `emissions.jsonl`, semente de ramo, transcript de
   sessão nem backup do harness.
 - Editar `mh/s1/` ou `mh/replay/`.
 - Mudar o que o REQ-008 congela; abrir uma segunda janela nesta spec; medir mais de uma vez.
@@ -354,9 +371,10 @@ dias, com IC por sessão".
   base. Justifica: AC-3.2, AC-3.3, AC-4.2.
 - **ASSUMPTION-007** (usuário, 2026-10-10, grill 2): o modo sombra não dispara o gateway (L-46). Justifica: Gateway,
   REQ-009.
-- **ASSUMPTION-008** (inferência): a âncora do spool é o mesmo prompt em que o sensor fixa a dele, só que inteiro, e
-  só quando é humano. É a definição da avaliação, e um turno de meio de sessão nunca vira âncora. Justifica: AC-1.2,
-  AC-1.3.
+- ~~**ASSUMPTION-008** (inferência): a âncora do spool é o mesmo prompt em que o sensor fixa a dele, só que inteiro, e
+  só quando é humano.~~ **FALSA em 2026-10-10** (verify-multimodel, rodadas 1 e 2): a âncora do sensor é por
+  worktree e é refeita quando sessões se alternam no mesmo cwd ou quando o branch-out reancora sem `session_id`. O
+  remendo pelo transcript contou slash commands como prompts anteriores. Substituída pela ASSUMPTION-013.
 - **ASSUMPTION-009** (inferência): os prefixos do REQ-003 cobrem os turnos não humanos vistos na avaliação. Prefixo
   novo grava como humano e aparece na rotulagem, onde se responde `pular`. Justifica: REQ-003.
 - **ASSUMPTION-010** (inferência): ~165 prompts por dia, um teto que inclui texto injetado. Projeta ~US$ 0,16 e uns 80
@@ -368,6 +386,12 @@ dias, com IC por sessão".
   política de backup da máquina. A pasta fica fora dos leitores do harness (NEVER). Justifica: AC-1.2, NEVER.
 - **ASSUMPTION-012** (inferência): o `janela.json` editado à mão não é detectado. A proteção é contra acidente, não
   contra o próprio usuário. Justifica: REQ-008.
+- **ASSUMPTION-013** (usuário, 2026-10-10, escalada): uma sessão pertence à amostra se o `SessionStart` dela (`source`
+  `startup` ou `clear`) aconteceu com a janela aberta; a âncora é o primeiro prompt humano depois disso. É a
+  definição da avaliação (primeiro prompt humano da sessão), sem depender da âncora do sensor nem do transcript.
+  Justifica: AC-1.0, AC-1.2, AC-1.3.
+- **ASSUMPTION-014** (usuário, 2026-10-10, escalada): CPF, cartão e telefone que escapam da redação do kit excluem o
+  turno do envio (a redação do kit fica como está, T2). Justifica: REQ-007.
 
 ---
 

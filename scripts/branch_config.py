@@ -123,6 +123,14 @@ KNOBS: dict[str, Knob] = {
             "floor.py apontar uma metrica que separe.",
         ),
         Knob(
+            "HARNESS_BRANCH_LAYER_J", BOOL, False, "liga/desliga",
+            "Camada J em MODO SOMBRA (docs/specs/branch-camada-j-ligacao-spec.md): "
+            "com uma janela aberta pelo `mh avaliar camada-j sombra abrir`, o hook "
+            "guarda localmente a ancora e os turnos humanos de cada sessao nova, "
+            "sem rede e sem oferecer nada; o Jev pontua depois, num lote do mh. "
+            "Desligada por default; ligar e passo do usuario, no env do settings.",
+        ),
+        Knob(
             "HARNESS_BRANCH_HOST", STR, "wt", "wt | none",
             "Como abrir a janela do ramo. `none` gera a semente e o launcher "
             "sem abrir nada — util em maquina sem Windows Terminal.",

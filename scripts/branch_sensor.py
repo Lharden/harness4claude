@@ -39,6 +39,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import branch_config
 import branch_state
 
+try:
+    # Camada J (modo sombra). Um spool que nao importa nao pode derrubar o sensor.
+    import branch_j_spool
+except Exception:
+    branch_j_spool = None
+
 # ---------------------------------------------------------------------------
 # Camada B: reuso do router, nao reimplementacao
 # ---------------------------------------------------------------------------
@@ -673,6 +679,18 @@ def cli_may_offer(argv: list[str]) -> int:
     return 0
 
 
+def _spool_j(payload: dict) -> None:
+    """Spool da camada J (modo sombra). Decide sozinho se a sessao esta na amostra
+    (marcador do SessionStart), sem olhar a ancora do sensor. `registrar` ja nao
+    levanta; este try e a segunda trava do contrato "o sensor nunca quebra o prompt"."""
+    if branch_j_spool is None:
+        return
+    try:
+        branch_j_spool.registrar(payload)
+    except Exception:
+        pass
+
+
 def main() -> int:
     # Le os bytes e decodifica em UTF-8 a mao. `json.load(sys.stdin)` usa o
     # encoding do processo, que no Windows nasce cp1252: sem PYTHONIOENCODING
@@ -707,6 +725,11 @@ def main() -> int:
             (hb / str(evento)).write_text(str(int(__import__("time").time())), encoding="utf-8")
         except OSError:
             pass
+
+    # Camada J em modo sombra: so guarda, nunca decide; so no UserPromptSubmit (o
+    # Stop nao foi medido). Antes de qualquer saida antecipada do sensor.
+    if evento == "UserPromptSubmit":
+        _spool_j(payload)
 
     cwd = payload.get("cwd") or os.getcwd()
     session_id = payload.get("session_id")
