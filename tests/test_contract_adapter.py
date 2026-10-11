@@ -232,3 +232,32 @@ def test_toda_evidencia_declarada_hoje_aponta_para_teste_que_existe():
             if not adapter.evidence_is_valid(ROOT, [registro]):
                 quebrados.append(f"{capacidade} -> {registro}")
     assert not quebrados, "evidencia declarada que nao existe:\n  " + "\n  ".join(quebrados)
+
+
+# --- Chaves do EVIDENCE contra o contrato (F-048 do censo de fatos do master-harness, 2026-10-11) ---
+#
+# As chaves do EVIDENCE sao ids de capacidade do contrato, escritas de novo aqui. O
+# relatorio percorre o contrato e consulta o mapa, entao capacidade nova sem linha ja
+# aparece (status sem evidencia). O que ninguem pegava era o outro lado: capacidade que
+# SAIU do contrato e deixou a linha aqui, com evidencia apontando para teste que talvez
+# nem exista mais, ignorada em silencio. O contrato vem do mesmo `load_contract` que o
+# relatorio usa, nao de uma copia lida a parte.
+
+
+def chaves_sem_capacidade(mapa: dict) -> list[str]:
+    """Chaves do mapa que nao sao id de capacidade do contrato que o adaptador carrega."""
+    contrato = adapter.load_contract(ROOT)
+    ids = {item["id"] for item in contrato["capabilities"]["capabilities"]}
+    return sorted(set(mapa) - ids)
+
+
+def test_toda_chave_do_evidence_e_capacidade_do_contrato():
+    """O portao. Vermelho aqui = evidencia de capacidade que o contrato nao tem mais."""
+    sobrando = chaves_sem_capacidade(adapter.EVIDENCE)
+    assert not sobrando, "chaves do EVIDENCE fora do contrato:\n  " + "\n  ".join(sobrando)
+
+
+def test_chave_velha_no_evidence_e_pega(monkeypatch):
+    """Falsificacao: a mesma conta reprova uma capacidade que saiu do contrato."""
+    monkeypatch.setitem(adapter.EVIDENCE, "capacidade.que-saiu-do-contrato", ["scripts/contract_adapter.py"])
+    assert chaves_sem_capacidade(adapter.EVIDENCE) == ["capacidade.que-saiu-do-contrato"]
