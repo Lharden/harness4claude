@@ -224,7 +224,17 @@ except Exception:
     session_id = ''
 try:
     from harness_paths import ensure_state_dir
-    print(ensure_state_dir(root, cwd or None, session_id=session_id or None))
+    balde = ensure_state_dir(root, cwd or None, session_id=session_id or None)
+    # Portao de sessao (item 1.6, scripts/portao_stop.py): o HEAD de inicio, para o Stop contar so os
+    # commits criados nesta sessao. So com session_id (sem ele o balde e do projeto, partilhado). Nao
+    # imprime e nao levanta: o stdout daqui e o caminho do balde.
+    if session_id:
+        try:
+            from portao_stop import registrar_inicio
+            registrar_inicio(balde, cwd or None)
+        except Exception:
+            pass
+    print(balde)
 except Exception:
     print(root)
 " 2>/dev/null || printf '%s' "$HARNESS_DIR_PY")"

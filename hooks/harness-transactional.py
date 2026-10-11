@@ -2427,20 +2427,59 @@ def _motivo_do_gate(
     )
 
 
+def _portao_de_sessao(
+    payload: dict[str, Any], harness_root: str | Path | None, consultar_pronto: Any = None
+) -> str | None:
+    """O motivo do portao de sessao (item 1.6, `scripts/portao_stop.py`), ou `None`. Nunca levanta.
+
+    Roda com ou sem task do pipeline e tambem com `stop_hook_active`: o portao cobra uma vez por HEAD, entao nao ha
+    laco (cada nova cobranca exige um commit novo), e um commit feito na continuacao de outro bloqueio nao escapa.
+    """
+    try:
+        root = Path(harness_root or os.environ.get("HARNESS_DIR") or Path.home() / ".claude" / "harness")
+        bucket = ensure_state_dir(
+            root,
+            payload.get("cwd") or None,
+            session_id=payload.get("session_id") or payload.get("sessionId") or None,
+        )
+        # Import tardio: um defeito no portao nao derruba o hook, e o gate de evidencia segue valendo.
+        from portao_stop import avaliar as avaliar_portao  # type: ignore[import-not-found]
+
+        return avaliar_portao(bucket, payload.get("cwd") or None, consultar=consultar_pronto)
+    except Exception:
+        return None
+
+
+def _com_portao(saida: str, motivo: str | None) -> str:
+    """Junta o bloqueio do portao de sessao ao do gate de evidencia, num `decision: block` so."""
+    if not motivo:
+        return saida
+    if not saida:
+        return json.dumps({"decision": "block", "reason": motivo}, ensure_ascii=False)
+    try:
+        dados = json.loads(saida)
+        dados["reason"] = f"{dados.get('reason', '')}\n\n{motivo}".strip()
+        return json.dumps(dados, ensure_ascii=False)
+    except (ValueError, AttributeError):
+        return saida
+
+
 def handle_payload(
-    payload: dict[str, Any], *, harness_root: str | Path | None = None, event: str | None = None
+    payload: dict[str, Any], *, harness_root: str | Path | None = None, event: str | None = None,
+    consultar_pronto: Any = None,
 ) -> str:
     name = _event_name(payload, event)
     _write_heartbeat(payload, name, harness_root)
+    portao = _portao_de_sessao(payload, harness_root, consultar_pronto) if name == "Stop" else None
     if name == "Stop" and (payload.get("stop_hook_active") or payload.get("stopHookActive")):
-        return ""
+        return _com_portao("", portao)
     context = _database_for_payload(payload, harness_root)
     if context is None:
-        return ""
+        return _com_portao("", portao)
     if name in {"PostToolUse", "PostToolUseFailure"}:
         return _handle_post_tool(payload, context)
     if name == "Stop":
-        return _handle_stop(payload, context)
+        return _com_portao(_handle_stop(payload, context), portao)
     return ""
 
 
