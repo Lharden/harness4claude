@@ -91,7 +91,13 @@ def _bash_executable() -> str | None:
 
 
 def pytest_configure(config):
-    """Resolve o plugin root e registra as marcas da suite."""
+    """Recusa a sessao fora do `.venv` do repositorio; resolve o plugin root e registra as marcas da suite.
+
+    A recusa (Onda 3, lote 3-B) vem do nucleo derivado `tests/_ambiente.py` (`mh identidade semear --artefato
+    ambiente`); a configuracao local e esta chamada: a suite roda em `<raiz>/.venv`, sem caminho isento."""
+    import _ambiente
+
+    _ambiente.conferir(config, Path(__file__).resolve().parent.parent, ".venv")
     if "HARNESS_PLUGIN_ROOT" not in os.environ:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         os.environ["HARNESS_PLUGIN_ROOT"] = root
