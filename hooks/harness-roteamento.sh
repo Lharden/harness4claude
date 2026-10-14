@@ -13,8 +13,10 @@ set -uo pipefail
 EVENTO="${1:-UserPromptSubmit}"
 
 # >>> mh:preludio (DERIVADO de master-harness:mh/interpretador.py; nao edite: mh identidade semear --artefato preludio)
-# Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
-_MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
+# Interpretador nomeado (master-harness). Sem marcador, `python` — e a queda fica registrada.
+export PYTHONNOUSERSITE=1
+_MH_CASA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}"
+_MH_MARCA="$_MH_CASA/interpretador"
 PY="python"
 if [ -r "$_MH_MARCA" ]; then
     _MH_CAND=""
@@ -22,6 +24,10 @@ if [ -r "$_MH_MARCA" ]; then
     _MH_CAND="${_MH_CAND#$'\xef\xbb\xbf'}"
     _MH_CAND="${_MH_CAND%$'\r'}"
     [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
+fi
+if [ "$PY" = "python" ] && [ -d "$_MH_CASA/batimentos" ]; then
+    _MH_EU=${0##*[/\\]}
+    printf '%s %s\n' "${EPOCHSECONDS:-0}" "$_MH_EU" >> "$_MH_CASA/batimentos/interpretador-queda" 2>/dev/null || true
 fi
 # <<< mh:preludio
 
