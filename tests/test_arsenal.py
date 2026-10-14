@@ -49,6 +49,12 @@ def ars():
     return mod
 
 
+@pytest.fixture(autouse=True)
+def _codex_isolado(tmp_path, monkeypatch):
+    """O reconcile le tambem o config.toml do Codex. Sem isto cada teste leria o da maquina."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "sem-codex-real"))
+
+
 def _registry(**over):
     base = {
         "schema_version": 1,
@@ -403,6 +409,108 @@ class TestReconcile:
         _escreve_registry(tmp_path, {"schema_version": 1, "updated": "2026-08-12", "tools": []},
                           dispensados=[{"id": "x", "motivo": "m", "decidido_em": "2026-08-12"}])
         assert ars.command_reconcile(tmp_path)["achados"] == []
+
+
+class TestMcpUsuario:
+    """Servidores MCP de usuario: uma leitura so, para o reconcile e para a contagem."""
+
+    def _home(self, tmp_path, monkeypatch, claude=None, codex=None):
+        """HOME temporario com ~/.claude.json e ~/.codex/config.toml falsos."""
+        bsi = sys.modules["build_skills_index"]
+        home = tmp_path / "home"
+        (home / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        monkeypatch.setattr(bsi, "CLAUDE_JSON", str(home / ".claude.json"))
+        for nome in ("INSTALLED_JSON", "SETTINGS_JSON"):
+            vazio = tmp_path / f"{nome}.json"
+            vazio.write_text("{}", encoding="utf-8")
+            monkeypatch.setattr(bsi, nome, str(vazio))
+        monkeypatch.setattr(bsi, "PERSONAL_SKILLS_DIR", str(tmp_path / "sem-skills"))
+        monkeypatch.setattr(bsi, "ALIASES_JSON", str(tmp_path / "sem-aliases.json"))
+        if claude is not None:
+            (home / ".claude.json").write_text(json.dumps(claude), encoding="utf-8")
+        if codex is not None:
+            (home / ".codex" / "config.toml").write_text(codex, encoding="utf-8")
+        return home
+
+    def _reg(self, ident):
+        return {"schema_version": 1, "updated": "2026-10-14", "tools": [{
+            "id": ident, "kind": "mcp", "decisao": "adotado", "decidido_em": "2026-10-14",
+            "por_que": "servidor de usuario", "rollback": "claude mcp remove " + ident}]}
+
+    def test_registrado_e_presente_nao_sai_orfao(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={"mcpServers": {"obsidian": {"command": "x"}}})
+        _escreve_registry(tmp_path, self._reg("obsidian"))
+        res = ars.command_reconcile(tmp_path)
+        assert [a for a in res["achados"] if a["id"] == "obsidian"] == []
+        assert res["ready"] is True
+
+    def test_registrado_e_ausente_continua_orfao(self, ars, tmp_path, monkeypatch):
+        """Outra metade: a cobranca de presenca nao foi afrouxada."""
+        self._home(tmp_path, monkeypatch, claude={"mcpServers": {}})
+        _escreve_registry(tmp_path, self._reg("obsidian"))
+        res = ars.command_reconcile(tmp_path)
+        assert [(a["tipo"], a["id"]) for a in res["achados"]] == [("orfa", "obsidian")]
+        assert res["ready"] is False
+
+    def test_presente_e_fora_do_registry_e_fantasma(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={"mcpServers": {"obsidian": {}, "novo": {}}})
+        _escreve_registry(tmp_path, self._reg("obsidian"))
+        res = ars.command_reconcile(tmp_path)
+        assert [(a["tipo"], a["id"]) for a in res["achados"]] == [("fantasma", "novo")]
+        assert res["ready"] is False
+
+    def test_servidor_do_codex_entra_pela_chave_mcp_servers(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={}, codex=(
+            '[mcp_servers.GitKraken]\ncommand = "x"\n[mcp_servers.GitKraken.env]\nTOKEN = "segredo-123"\n'))
+        regs, avisos = ars.servidores_mcp_usuario()
+        assert [(r["id"], r["kind"], r["origens"]) for r in regs] == [("GitKraken", "mcp", ["codex"])]
+        assert "segredo-123" not in json.dumps(regs) + json.dumps(avisos)
+        _escreve_registry(tmp_path, self._reg("GitKraken"))
+        assert ars.command_reconcile(tmp_path)["achados"] == []
+
+    def test_mesmo_nome_nos_dois_vira_um_registro(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={"mcpServers": {"obsidian": {}}},
+                   codex='[mcp_servers.obsidian]\ncommand = "x"\n')
+        regs, _ = ars.servidores_mcp_usuario()
+        assert [(r["id"], r["origens"]) for r in regs] == [("obsidian", ["claude", "codex"])]
+
+    def test_arquivo_ausente_vira_aviso_nomeado_nao_zero_calado(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch)
+        regs, avisos = ars.servidores_mcp_usuario()
+        assert regs == []
+        assert any(".claude.json" in a and "ausente" in a for a in avisos)
+        assert any("config.toml" in a and "ausente" in a for a in avisos)
+        _escreve_registry(tmp_path, self._reg("obsidian"))
+        assert any("ausente" in w for w in ars.command_reconcile(tmp_path)["warnings"])
+
+    def test_arquivo_ilegivel_vira_aviso_nomeado(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={}, codex="[[[ nao e toml")
+        (tmp_path / "home" / ".claude.json").write_text("{quebrado", encoding="utf-8")
+        regs, avisos = ars.servidores_mcp_usuario()
+        assert regs == []
+        assert any(".claude.json" in a and "ilegível" in a for a in avisos)
+        assert any("config.toml" in a and "ilegível" in a for a in avisos)
+
+    def test_contagem_de_superficie_continua_igual(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={"mcpServers": {"b": {}, "a": {}, "c": {}}})
+        sup = ars.superficie_mcp()
+        assert sup["servidores"] == 3
+        assert [d["servidor"] for d in sup["detalhe"]] == ["a", "b", "c"]
+        assert all(d["usos_do_plugin"] == 0 for d in sup["detalhe"])
+
+    def test_superficie_e_reconcile_leem_a_mesma_fonte(self, ars, tmp_path, monkeypatch):
+        """Duas leituras da mesma fonte foi o defeito: ambas passam por servidores_mcp_usuario."""
+        self._home(tmp_path, monkeypatch, claude={"mcpServers": {"a": {}}})
+        chamadas = []
+        original = ars.servidores_mcp_usuario
+        monkeypatch.setattr(ars, "servidores_mcp_usuario",
+                            lambda *a, **k: chamadas.append(1) or original(*a, **k))
+        ars.superficie_mcp()
+        ars.command_reconcile(tmp_path)
+        assert len(chamadas) == 2
 
 
 class TestBudget:
