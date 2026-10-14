@@ -537,6 +537,67 @@ def _novo_agregado(ident: str, kind: str, plugin_key: str | None, enabled: bool)
     }
 
 
+def _codex_config_path() -> Path:
+    """`$CODEX_HOME/config.toml`, ou `~/.codex/config.toml`. Resolvido na CHAMADA."""
+    base = os.environ.get("CODEX_HOME")
+    return (Path(base) if base else Path.home() / ".codex") / "config.toml"
+
+
+def servidores_mcp_usuario(
+    claude_json: str | os.PathLike | None = None,
+    codex_toml: str | os.PathLike | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Servidores MCP de USUÁRIO: a única leitura, para o reconcile e para a superfície.
+
+    Claude: chave `mcpServers` do ~/.claude.json. Codex: tabela `mcp_servers` do
+    config.toml (nome real da chave, conferido no arquivo). Só os NOMES saem
+    daqui: `env`, `args`, urls e tokens nunca são copiados para o resultado.
+
+    Devolve (registros, avisos). Os registros têm o formato do agregado que o
+    reconcile consome (`_novo_agregado`, kind="mcp"), mais `origens`. Arquivo
+    ausente ou ilegível vira AVISO nomeado: "zero servidores" calado seria
+    indistinguível de "não consegui ler".
+    """
+    avisos: list[str] = []
+    origens: dict[str, set[str]] = {}
+
+    def nomes(chave: str, bruto: Any, origem: str, caminho: Path) -> None:
+        if bruto is None:
+            return
+        if not isinstance(bruto, dict):
+            avisos.append(f"mcp {origem}: `{chave}` em {caminho} não é uma tabela — servidores ignorados")
+            return
+        for nome in bruto:
+            origens.setdefault(str(nome), set()).add(origem)
+
+    caminho_c = Path(claude_json if claude_json is not None else bsi.CLAUDE_JSON)
+    try:
+        dados = json.loads(caminho_c.read_text(encoding="utf-8"))
+        if not isinstance(dados, dict):
+            raise ValueError("raiz não é um objeto JSON")
+        nomes("mcpServers", dados.get("mcpServers"), "claude", caminho_c)
+    except FileNotFoundError:
+        avisos.append(f"mcp claude: {caminho_c} ausente — servidores MCP do Claude não lidos")
+    except (OSError, ValueError) as exc:
+        avisos.append(f"mcp claude: {caminho_c} ilegível ({type(exc).__name__}) — servidores MCP do Claude não lidos")
+
+    caminho_x = Path(codex_toml) if codex_toml is not None else _codex_config_path()
+    try:
+        dados_x = tomllib.loads(caminho_x.read_text(encoding="utf-8"))
+        nomes("mcp_servers", dados_x.get("mcp_servers"), "codex", caminho_x)
+    except FileNotFoundError:
+        avisos.append(f"mcp codex: {caminho_x} ausente — servidores MCP do Codex não lidos")
+    except (OSError, ValueError) as exc:
+        avisos.append(f"mcp codex: {caminho_x} ilegível ({type(exc).__name__}) — servidores MCP do Codex não lidos")
+
+    registros = []
+    for nome in sorted(origens):
+        reg = _novo_agregado(nome, "mcp", None, True)
+        reg.update(tokens=0, tokens_oficiais=None, fonte_do_custo="nao_medido", origens=sorted(origens[nome]))
+        registros.append(reg)
+    return registros, avisos
+
+
 def agregado_por_ferramenta(entradas: list[dict]) -> dict[str, dict]:
     """Agrupa na unidade que se instala e se remove: o plugin (ou a skill pessoal).
 
@@ -644,6 +705,11 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False, 
 
     skills = roster()
     disco = agregado_por_ferramenta(skills + comandos())
+    mcps, avisos_mcp = servidores_mcp_usuario()
+    warnings.extend(avisos_mcp)
+    for reg in mcps:
+        # Plugin com o mesmo id já ocupa a chave: a decisão do registry vale para os dois.
+        disco.setdefault(reg["id"], reg)
     habilitadas = {k: v for k, v in disco.items() if v["enabled"]}
 
     # Um id humano ('superpowers') que resolva para dois marketplaces é ambíguo:
@@ -747,6 +813,7 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False, 
             "dispensados": len(dispensados),
             "ferramentas_habilitadas": len(habilitadas),
             "skills_no_disco": len(skills),
+            "mcp_usuario": len(mcps),
             "fantasmas": sum(1 for a in achados if a["tipo"] == "fantasma"),
             "orfas": sum(1 for a in achados if a["tipo"] == "orfa"),
             "recaidas": sum(1 for a in achados if a["tipo"] == "recaida"),
@@ -1552,15 +1619,15 @@ def superficie_mcp() -> dict:
     O que isto entrega: a SUPERFÍCIE deixa de ser invisível. Dá para ver que há N
     servidores e quantos deles nunca foram usados, mesmo sem saber o preço.
     """
-    config = bsi._load_json(str(Path.home() / ".claude.json"), {}) or {}
-    servidores = config.get("mcpServers") or {}
+    registros, avisos = servidores_mcp_usuario()
     uso = uso_de_plugin()
-    linhas = []
-    for nome in sorted(servidores):
-        linhas.append({"servidor": nome, "usos_do_plugin": uso.get(_short(nome), 0)})
+    linhas = [
+        {"servidor": r["id"], "origens": r["origens"], "usos_do_plugin": uso.get(_short(r["id"]), 0)} for r in registros
+    ]
     return {
-        "servidores": len(servidores),
+        "servidores": len(registros),
         "detalhe": linhas,
+        "avisos": avisos,
         "nota": (
             "contagem de servidores, NÃO custo em tokens. Os schemas de tool não são "
             "legíveis daqui; o `always_on` do catálogo cobre só plugin de marketplace."
@@ -1593,7 +1660,7 @@ def command_spend(teto: int) -> dict:
     for entrada in ultimos:
         total = sum(int(v or 0) for v in (entrada.get("tokensByModel") or {}).values())
         por_dia.append({"data": entrada.get("date"), "tokens": total})
-    avisos = list(orcamento["warnings"])
+    avisos = list(orcamento["warnings"]) + list(mcp["avisos"])
     calculado = stats.get("lastComputedDate")
     if not diario:
         avisos.append("sem histórico de gasto em stats-cache.json — execução não medida")
