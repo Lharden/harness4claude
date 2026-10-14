@@ -8,9 +8,12 @@ description: Varredura de segurança on-demand para código Python usando bandit
 Varredura de segurança local, grátis e sem login. `bandit` faz SAST do código;
 `pip-audit` checa CVEs nas dependências instaladas/lockfile.
 
-Ambos são instalados automaticamente no bootstrap do Harness (SessionStart →
-`pip install --user -r requirements.txt`). Se faltarem nesta máquina, instale:
-`pip install --user bandit pip-audit` (ou `uv tool install bandit && uv tool install pip-audit`).
+Os dois rodam por `uvx`, cada um num ambiente efêmero do uv, com a versão fixada
+abaixo; nada fica instalado no site do usuário nem no do sistema. Trocar de versão é
+mudar o número nos comandos desta skill, num commit.
+
+- `bandit` 1.9.4: `uvx --from bandit==1.9.4 bandit`
+- `pip-audit` 2.10.1: `uvx --from pip-audit==2.10.1 pip-audit`
 
 ## Quando usar
 
@@ -22,13 +25,13 @@ Ambos são instalados automaticamente no bootstrap do Harness (SessionStart →
 
 ### 1. Verificar disponibilidade
 ```bash
-command -v bandit || echo "instale: pip install --user bandit"
+command -v uvx || echo "falta o uv (https://docs.astral.sh/uv/): os scanners rodam por uvx"
 ```
 
 ### 2. SAST com bandit (alvo = diretório do projeto)
 Reporta apenas severidade média+ e confiança média+ (reduz ruído), pula venvs e testes:
 ```bash
-bandit -r . -ll -ii \
+uvx --from bandit==1.9.4 bandit -r . -ll -ii \
   --exclude './.venv,./venv,./tests,./.git,./node_modules' \
   -f screen
 ```
@@ -38,13 +41,22 @@ bandit -r . -ll -ii \
 
 Escopo reduzido (só o que mudou no branch):
 ```bash
-git diff --name-only --diff-filter=ACM main...HEAD | grep '\.py$' | xargs -r bandit -ll -ii
+git diff --name-only --diff-filter=ACM main...HEAD | grep '\.py$' | xargs -r uvx --from bandit==1.9.4 bandit -ll -ii
 ```
 
 ### 3. CVEs de dependências (pip-audit)
+O `pip-audit` roda no ambiente efêmero do `uvx`; "o ambiente atual" seria o dele, não o
+do projeto. Aponte sempre o alvo:
 ```bash
-pip-audit                          # ambiente atual
-pip-audit -r requirements.txt      # a partir de um requirements
+# projeto com uv.lock: as versoes travadas, exportadas para um arquivo temporario
+uv export --frozen --format requirements.txt --no-hashes -o "${TMPDIR:-/tmp}/req-audit.txt"
+uvx --from pip-audit==2.10.1 pip-audit -r "${TMPDIR:-/tmp}/req-audit.txt"
+
+# projeto com requirements.txt
+uvx --from pip-audit==2.10.1 pip-audit -r requirements.txt
+
+# um venv ja criado (os pacotes instalados nele)
+uvx --from pip-audit==2.10.1 pip-audit --path .venv/Lib/site-packages   # Windows; fora dele: .venv/lib/python3.X/site-packages
 ```
 
 ## Como reportar

@@ -18,6 +18,8 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+# Ambiente de teste do uv.lock (`uv sync --locked`); nunca versionado.
+.venv/
 .ruff_cache/
 .pytest_tmp_*/
 *.egg-info/
