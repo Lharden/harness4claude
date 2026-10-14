@@ -81,8 +81,10 @@ On first launch, the `SessionStart` hook automatically:
 
 1. Creates the state directory at `~/.claude/harness/` if it does not exist
 2. Initializes `state.json` and `signals.json` with default values
-3. Checks for required dependencies (Python is the hard one; see below)
-4. Installs pip requirements from `requirements.txt` if missing
+3. Checks for required dependencies (Python is the hard one; see below) and warns about what is missing
+
+It never installs anything. The test and lint
+environment is the repository's `.venv`, built from `uv.lock` (see System Requirements).
 
 If anything goes wrong, run the diagnostic script:
 
@@ -98,7 +100,6 @@ Example output:
 ```
 [OK] Python 3.12.4
 [OK] jq 1.7.1
-[OK] pytest 8.2.0
 [OK] state.json exists
 [OK] signals.json exists
 [OK] classify hook registered
@@ -112,13 +113,18 @@ Example output:
 |------------|----------------|--------------------|-----------------|-----------------|
 | Python | 3.10+ | `winget install Python.Python.3.12` | `brew install python@3.12` | `apt install python3` |
 | Bash | 5+ | Git for Windows | built in | `apt install bash` |
-| pytest | 7+ | `pip install pytest` | `pip install pytest` | `pip install pytest` |
+| uv | 0.12+ | `winget install astral-sh.uv` | `brew install uv` | see docs.astral.sh/uv |
 | jq | 1.7+ | `winget install jqlang.jq` | `brew install jq` | `apt install jq` |
 
 Python and Bash are runtime dependencies. Hooks parse JSON through inline Python;
 the shell wrappers provide Claude Code lifecycle entrypoints. The Python/unit suite
 always runs; Bash integration tests are explicitly skipped with a visible reason on
-hosts without a Bash executable. `jq` is diagnostic convenience and `pytest` runs tests.
+hosts without a Bash executable. `jq` is diagnostic convenience.
+
+`uv` builds the test environment: `pytest`, `pyyaml`, `ruff` and `jsonschema` are the `dev`
+group of `pyproject.toml`, pinned in `uv.lock`, on the Python of `.python-version` (3.11,
+the hooks' runtime). Create it with `UV_PYTHON_DOWNLOADS=never uv sync --locked` and run
+tests with `.venv/Scripts/python.exe -m pytest tests/` (Windows) or `.venv/bin/python -m pytest tests/`.
 
 ---
 
@@ -147,7 +153,7 @@ phases to it. The other plugins enhance the pipeline but are not strictly requir
 | `grill-me` | Adversarial spec review. Challenges the spec from multiple angles to surface missing edge cases, ambiguous requirements, and unstated assumptions before implementation begins. |
 | `discuss` | Upstream alignment phase. Captures user decisions in three tiers -- Locked, Deferred, and Discretion -- before planning. Generates `docs/CONTEXT.md` that constrains all downstream steps. |
 | `validate-plan` | Pre-execution plan validation. Checks that the implementation plan covers all requirements from CONTEXT.md and the spec. Detects gaps, broken dependencies, and scope drift. Auto-revises up to 2 times. |
-| `security-scan-python` | On-demand Python security scan using `bandit` (SAST) and `pip-audit` (dependency CVEs). Free, no token/login. Triggered only when asked ("scan de segurança", "run bandit", "check vulnerabilities"). `bandit`/`pip-audit` are auto-installed via `requirements.txt` on bootstrap. |
+| `security-scan-python` | On-demand Python security scan using `bandit` (SAST) and `pip-audit` (dependency CVEs). Free, no token/login. Triggered only when asked ("scan de segurança", "run bandit", "check vulnerabilities"). `bandit`/`pip-audit` run through `uvx` with pinned versions; nothing is installed. |
 
 ---
 
@@ -226,7 +232,7 @@ The `harness-workflow` skill reads this tag to determine which pipeline to execu
 Run the full test suite:
 
 ```bash
-cd /path/to/harness4claude && python -m pytest tests/ -v
+cd /path/to/harness4claude && UV_PYTHON_DOWNLOADS=never uv sync --locked && .venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
 Tests cover:
@@ -394,7 +400,6 @@ plugin's CLAUDE.md overrides.
 | Setting | Location | Default | Description |
 |---------|----------|---------|-------------|
 | Classification language | classify hook | `bilingual` | Keyword matching language (`en`, `pt`, `bilingual`) |
-| Auto-install deps | SessionStart hook | `true` | Whether to pip-install missing requirements on start |
 | Max grill-me rounds | signals.json | `3` | Maximum adversarial review iterations before auto-approve |
 | Verify strictness | verify-against-spec | `strict` | `strict` requires evidence for every AC; `lenient` allows partial coverage |
 

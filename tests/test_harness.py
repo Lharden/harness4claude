@@ -215,8 +215,8 @@ class HarnessTestBase(unittest.TestCase):
         if not os.environ.get("HARNESS_DIR"):
             cls._own_tmp = tempfile.mkdtemp(prefix="harness-test-")
             os.environ["HARNESS_DIR"] = cls._own_tmp
-            # Sem o flag .bootstrap-done num dir novo, o dep-check do
-            # session-start dispararia "pip install --user" a cada invocacao.
+            # Sem o flag .bootstrap-done num dir novo, o session-start repetiria o aviso
+            # de dependencias do primeiro run a cada invocacao (o pip saiu na Onda 3).
             os.environ.setdefault("HARNESS_SKIP_DEPCHECK", "1")
         os.makedirs(_harness_dir(), exist_ok=True)
 

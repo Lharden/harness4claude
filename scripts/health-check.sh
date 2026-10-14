@@ -55,7 +55,21 @@ echo "--- Dependencies ---"
 # hooks/ ou scripts/ — era um gate FAIL sobre algo que nada usa. jq/ruff/pyright
 # viraram WARN: sao ferramentas de inspecao e de lint, nao do caminho de execucao.
 check "python"           "command -v python"
-check "pytest"           "python -m pytest --version"
+# O pytest nao e do Python do PATH: e do `.venv` do uv.lock (grupo `dev` do pyproject.toml). Sem `uv` o ambiente de
+# teste nao se cria; e sem o lock em dia ele daria verde com dependencia velha. O `requirements.txt` saiu (Onda 3).
+# WARN e nao FAIL: o ambiente de teste nao e do caminho de execucao dos hooks. `--offline`: o diagnostico nunca vai a
+# rede; sem resposta offline, o aviso diz que nao conferiu (nunca "ok").
+if command -v uv >/dev/null 2>&1; then
+    if [ -f "$PLUGIN_DIR/uv.lock" ]; then
+        if UV_PYTHON_DOWNLOADS=never uv lock --check --offline --project "$PLUGIN_DIR" >/dev/null 2>&1; then
+            echo "[OK]     uv.lock em dia com o pyproject.toml"
+        else
+            warn "uv.lock desatualizado ou nao conferido offline (uv lock --check --project $PLUGIN_DIR)"
+        fi
+    fi
+else
+    warn "uv ausente (opcional — cria o .venv de teste do uv.lock: UV_PYTHON_DOWNLOADS=never uv sync --locked)"
+fi
 command -v jq      >/dev/null 2>&1 || warn "jq ausente (opcional — nenhum hook o usa; util para inspecionar signals.json)"
 command -v ruff    >/dev/null 2>&1 || warn "ruff ausente (opcional — lint da suite)"
 command -v pyright >/dev/null 2>&1 || warn "pyright ausente (opcional — type check da suite)"

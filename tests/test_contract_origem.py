@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -123,11 +124,16 @@ class TestInvarianteDaMigracao:
     endereco para virar uma troca de conteudo.
     """
 
-    def test_vizinho_e_canonica_produzem_o_mesmo_relatorio(self, adapter) -> None:
+    def test_vizinho_e_canonica_produzem_o_mesmo_relatorio(self, adapter, monkeypatch) -> None:
+        # O `mh` vem de `MH_RAIZ` (o MH que o `mh integrar` esta julgando, item 2.8), nao do site do Python que roda a
+        # suite: no `.venv` do HC (Onda 3) nao ha `master-harness`, e antes dele o `mh` vinha do site do sistema.
+        raiz_mh = os.environ.get("MH_RAIZ")
+        if raiz_mh:
+            monkeypatch.syspath_prepend(raiz_mh)
         try:
             from mh import contrato  # noqa: PLC0415
         except ImportError:
-            pytest.skip("master-harness nao instalado nesta maquina")
+            pytest.skip("sem o master-harness: defina MH_RAIZ (o `mh integrar` define)")
         if not (contrato.CANONICA / "capabilities.json").is_file():
             pytest.skip("canonica ausente")
 

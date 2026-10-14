@@ -33,10 +33,10 @@ if sys.platform == "win32":
 def _env(**extra: str) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
-    # Com HARNESS_DIR temporario o flag .bootstrap-done nunca existe, e o
-    # dep-check do session-start dispararia "pip install --user" a cada
-    # invocacao — lento, dependente de rede e com efeito colateral fora do
-    # diretorio isolado (chegou a criar pip/cache/ no repo).
+    # Com HARNESS_DIR temporario o flag .bootstrap-done nunca existe; ate a Onda 3
+    # o dep-check do session-start disparava o `pip` do PATH com `--user` a cada
+    # invocacao (chegou a criar pip/cache/ no repo). Hoje so avisa; o flag
+    # continua para o aviso nao repetir.
     env["HARNESS_SKIP_DEPCHECK"] = "1"
     # Remove heranca do ambiente do pytest para nao mascarar o caso "ausente"
     env.pop("HARNESS_DIR", None)

@@ -155,12 +155,16 @@ print(need)
     fi
 fi
 
-# Dep check (first run only)
+# Dep check (first run only): so avisa o que falta, nunca instala.
 #
-# HARNESS_SKIP_DEPCHECK=1 pula este bloco. Necessario para testes hermeticos:
-# com HARNESS_DIR temporario o flag .bootstrap-done nunca existe, entao cada
-# invocacao dispararia um "pip install --user" — lento, dependente de rede, e
-# com efeito colateral fora do diretorio isolado.
+# Ate a Onda 3 do master-harness este bloco rodava o `pip` do PATH com `--user -r
+# requirements.txt` no primeiro SessionStart de cada HARNESS_DIR: o pip do PATH
+# escrevia no site do usuario (a classe do D-026). O requirements.txt saiu; o
+# ambiente de teste e o `.venv` do uv.lock, e a skill de seguranca chama
+# bandit/pip-audit por `uvx` com versao fixada.
+#
+# HARNESS_SKIP_DEPCHECK=1 pula o aviso (testes hermeticos: com HARNESS_DIR
+# temporario o flag .bootstrap-done nunca existe).
 BOOTSTRAP_FLAG="$HARNESS_DIR/.bootstrap-done"
 if [ -n "${HARNESS_SKIP_DEPCHECK:-}" ]; then
     touch "$BOOTSTRAP_FLAG" 2>/dev/null || true
@@ -170,12 +174,6 @@ elif [ ! -f "$BOOTSTRAP_FLAG" ]; then
     command -v jq >/dev/null 2>&1 || MISSING="$MISSING jq"
     if [ -n "$MISSING" ]; then
         echo "Harness v3: dependencias faltando:$MISSING" >&2
-    fi
-    if command -v pip >/dev/null 2>&1; then
-        PLUGIN_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-        if [ -f "$PLUGIN_DIR/requirements.txt" ]; then
-            pip install --user -q -r "$PLUGIN_DIR/requirements.txt" 2>/dev/null || true
-        fi
     fi
     touch "$BOOTSTRAP_FLAG"
 fi

@@ -202,8 +202,8 @@ def harness_dir(tmp_path_factory, request):
     d = tmp_path_factory.mktemp("harness")
     mp = pytest.MonkeyPatch()
     mp.setenv("HARNESS_DIR", str(d))
-    # Evita que o dep-check do session-start dispare "pip install --user" a cada
-    # invocacao: com HARNESS_DIR temporario o flag .bootstrap-done nunca existe.
+    # Pula o aviso de dependencias do primeiro run do session-start (a instalacao com o `pip` que havia ali saiu na
+    # Onda 3): com HARNESS_DIR temporario o flag .bootstrap-done nunca existe.
     mp.setenv("HARNESS_SKIP_DEPCHECK", "1")
     yield d
     mp.undo()

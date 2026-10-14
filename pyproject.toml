@@ -10,6 +10,26 @@
 #   ruff format --diff .  # formatacao (nao aplicada automaticamente)
 #   pyright               # type-check
 
+# Ambiente de teste e lint (Onda 3 do master-harness, lote 3-A). O projeto e virtual: os scripts rodam soltos e nada se
+# instala (`tool.uv.package = false`); a tabela existe para o `uv lock` resolver o grupo `dev` (sem ela, zero pacotes).
+# O `uv.lock` trava as versoes e o `.python-version` diz o Python de producao (3.11, o runtime dos hooks). O `.venv`
+# nasce com `UV_PYTHON_DOWNLOADS=never uv sync --locked`; o `mh testar` e o `mh pronto` o criam. Saiu daqui o
+# `requirements.txt` (e o `pip install --user` do SessionStart); `bandit` e `pip-audit` sao da skill de seguranca, que
+# os chama por `uvx` com versao fixada.
+[project]
+name = "harness4claude"
+version = "0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+# `jsonschema`: tests/test_state_migration.py o importa (importorskip); vinha do site do sistema, e no `.venv` sem ele o
+# teste viraria pulado calado.
+dev = ["pytest>=7.0", "pyyaml>=6.0", "ruff>=0.16", "jsonschema>=4"]
+
+[tool.uv]
+package = false
+
 [tool.ruff]
 # 120 e o estilo de fato do repo, medido: as linhas longas pre-existentes ficam entre
 # 101 e 123 chars. Escolher 100 seria impor um numero novo e gerar 11 achados em codigo
