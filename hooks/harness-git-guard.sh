@@ -17,6 +17,7 @@
 
 set -uo pipefail
 
+# >>> mh:preludio (DERIVADO de master-harness:mh/interpretador.py; nao edite: mh identidade semear --artefato preludio)
 # Interpretador nomeado (master-harness). Sem marcador, `python` — o de sempre.
 _MH_MARCA="${MASTER_HARNESS_HOME:-$HOME/.master-harness}/interpretador"
 PY="python"
@@ -27,6 +28,7 @@ if [ -r "$_MH_MARCA" ]; then
     _MH_CAND="${_MH_CAND%$'\r'}"
     [ -n "$_MH_CAND" ] && [ -x "$_MH_CAND" ] && PY="$_MH_CAND"
 fi
+# <<< mh:preludio
 
 _HD="${HARNESS_DIR:-$HOME/.claude/harness}"
 
