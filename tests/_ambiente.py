@@ -23,8 +23,10 @@ nao tem nao prova nada (LL-02). O `mh testar`, o `mh pronto` e o `mh integrar` j
 
 Regras, na ordem (design `docs/specs/ambiente-isolado-design.md`, componente 2):
 
-1. `MH_PROVA_VENV` definida: aceita so se `sys.prefix` resolve para ela e ela mora dentro de `tempfile.gettempdir()`
-   (a prova dinamica monta um venv por base na pasta temporaria da execucao).
+1. `MH_PROVA_VENV` definida: aceita so se `sys.prefix` resolve para ela e a pasta temporaria desta sessao
+   (`tempfile.gettempdir()`) mora dentro da pasta-mae dela. A prova dinamica monta um venv por base em
+   `<execucao>/<host>/venv` e redireciona o TEMP de cada rodada para `<execucao>/<host>/<rodada>/tmp`: o venv e a
+   rodada sao irmaos na pasta do host, e o venv nunca fica dentro do TEMP da rodada (medido no lote 3-B, item 3.3).
 2. Todos os argumentos de caminho comecam por um prefixo de `isentos` (no MH, `tests/s1`, que roda no `.venv-s1`):
    aceita.
 3. `sys.prefix` diferente de `<raiz>/<pasta>`: recusa, nomeando o interpretador usado, a versao e o comando certo.
@@ -99,10 +101,10 @@ def motivo_da_recusa(*, raiz: Path, pasta: str = ".venv", isentos: Iterable[str]
     prova = env.get(PROVA_VENV, "")
     if prova:
         temporaria = tempfile.gettempdir() if temporaria is None else temporaria
-        if _normal(prefixo) == _normal(prova) and _dentro(_normal(prova), _normal(temporaria)):
+        if _normal(prefixo) == _normal(prova) and _dentro(_normal(temporaria), os.path.dirname(_normal(prova))):
             return None
-        return (f"{PROVA_VENV}={prova} nao e o venv desta sessao ({prefixo}) ou nao mora na pasta temporaria "
-                f"({temporaria}): a prova dinamica roda no venv que ela mesma monta. Nada rodou.")
+        return (f"{PROVA_VENV}={prova} nao e o venv desta sessao ({prefixo}) ou a pasta temporaria ({temporaria}) "
+                f"nao mora ao lado dele: a prova dinamica roda no venv que ela mesma monta. Nada rodou.")
 
     rels = _caminhos(args, invocacao, raiz)
     if isentos and rels and all(_isento(r, isentos) for r in rels):
