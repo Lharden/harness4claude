@@ -634,8 +634,12 @@ class _Opcoes:
     curtas_com_valor: str
 
 
-def _opcoes(listagem: str, ocultas: str = "", curtas_com_valor: str = "") -> _Opcoes:
-    """Le a saida de `git <sub> --git-completion-helper` (o `=` final marca valor obrigatorio) e as ocultas dela."""
+def opcoes(listagem: str, ocultas: str = "", curtas_com_valor: str = "") -> _Opcoes:
+    """Le a saida de `git <sub> --git-completion-helper` (o `=` final marca valor obrigatorio) e as ocultas dela.
+
+    Publica com `ler_opcoes` (MAQ F0): a lista permitida do git do `mh maquina` (`mh/maquina/gitseguro.py`) monta as
+    opcoes de cada subcomando por aqui, e as abreviacoes chegam resolvidas pela mesma leitura da politica de comando.
+    """
     nomes = [n for n in f"{listagem} {ocultas}".split() if n != "--"]
     return _Opcoes(
         frozenset(n.removeprefix("--").removesuffix("=") for n in nomes),
@@ -649,7 +653,7 @@ def _opcoes(listagem: str, ocultas: str = "", curtas_com_valor: str = "") -> _Op
 #: --branches`, `push --thin`). Uma opcao que falte aqui so pode fazer a politica bloquear a mais, nunca a menos:
 #: o prefixo ambiguo conta todas as candidatas (`_candidatas`).
 _GIT_OPCOES: dict[str, _Opcoes] = {
-    "push": _opcoes(
+    "push": opcoes(
         "--verbose --quiet --repo= --all --mirror --delete --tags --dry-run --porcelain --force --force-with-lease "
         "--force-if-includes --recurse-submodules= --receive-pack= --exec= --set-upstream --progress --prune "
         "--no-verify --follow-tags --signed --atomic --push-option= --ipv4 --ipv6 --verify -- --no-verbose "
@@ -660,7 +664,7 @@ _GIT_OPCOES: dict[str, _Opcoes] = {
         "--branches --thin --no-thin",
         curtas_com_valor="o",
     ),
-    "branch": _opcoes(
+    "branch": opcoes(
         "--verbose --quiet --track --set-upstream-to= --unset-upstream --color --remotes --contains --no-contains "
         "--abbrev --all --delete --move --omit-empty --copy --list --show-current --create-reflog "
         "--edit-description --delete-merged= --dry-run --merged --no-merged --forked= --column --sort= "
@@ -671,29 +675,29 @@ _GIT_OPCOES: dict[str, _Opcoes] = {
         "--force --no-force",
         curtas_com_valor="u",
     ),
-    "reset": _opcoes(
+    "reset": opcoes(
         "--quiet --no-refresh --mixed --soft --hard --merge --keep --recurse-submodules --patch --auto-advance "
         "--unified= --inter-hunk-context= --intent-to-add --pathspec-from-file= --pathspec-file-nul --stdin "
         "--refresh -- --no-quiet --no-recurse-submodules --no-patch --no-auto-advance --no-intent-to-add "
         "--no-pathspec-from-file --no-pathspec-file-nul --no-stdin",
     ),
-    "gc": _opcoes(
+    "gc": opcoes(
         "--quiet --prune --cruft --max-cruft-size= --aggressive --detach --keep-largest-pack --expire-to= "
         "--no-quiet -- --no-prune --no-cruft --no-aggressive --no-detach --no-keep-largest-pack --no-expire-to",
     ),
-    "prune": _opcoes(
+    "prune": opcoes(
         "--dry-run --verbose --progress --expire= --exclude-promisor-objects --no-dry-run -- --no-verbose "
         "--no-progress --no-expire --no-exclude-promisor-objects",
     ),
-    "reflog expire": _opcoes(
+    "reflog expire": opcoes(
         "--dry-run --rewrite --updateref --verbose --expire= --expire-unreachable= --stale-fix --all "
         "--single-worktree --no-dry-run -- --no-rewrite --no-updateref --no-verbose --no-stale-fix --no-all "
         "--no-single-worktree",
     ),
-    "reflog delete": _opcoes(
+    "reflog delete": opcoes(
         "--dry-run --rewrite --updateref --verbose --no-dry-run -- --no-rewrite --no-updateref --no-verbose",
     ),
-    "update-ref": _opcoes(
+    "update-ref": opcoes(
         "--no-deref --stdin --create-reflog --batch-updates --deref -- --no-stdin --no-create-reflog "
         "--no-batch-updates",
         curtas_com_valor="m",
@@ -733,8 +737,12 @@ def _candidatas(nome: str, opcoes: _Opcoes) -> frozenset[str]:
     return frozenset(o for o in opcoes.longas if o.startswith(nome)) if nome else frozenset()
 
 
-def _ler_opcoes(args: Sequence[str], opcoes: _Opcoes) -> _Lidos:
-    """As opcoes de `args` pelas regras do parse-options do git: em qualquer posicao ate `--`, curtas agrupaveis."""
+def ler_opcoes(args: Sequence[str], opcoes: _Opcoes) -> _Lidos:
+    """As opcoes de `args` pelas regras do parse-options do git: em qualquer posicao ate `--`, curtas agrupaveis.
+
+    Publica (MAQ F0, decisao do orquestrador): e a fonte unica da leitura das opcoes do git, aqui e na lista permitida
+    do `mh maquina` (`mh/maquina/gitseguro.py`, REQ-NF8 e ASSUMPTION-032 da spec da sincronia).
+    """
     lidos = _Lidos()
     index = 0
     while index < len(args):
@@ -783,7 +791,7 @@ def _force_push(args: list[str]) -> str | None:
     abreviacoes. `--force-if-includes` sozinho nao forca nada. Apagar ramo remoto (`--delete`, `-d`, `:ramo`,
     `--prune`) e push comum: avisa.
     """
-    lidos = _ler_opcoes(args, _GIT_OPCOES["push"])
+    lidos = ler_opcoes(args, _GIT_OPCOES["push"])
     if lidos.tem("force") or lidos.tem("force-with-lease") or "f" in lidos.curtas:
         return "force push"
     if lidos.tem("mirror"):
@@ -800,12 +808,12 @@ def _git_destrutivo(original: Sequence[str], args: Sequence[str]) -> str | None:
     """
     subcommand = args[0]
     flags = set(args[1:])
-    if subcommand == "reset" and _ler_opcoes(original[1:], _GIT_OPCOES["reset"]).tem("hard"):
+    if subcommand == "reset" and ler_opcoes(original[1:], _GIT_OPCOES["reset"]).tem("hard"):
         return "destructive git reset --hard"
     if subcommand == "clean" and any(flag.startswith("-") and "f" in flag[1:] for flag in flags):
         return "destructive git clean force"
     if subcommand == "branch":
-        lidos = _ler_opcoes(original[1:], _GIT_OPCOES["branch"])
+        lidos = ler_opcoes(original[1:], _GIT_OPCOES["branch"])
         apaga = "d" in lidos.curtas or lidos.tem("delete") or lidos.tem("delete-merged")
         forca = "f" in lidos.curtas or lidos.tem("force")
         if any("D" in flag[1:] for flag in original[1:] if flag.startswith("-")) or (apaga and forca):
@@ -816,15 +824,15 @@ def _git_destrutivo(original: Sequence[str], args: Sequence[str]) -> str | None:
         # O subcomando do stash e sempre o primeiro argumento; `git stash -q drop` e `push` com o caminho `drop`.
         return f"destructive git stash {args[1]}"
     reflog = f"reflog {args[1]}" if subcommand == "reflog" and len(args) > 1 else ""
-    if reflog in _GIT_OPCOES and not _ler_opcoes(original[2:], _GIT_OPCOES[reflog]).ensaio():
+    if reflog in _GIT_OPCOES and not ler_opcoes(original[2:], _GIT_OPCOES[reflog]).ensaio():
         return f"destructive git {reflog}"
     if subcommand == "gc":
-        for valor in _ler_opcoes(original[1:], _GIT_OPCOES["gc"]).valores("prune"):
+        for valor in ler_opcoes(original[1:], _GIT_OPCOES["gc"]).valores("prune"):
             if valor is not None and valor.lower() != "never":  # `--prune` sem valor e o prazo padrao (2 semanas)
                 return f"destructive git gc --prune={valor}"
-    if subcommand == "prune" and not _ler_opcoes(original[1:], _GIT_OPCOES["prune"]).ensaio():
+    if subcommand == "prune" and not ler_opcoes(original[1:], _GIT_OPCOES["prune"]).ensaio():
         return "destructive git prune"
-    if subcommand == "update-ref" and "d" in _ler_opcoes(original[1:], _GIT_OPCOES["update-ref"]).curtas:
+    if subcommand == "update-ref" and "d" in ler_opcoes(original[1:], _GIT_OPCOES["update-ref"]).curtas:
         return "destructive git update-ref -d"
     if subcommand == "filter-branch":
         return "history rewrite by git filter-branch"
