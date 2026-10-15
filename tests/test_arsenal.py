@@ -471,6 +471,26 @@ class TestMcpUsuario:
         _escreve_registry(tmp_path, self._reg("GitKraken"))
         assert ars.command_reconcile(tmp_path)["achados"] == []
 
+    def test_codex_enabled_false_nao_sai_e_sem_a_chave_sai(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={}, codex=(
+            '[mcp_servers.desligado]\ncommand = "x"\nenabled = false\n'
+            '[mcp_servers.padrao]\ncommand = "x"\n'))
+        regs, _ = ars.servidores_mcp_usuario()
+        assert [r["id"] for r in regs] == ["padrao"]
+
+    def test_codex_enabled_true_sai(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={}, codex='[mcp_servers.ligado]\nenabled = true\n')
+        regs, _ = ars.servidores_mcp_usuario()
+        assert [r["id"] for r in regs] == ["ligado"]
+
+    def test_codex_enabled_nao_booleano_nao_sai_e_avisa_sem_o_valor(self, ars, tmp_path, monkeypatch):
+        self._home(tmp_path, monkeypatch, claude={}, codex=(
+            '[mcp_servers.estranho]\nenabled = "no"\n[mcp_servers.estranho.env]\nTOKEN = "segredo-9"\n'))
+        regs, avisos = ars.servidores_mcp_usuario()
+        assert regs == []
+        assert any("estranho" in a and "booleano" in a for a in avisos)
+        assert "segredo-9" not in json.dumps(avisos)
+
     def test_mesmo_nome_nos_dois_vira_um_registro(self, ars, tmp_path, monkeypatch):
         self._home(tmp_path, monkeypatch, claude={"mcpServers": {"obsidian": {}}},
                    codex='[mcp_servers.obsidian]\ncommand = "x"\n')

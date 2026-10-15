@@ -553,6 +553,12 @@ def servidores_mcp_usuario(
     config.toml (nome real da chave, conferido no arquivo). Só os NOMES saem
     daqui: `env`, `args`, urls e tokens nunca são copiados para o resultado.
 
+    Desligado: no Codex, a tabela com `enabled = false` (booleano explícito) não
+    entra; sem a chave conta como habilitado (padrão do Codex); `enabled` não
+    booleano gera aviso (só o tipo, nunca o valor) e o servidor não entra. No
+    Claude não há desligado global de servidor de usuário: o `/mcp` desliga por
+    projeto em `projects.<raiz>.disabledMcpServers` (ver hooks/science_intent.py).
+
     Devolve (registros, avisos). Os registros têm o formato do agregado que o
     reconcile consome (`_novo_agregado`, kind="mcp"), mais `origens`. Arquivo
     ausente ou ilegível vira AVISO nomeado: "zero servidores" calado seria
@@ -561,13 +567,22 @@ def servidores_mcp_usuario(
     avisos: list[str] = []
     origens: dict[str, set[str]] = {}
 
-    def nomes(chave: str, bruto: Any, origem: str, caminho: Path) -> None:
+    def nomes(chave: str, bruto: Any, origem: str, caminho: Path, respeita_enabled: bool = False) -> None:
         if bruto is None:
             return
         if not isinstance(bruto, dict):
             avisos.append(f"mcp {origem}: `{chave}` em {caminho} não é uma tabela — servidores ignorados")
             return
-        for nome in bruto:
+        for nome, tabela in bruto.items():
+            if respeita_enabled and isinstance(tabela, dict) and "enabled" in tabela:
+                ligado = tabela["enabled"]
+                if not isinstance(ligado, bool):
+                    avisos.append(
+                        f"mcp {origem}: `enabled` do servidor {nome!s} em {caminho} não é booleano "
+                        f"({type(ligado).__name__}) — servidor ignorado")
+                    continue
+                if not ligado:
+                    continue
             origens.setdefault(str(nome), set()).add(origem)
 
     caminho_c = Path(claude_json if claude_json is not None else bsi.CLAUDE_JSON)
@@ -584,7 +599,7 @@ def servidores_mcp_usuario(
     caminho_x = Path(codex_toml) if codex_toml is not None else _codex_config_path()
     try:
         dados_x = tomllib.loads(caminho_x.read_text(encoding="utf-8"))
-        nomes("mcp_servers", dados_x.get("mcp_servers"), "codex", caminho_x)
+        nomes("mcp_servers", dados_x.get("mcp_servers"), "codex", caminho_x, respeita_enabled=True)
     except FileNotFoundError:
         avisos.append(f"mcp codex: {caminho_x} ausente — servidores MCP do Codex não lidos")
     except (OSError, ValueError) as exc:
