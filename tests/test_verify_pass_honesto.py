@@ -34,6 +34,7 @@ def _run(wf_file: Path, scenario: dict, tmp_path: Path) -> dict:
     result = subprocess.run(
         [NODE, str(HARNESS), str(wf_file), str(scenario_file)],
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
     )

@@ -607,8 +607,8 @@ def test_cli_devolve_o_codigo_de_saida(tmp_path):
     _rodada_a(verify)
     script = ROOT / "scripts" / "checar_triagem.py"
     base = [sys.executable, str(script), "--saidas", str(verify), "--plano"]
-    ok = subprocess.run([*base, str(_plano(tmp_path, _linhas_validas()))], capture_output=True, text=True)
+    ok = subprocess.run([*base, str(_plano(tmp_path, _linhas_validas()))], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     assert ok.returncode == 0, ok.stdout + ok.stderr
-    falta = subprocess.run([*base, str(_plano(tmp_path, []))], capture_output=True, text=True, encoding="utf-8")
+    falta = subprocess.run([*base, str(_plano(tmp_path, []))], capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL)
     assert falta.returncode == 1
     assert "| wf_a | 3 |" in falta.stdout
