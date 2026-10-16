@@ -1,0 +1,50 @@
+rodada,n,severidade,dimensao,destino,ref,resumo
+1,1,medium,spec-coverage,cobertura,D7,AC-3.10: nenhum teste faz a captura lancar excecao
+1,2,medium,spec-coverage,cobertura,D7,teto da leitura de cauda sem teste
+1,3,low,spec-coverage,cobertura,D7,migracao de harness.db antigo sem teste
+1,4,low,spec-coverage,cobertura,D7,caminho PostToolUseFailure sem teste
+1,5,low,spec-coverage,cobertura,D7,stop_continuations nao conferido em AC-2.1
+1,6,low,spec-coverage,limite,verification §4 (REQ-NF1 medido fora da suite),REQ-NF1/AC-5.2 sem evidencia automatica
+1,7,low,spec-coverage,limite,closure-plan it.2 (#3 do re-verify),falsificacao contra d3fc851 fora do arquivo de testes
+1,8,low,correctness,defeito,G5/D5,julgar usa notificacoes[0] com copias divergentes (= #13)
+1,9,low,correctness,defeito,G6/D6,lancamento sem tool_use_id/transcript_path pendente para sempre
+1,10,medium,security,defeito,G1/D2+D3,codigo de saida lido do texto que o modelo escolhe
+1,11,medium,security,defeito,G2/D1,bloco de notificacao forjado pela descricao (evidencia verde forjada)
+1,12,medium,edge-cases,defeito,G1/D2+D3,_codigo pega o primeiro 'exit code N' (= #10)
+1,13,medium,edge-cases,defeito,G5/D5,copias que divergem so no output-file
+1,14,medium,edge-cases,limite,closure-plan limites (releitura 0.33 s; parte em G6),pendente sem saida nao expira e o transcript e relido
+1,15,low,edge-cases,defeito,G3/D3 + E4,saida sem contagem aceita desverifica a task
+1,16,low,edge-cases,limite,closure-plan #16/#22,CAS do complete fora do lock
+1,17,low,edge-cases,limite,closure-plan #17,termino sem carimbo vira superado
+1,18,low,edge-cases,limite-depois-defeito,declarado limite na it.1; consertado em F4+F5 (rodada 3),registrar_lancamento sem protecao; aviso promete captura
+1,19,low,edge-cases,defeito,G4/D4,regra de pasta rejeita 10% dos terminos reais (65 de 654)
+1,20,low,edge-cases,limite,closure-plan #20,stop_hook_active antes da captura
+1,21,medium,regressions,limite-depois-defeito,declarado limite na it.1; consertado em E1 (rodada 2),complete que falha pode ter gravado dados
+1,22,low,regressions,limite,closure-plan #16/#22,CAS aceita expected + gravadas
+1,23,low,regressions,limite-depois-defeito,declarado limite na it.1 e na rodada 2; consertado em F7 (rodada 3),import de simbolos privados de trabalho_em_voo
+2,1,low,spec-coverage,cobertura,E5,ramo 'fora de um diretorio tasks' sem teste
+2,2,low,spec-coverage,limite,verification §4 (REQ-NF1 medido fora da suite),REQ-NF1 sem teste
+2,3,medium,spec-coverage,limite,closure-plan it.2 (#3),falsificacao fora do arquivo de testes
+2,4,low,correctness,defeito,E2 (reaberto em F2),tag na description descarta a notificacao real
+2,5,medium,edge-cases,defeito,E3,suite lancada por subagente fica pendente para sempre
+2,6,low,edge-cases,defeito,E4,saida so com trailer aceita com contagem nula desverifica verde
+2,7,low,edge-cases,limite,closure-plan #17,notificacao sem timestamp
+2,8,low,edge-cases,limite,closure-plan limites (releitura 0.33 s),termino que nunca chega fica pendente sem prazo
+2,9,medium,regressions,defeito,E1,complete que falha grava evidencia e sobe a revision
+2,10,low,regressions,nao-defeito,fora do diff (timeout de xdist em test_harness),observacao sobre timeouts de subprocesso
+2,11,low,regressions,limite-depois-defeito,declarado limite; consertado em F7 (rodada 3),import no topo acopla a nomes privados
+3,1,medium,spec-coverage,cobertura,guarda M29,isolamento entre tasks sem teste
+3,2,low,spec-coverage,cobertura,guarda M1,dois pendentes em revisoes diferentes sem teste
+3,3,low,correctness,defeito,F6,fase conferida pelo nome antes e pelo indice depois
+3,4,low,correctness,defeito,F3,captura sobe a revision e recusa; retry da mismatch (= #8)
+3,5,low,correctness,defeito,F5,task terminal: aviso promete captura
+3,6,low,correctness,defeito,F2,tag literal na descricao descarta a notificacao (= #9)
+3,7,low,security,defeito,F1,bloco forjado no cwd/gitBranch vira evidencia verde
+3,8,medium,edge-cases,defeito,F3,complete grava captura e recusa; retry da mismatch
+3,9,medium,edge-cases,defeito,F2,tag literal na descricao descarta a notificacao
+3,10,low,edge-cases,limite,closure-plan #17,notificacao sem timestamp
+3,11,low,edge-cases,limite,verification §8 (pendente sem TTL),pendente nao expira e cada Stop rele o transcript
+3,12,medium,regressions,defeito,F4,falha ao registrar derruba o hook e perde o aviso
+3,13,low,regressions,limite,verification §8 (ordem das recusas),ordem das checagens do complete mudou
+3,14,low,regressions,limite,verification §8 (pendente sem TTL),todo Stop com pendente le o transcript inteiro (= #11)
+3,15,low,regressions,defeito,F7,import privado derruba todo evento do hook

@@ -1,0 +1,274 @@
+{
+ "achados": [
+  {
+   "n": 1,
+   "title": "complete() grava a captura e sobe revision, depois recusa por uma trava que nao depende da captura",
+   "file": "scripts/transactional_state.py",
+   "line": 1745,
+   "rationale": "O unico teste feito antes da escrita e o CAS (linhas 1740-1744). _capturar_lancamentos (1745) grava a evidencia, muda o lancamento para 'capturado' e sobe tasks.revision. So depois disso a funcao testa verified e fase final (1749-1755). A trava de fase nao depende da captura e podia rodar antes dela. Reproduzido chamando as funcoes de producao pela classe Sessao de tests/test_evidencia_em_segundo_plano.py: lancamento verde notificado, task na fase 0 de 3, complete(expected_revision=1) recusa com 'task is not at final phase: systematic-debugging'. Mesmo recusado, revision foi de 1 para 2, gravou 1 evidencia e o lancamento ficou capturado. A nova tentativa com a mesma revisao cai em 'revision mismatch: expected 1, actual 2'. Isso e estado mudado num caminho de recusa, e contradiz a docstring, que so promete recusa antes da escrita para o CAS. Conserto sugerido: rodar a trava de fase, e toda trava que nao dependa de verified, antes de _capturar_lancamentos."
+  },
+  {
+   "n": 2,
+   "title": "complete recusado por fase errada ja gravou a captura e subiu revision (escrita em caminho de recusa)",
+   "file": "scripts/transactional_state.py",
+   "line": 1745,
+   "rationale": "Em complete(), a captura (_capturar_lancamentos, linha 1745) commita numa transacao propria ANTES das travas que nao dependem de evidencia (fase final, linha 1754). Demonstrado com teste de rascunho usando o fixture Sessao do proprio arquivo de teste: task em 'systematic-debugging', lancamento verde notificado, complete(expected_revision=1) -> recusa 'task is not at final phase: systematic-debugging', mas o lancamento ficou 'capturado', evidencia gravada, verified=True e revision foi de 1 para 2. Quem repetir o complete com a revisao que leu toma 'revision mismatch'. A docstring promete so que 'CAS errado recusa ANTES de qualquer escrita'. As outras recusas nao tem essa garantia, e nenhum teste cobre recusa por fase com lancamento pendente (so test_complete_captura_antes_de_recusar, que recusa por evidencia, e isso e intencional pelo AC-1.3). Conserto: checar fase/status sob o lock antes de capturar, ou capturar dentro da mesma transacao do complete."
+  },
+  {
+   "n": 3,
+   "title": "AC-1.4: no test re-runs complete after a capture that has already happened",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/tests/test_evidencia_em_segundo_plano.py",
+   "line": 396,
+   "rationale": "AC-1.4 requires that a repeated Stop OR complete writes no new row to evidence or events. test_captura_feita_nao_se_repete only repeats the Stop and a direct call to capturar_lancamentos. The complete path has not been exercised a second time after a capture. The implementation is covered by construction: resolver_lancamento uses an UPDATE conditioned on estado='pendente' (transactional_state.py:1671-1677), and complete only calls _capturar_lancamentos, which lists only pending rows. No defect demonstrated."
+  },
+  {
+   "n": 4,
+   "title": "AC-5.3: test does not check that the notice says a touch makes the result historical",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/tests/test_evidencia_em_segundo_plano.py",
+   "line": 914,
+   "rationale": "AC-5.3 requires the notice to say three things: capture happens at completion in N', any touch before that makes the result historical, and the manual recipe only holds if nothing has changed. test_aviso_do_lancamento_anuncia_a_captura only checks the job, 'code_revision N', 'capturada' and 'state_cli.py'. The text in AVISO_SEGUNDO_PLANO (hooks/harness-transactional.py:253-262) does contain 'historico' and 'so se nenhum arquivo mudou', but deleting those clauses would not turn the test red. No defect."
+  },
+  {
+   "n": 5,
+   "title": "REQ-F9: no test covers the tail cap (LIMITE_DA_CAUDA)",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/scripts/evidencia_em_segundo_plano.py",
+   "line": 101,
+   "rationale": "REQ-F9 requires reading at most the tail of the output file. ler_cauda implements the 64 KiB cap, but no test uses a file larger than the cap to show that only the tail is read and that the summary and trailer at the end are still recognised. Every fixture is smaller than 64 KiB, including the real 4706-byte input. Maintenance and test gap. No defect."
+  },
+  {
+   "n": 6,
+   "title": "REQ-F2: PostToolUseFailure path for a background launch has no test",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/hooks/harness-transactional.py",
+   "line": 1703,
+   "rationale": "REQ-F2 covers both PostToolUse and PostToolUseFailure. The dispatcher sends both to the same handler, and registrar_lancamento uses INSERT OR IGNORE. Still, every test in the Sessao class uses hook_event_name='PostToolUse'. No test shows that a launch arriving through PostToolUseFailure is registered, or that the PostToolUse/PostToolUseFailure pair for the same call does not duplicate it, which the docstring cites as a case of AC-1.6."
+  },
+  {
+   "n": 7,
+   "title": "REQ-F7/AC-3.10: a capture exception inside complete is only covered by construction",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/scripts/transactional_state.py",
+   "line": 1745,
+   "rationale": "REQ-F7 and REQ-NF2 require that a failed capture never changes what complete decides compared with the pre-feature behaviour. On the Stop side there is a test (test_transcript_ausente_fica_pendente_e_stop_decide_como_hoje). On the complete side, no test forces an error during capture (missing transcript, failed module import, or an exception in resolver_lancamento) and checks that complete refuses or accepts exactly as it would without launches. The code protects this path with try/except in capturar_lancamentos and with _modulo_de_segundo_plano returning None. No defect demonstrated."
+  },
+  {
+   "n": 8,
+   "title": "REQ-F1: extra columns and non-destructive migration are not asserted",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/scripts/transactional_state.py",
+   "line": 322,
+   "rationale": "The lancamentos table has every field REQ-F1 asks for (lancado_em, terminou_em, resolvido_em, evidence_id, UNIQUE(task_id, job_id)). The tests check job_id, tool_use_id, transcript_path, command, code_revision, estado and evidence_id. They do not check that lancado_em, terminou_em and resolvido_em are filled in, and no test applies _ensure_schema to an existing pre-feature database to show that rows in other tables are untouched. Low, no defect."
+  },
+  {
+   "n": 9,
+   "title": "REQ-NF1: no measurement of the performance budget (1 query with nothing pending; within 15 s)",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/scripts/evidencia_em_segundo_plano.py",
+   "line": 302,
+   "rationale": "The implementation follows the design: one query with nothing pending, one read per distinct transcript_path using a substring pre-filter, and a tail read per file. No test counts queries or measures time against the largest transcript measured (129 MB). Performance with no measured impact, so low."
+  },
+  {
+   "n": 10,
+   "title": "_codigo pega o primeiro 'exit code N' do resumo, que pode estar dentro da descricao escrita pelo modelo",
+   "file": "scripts/evidencia_em_segundo_plano.py",
+   "line": 206,
+   "rationale": "O resumo real e 'Background command \"<description>\" failed with exit code 1' (fixture b8jmxvjka). A <description> e o campo 'description' da chamada Bash/PowerShell, que o modelo escreve. _CODIGO.search devolve a primeira ocorrencia, que fica dentro da descricao. Reproduzido: resumo 'Background command \"suite (exit code 0 esperado)\" failed with exit code 1' com saida vermelha. O Stop deixa o lancamento 'rejeitado:status-inconsistente' e nao grava evidencia, quando devia gravar a evidencia vermelha. No caso 'completed', uma descricao com '(exit code 3' faz um verde sair 'codigo-diverge' pelo trailer. Nao da para forjar: o trailer '[exited with code N]' aparece em todos os .output reais que conferi e segura o caso. Mas a evidencia legitima se perde, visivel e recuperavel pela receita manual. Conserto sugerido: ler o codigo depois da ultima aspa, ou ancorar a regex no fim do resumo com '$'."
+  },
+  {
+   "n": 11,
+   "title": "Lancamento sem transcript_path ou sem tool_use_id fica pendente para sempre",
+   "file": "scripts/evidencia_em_segundo_plano.py",
+   "line": 316,
+   "rationale": "capturar_lancamentos ignora o lancamento sem transcript_path (316-317), e notificacoes_de nunca casa tool_use_id None (185). O hook grava esses campos direto do payload (hooks/harness-transactional.py:1404-1406) e nao confere se vieram. Um payload sem eles gera uma linha que nunca sai de 'pendente'. Por design (o teste test_lancamento_sem_tool_use_id_nunca_casa cobre isso) e sem defeito de gate demonstrado. O efeito e ruido acumulado em resumo_dos_lancamentos, e uma consulta a mais em todo Stop e complete."
+  },
+  {
+   "n": 12,
+   "title": "Captura concorrente entre a pre-checagem do CAS e a captura do complete gera recusa falsa por revision mismatch",
+   "file": "scripts/transactional_state.py",
+   "line": 1748,
+   "rationale": "complete() confere o CAS fora do lock (1740-1744), captura, e depois espera expected_revision + gravadas sob o lock (1748). Se outro leitor (um Stop, um SubagentStop ou outro processo no mesmo balde) resolve o mesmo lancamento no meio, resolver_lancamento devolve None para o complete (gravadas=0), mas revision ja subiu 1. Demonstrado com monkeypatch que roda capturar_lancamentos antes do original: 'revision mismatch: expected 3, actual 4', com a task verificada e na fase final. Recuperavel (basta reler e tentar de novo), mas e recusa espuria de um fechamento valido. Nenhum teste cobre concorrencia. Uma opcao e contar o acrescimo por evidence_id/evento, ou fazer o CAS e a captura sob o mesmo lock."
+  },
+  {
+   "n": 13,
+   "title": "_codigo pega o PRIMEIRO '(exit code N' do resumo, e o resumo contem a descricao do comando, que o modelo controla",
+   "file": "scripts/evidencia_em_segundo_plano.py",
+   "line": 206,
+   "rationale": "O <summary> tem o formato 'Background command \"<descricao>\" failed with exit code 1' (fixture b8jmxvjka), e a descricao vem do modelo. _CODIGO.search devolve a primeira ocorrencia. Demonstrado: resumo 'Background command \"suite (exit code 0\" completed (exit code 1: something)' -> _codigo = 0; sem trailer no .output, julgar devolve 'aceito' com exit_code=0 e 5/5 passando. Com trailer, a unica defesa e codigo-diverge. Na forma comum do pytest vermelho (status failed + descricao com '(exit code 0'), a execucao vermelha sai 'rejeitado:status-inconsistente' e nao grava nada. Uma evidencia verde anterior na mesma revisao continua verified=1, quando pela regra do 'ultimo que terminou' o vermelho deveria desverificar. _TAG summary nao guloso tambem trunca se a descricao tiver '</summary>'. Conserto: ancorar o codigo no fim do resumo (ultima ocorrencia, ou regex com $ depois das aspas da descricao). Faltam testes com descricao contendo 'exit code' e tags. Como mexe na validade da evidencia, vale adjudicacao do juiz-alto-risco."
+  },
+  {
+   "n": 14,
+   "title": "Lancamento com transcript_path ou tool_use_id ausente fica 'pendente' para sempre, sem expirar",
+   "file": "scripts/evidencia_em_segundo_plano.py",
+   "line": 316,
+   "rationale": "capturar_lancamentos descarta lancamento sem transcript_path (316), e notificacoes_de nunca casa um tool_use_id None (185). Isso esta coberto por teste (test_transcript_ausente_fica_pendente..., test_lancamento_sem_tool_use_id_nunca_casa) e e intencional, mas nao ha expiracao nem estado terminal. resumo_dos_lancamentos lista esses pendentes em toda mensagem de bloqueio do Stop e em toda recusa do complete, sem limite de itens, e o texto cresce com cada lancamento. Nenhum defeito de veredito demonstrado, so ruido que se acumula."
+  },
+  {
+   "n": 15,
+   "title": "Arquivo de saida apagado pelo host antes do proximo Stop/complete vira rejeicao terminal 'sem-arquivo'",
+   "file": "scripts/evidencia_em_segundo_plano.py",
+   "line": 267,
+   "rationale": "FileNotFoundError leva a 'rejeitado' definitivo (267-268), e o commit fb994cc registra que o host apaga o .output. Se a captura so roda depois da limpeza (sessao retomada mais tarde, ou Stop com stop_hook_active, que retorna antes de capturar em hooks/harness-transactional.py), uma suite legitima perde a evidencia para sempre e sobra so a receita manual. Nao reproduzi a janela de limpeza do host: e lacuna sem defeito medido."
+  },
+  {
+   "n": 16,
+   "title": "record_evidence aceita code_revision arbitrario (futuro ou negativo) e grava como historico sem recusar",
+   "file": "scripts/transactional_state.py",
+   "line": 1494,
+   "rationale": "_gravar_evidencia trata qualquer revisao diferente da corrente como historico (revisao != row['code_revision']), inclusive valores maiores que a corrente ou negativos, que nao correspondem a nenhuma revisao testada. Hoje o unico chamador com revisao explicita e resolver_lancamento, que passa a do lancamento, e o state_cli nao expoe o parametro. Por isso nao ha caminho de ataque demonstrado. Validar 0 <= code_revision <= corrente fecharia o contrato. Sem teste para esse caso."
+  },
+  {
+   "n": 17,
+   "title": "Um complete recusado ainda grava a captura e sobe a revision, e o retry com o mesmo expected_revision falha",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/.claude/worktrees/medicao-rodada1/scripts/transactional_state.py",
+   "line": 1745,
+   "rationale": "Conclusão: não achei regressão demonstrada. 663 testes de 24 arquivos afetados passaram (383 + 280). Esta é uma mudança de contrato do complete que os testes não cobrem. Antes, qualquer recusa do complete ocorria dentro de um único _write e não deixava efeito nenhum. Agora _capturar_lancamentos roda antes do lock (linha 1745) e em transações próprias. Se o complete depois recusar por outro motivo que não o CAS, a evidência capturada e o estado do lancamento continuam gravados: seja 'task is not at final phase', seja 'fresh verification evidence' quando a captura sai historico. Nos casos capturado e historico, a revision também sobe. O chamador que repetir com o mesmo expected_revision recebe 'revision mismatch' em vez do motivo real. O efeito é intencional pelo design (AC-1.3), é legítimo (o próximo Stop gravaria a mesma coisa) e tem recuperação (basta reler a revision). Por isso fica em low e não em high. Lacuna de teste: nenhum teste cobre uma recusa não-CAS depois de captura que gravou evidência. Evidência: git diff main...HEAD, trecho do complete; tests/test_evidencia_em_segundo_plano.py:741-752 cobre só a recusa por CAS."
+  },
+  {
+   "n": 18,
+   "title": "Em task terminal, o aviso do lançamento em segundo plano promete uma captura que não vai acontecer",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/hooks/harness-transactional.py",
+   "line": 1401,
+   "rationale": "registrar_lancamento retorna sem gravar nada quando a task está em status terminal (scripts/transactional_state.py, TERMINAL_STATUSES em registrar_lancamento). Mesmo assim, _handle_post_tool formata AVISO_SEGUNDO_PLANO, que diz 'a evidencia sera capturada sozinha, na code_revision N'. O modelo vai esperar uma captura que nunca vem. Em compensação, a receita manual do mesmo aviso continua valendo. Quase nada acontece numa task terminal, e o erro é só de texto."
+  },
+  {
+   "n": 19,
+   "title": "Lançamento que nunca casa fica pendente para sempre e obriga a reler o transcript inteiro em cada Stop e em cada complete",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/scripts/evidencia_em_segundo_plano.py",
+   "line": 302,
+   "rationale": "Um lançamento sem tool_use_id nunca casa com nenhuma notificação (teste da linha 609 confirma que ele fica pendente). O mesmo vale para um lançamento cuja notificação cai em outro transcript, depois de resume ou /clear. Enquanto isso, capturar_lancamentos reabre e varre o transcript inteiro, linha a linha, a cada Stop e a cada complete dessa task. Antes da mudança, o Stop de uma task sem pendência não lia o transcript neste ponto. O custo não foi medido. Os testes em test_hooks_timeout.py passaram, mas com transcripts pequenos. Fica como risco de latência do hook em sessões longas, sem impacto demonstrado."
+  },
+  {
+   "n": 20,
+   "title": "O hook passa a depender, no import, de nomes privados de trabalho_em_voo",
+   "file": "C:/Users/LHarden2/Documents/projects/harness4claude/scripts/evidencia_em_segundo_plano.py",
+   "line": 22,
+   "rationale": "Agora hooks/harness-transactional.py importa evidencia_em_segundo_plano no topo do módulo (linhas 23-27). Esse módulo, por sua vez, importa _BLOCO, _TASK_ID, _instante e _textos de trabalho_em_voo, e os quatro existem hoje (scripts/trabalho_em_voo.py:47, 48, 57, 67). Renomear qualquer desses nomes privados derruba o import do hook e, com ele, todos os eventos, não só o Stop. O lado de transactional_state é mais cuidadoso: faz o import sob demanda e cai para None se falhar. É manutenção, sem defeito atual. Quanto à extração de contar_testes, ela é equivalente byte a byte ao antigo _test_counts, e nenhum consumidor importava VEREDITO_* ou _soma_categorias do hook (checado com grep em todo o repositório, sem docs/). O parâmetro novo code_revision de record_evidence é opcional, e a mensagem 'task requires fresh verification evidence' mantém o prefixo, então os match= continuam valendo. Nenhum código faz DELETE em tasks ou evidence, então a nova FK de lancamentos não quebra nada."
+  }
+ ],
+ "defeitos_conhecidos": [
+  {
+   "id": "G1",
+   "mecanismo": "codigo de saida casado na PRIMEIRA ocorrencia de 'exit code N' do summary, que contem a description escrita pelo modelo",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "94",
+   "trecho_578e0bc": "_CODIGO = re.compile(r\"\\(exit code (-?\\d+)|with exit code (-?\\d+)\")",
+   "mesmo_que": ""
+  },
+  {
+   "id": "G2",
+   "mecanismo": "texto do host pode carregar varios blocos: um bloco forjado para outro job na description e aceito como notificacao do host",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "178",
+   "trecho_578e0bc": "for bloco in _BLOCO.findall(texto):",
+   "mesmo_que": ""
+  },
+  {
+   "id": "G3",
+   "mecanismo": "julgar aceita saida sem trailer [exited with code N]: arquivo vazio ou truncado vira aceito com contagens nulas e desverifica um verde",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "272",
+   "trecho_578e0bc": "if trailer and int(trailer.group(1)) != codigo:",
+   "mesmo_que": ""
+  },
+  {
+   "id": "G4",
+   "mecanismo": "lugar do arquivo exige pasta de sessao e de projeto iguais as do transcript; sessao retomada grava em outra pasta e e rejeitada em definitivo",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "220",
+   "trecho_578e0bc": "esperado = [f\"{job}.output\", \"tasks\", transcript.stem, transcript.parent.name]",
+   "mesmo_que": ""
+  },
+  {
+   "id": "G5",
+   "mecanismo": "copias da mesma notificacao que divergem so no output-file nao contam como divergencia; julgar usa notificacoes[0] e o desfecho depende da ordem",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "253",
+   "trecho_578e0bc": "distintos = {(n.status, _codigo(n.resumo)) for n in notificacoes}",
+   "mesmo_que": ""
+  },
+  {
+   "id": "G6",
+   "mecanismo": "lancamento sem tool_use_id ou sem transcript_path nasce pendente e fica pendente para sempre (nenhuma notificacao pode casar)",
+   "arquivo": "scripts/transactional_state.py",
+   "linha_578e0bc": "1607",
+   "trecho_578e0bc": "\"INSERT OR IGNORE INTO lancamentos(task_id, job_id, tool_use_id, command, \"",
+   "mesmo_que": ""
+  },
+  {
+   "id": "E1",
+   "mecanismo": "complete captura (grava evidencia e sobe revision) ANTES de conferir a fase final e depois recusa por fase",
+   "arquivo": "scripts/transactional_state.py",
+   "linha_578e0bc": "1745",
+   "trecho_578e0bc": "gravadas = _capturar_lancamentos(self, task_id)",
+   "mesmo_que": ""
+  },
+  {
+   "id": "E2",
+   "mecanismo": "campos do host lidos no bloco inteiro incluindo a description: um <task-id> literal na description faz len(ids)!=1 e esconde a notificacao legitima",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "180",
+   "trecho_578e0bc": "ids = _TASK_ID.findall(bloco)",
+   "mesmo_que": ""
+  },
+  {
+   "id": "E3",
+   "mecanismo": "lancamento feito por subagente nasce pendente mas a notificacao chega em sidechain que a captura recusa: pendente para sempre com promessa de captura",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "127",
+   "trecho_578e0bc": "if entrada.get(\"isSidechain\"):",
+   "mesmo_que": ""
+  },
+  {
+   "id": "E4",
+   "mecanismo": "julgar aceita saida sem contagem nenhuma (so trailer) e grava evidencia nula que desverifica um verde",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "274",
+   "trecho_578e0bc": "coletados, passaram, pulados, digest = contar_testes(cauda)",
+   "mesmo_que": "G3"
+  },
+  {
+   "id": "F1",
+   "mecanismo": "leitura varre TODA string da entrada do host (cwd e gitBranch inclusive): bloco forjado no nome do diretorio vira notificacao de outro job",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "175",
+   "trecho_578e0bc": "for texto in _textos(entrada):",
+   "mesmo_que": ""
+  },
+  {
+   "id": "F2",
+   "mecanismo": "bloco termina no PRIMEIRO </task-notification> e o resumo no PRIMEIRO </summary>: tags de fechamento literais na description truncam o bloco legitimo",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "191",
+   "trecho_578e0bc": "resumo=_tag(\"summary\", bloco) or \"\",",
+   "mesmo_que": ""
+  },
+  {
+   "id": "F3",
+   "mecanismo": "complete que captura evidencia e recusa por falta de evidencia fresca nao diz a revisao nova; repetir com a revisao lida antes da revision mismatch",
+   "arquivo": "scripts/transactional_state.py",
+   "linha_578e0bc": "1752",
+   "trecho_578e0bc": "raise StateTransitionError(f\"{mensagem}. {resumo}\" if resumo else mensagem)",
+   "mesmo_que": ""
+  },
+  {
+   "id": "F4",
+   "mecanismo": "falha do banco em registrar_lancamento no PostToolUse sobe sem try e derruba o hook levando junto o aviso de que lancamento nao e resultado",
+   "arquivo": "hooks/harness-transactional.py",
+   "linha_578e0bc": "1401",
+   "trecho_578e0bc": "database.registrar_lancamento(",
+   "mesmo_que": ""
+  },
+  {
+   "id": "F5",
+   "mecanismo": "aviso do PostToolUse promete captura automatica mesmo quando nada foi registrado (task terminal)",
+   "arquivo": "hooks/harness-transactional.py",
+   "linha_578e0bc": "1408",
+   "trecho_578e0bc": "aviso = AVISO_SEGUNDO_PLANO.format(",
+   "mesmo_que": ""
+  },
+  {
+   "id": "F7",
+   "mecanismo": "evidencia_em_segundo_plano importa nomes privados de trabalho_em_voo no topo; o hook importa o modulo no topo: renomear um nome privado derruba o hook inteiro",
+   "arquivo": "scripts/evidencia_em_segundo_plano.py",
+   "linha_578e0bc": "22",
+   "trecho_578e0bc": "from trabalho_em_voo import _BLOCO, _TASK_ID, _instante, _textos",
+   "mesmo_que": ""
+  }
+ ]
+}
