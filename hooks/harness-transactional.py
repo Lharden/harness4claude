@@ -9,6 +9,7 @@ import re
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -2236,7 +2237,7 @@ def _conta_evidencia(database, task_id: str, code_revision: int, tipo: str = "te
     evidence" que fossem tres pytest diriam que ha prova quando nao ha.
     """
     try:
-        with sqlite3.connect(database.path) as raw:
+        with closing(sqlite3.connect(database.path)) as raw:
             qualquer = raw.execute(
                 "SELECT COUNT(*) FROM evidence WHERE task_id = ?", (task_id,)
             ).fetchone()[0]

@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import sys
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -158,7 +159,8 @@ def main() -> int:
     except (OSError, ValueError):
         bucket = root
     database = bucket / "lifecycle.db"
-    with sqlite3.connect(database) as connection:
+    # `with connection` so faz commit; o close e do `closing` (handle preso no Windows).
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS lifecycle_events("
             "id INTEGER PRIMARY KEY, event TEXT, session_id TEXT, "
