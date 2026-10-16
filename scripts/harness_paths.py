@@ -122,6 +122,7 @@ import os
 import re
 import sqlite3
 import sys
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -479,7 +480,7 @@ def _iniciada_antes(balde: Path, task_id: str, momento: datetime) -> bool:
         return False
     try:
         uri = f"{banco.resolve().as_uri()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as conexao:
+        with closing(sqlite3.connect(uri, uri=True)) as conexao:
             linha = conexao.execute(
                 "SELECT started_at FROM tasks WHERE task_id = ?", (task_id,)
             ).fetchone()

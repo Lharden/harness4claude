@@ -240,16 +240,31 @@ class HarnessDatabase:
         self.path = self.home / "harness.db"
         self._ensure_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _open(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = 5000")
-        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout = 5000")
+            connection.execute("PRAGMA foreign_keys = ON")
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # `with connection` so faz commit/rollback; o close e do finally, para
+        # nao deixar o handle do arquivo preso (Windows) nem ResourceWarning.
+        connection = self._open()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    @contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
-        connection = self._connect()
+        connection = self._open()
         try:
             connection.execute("BEGIN IMMEDIATE")
             yield connection
