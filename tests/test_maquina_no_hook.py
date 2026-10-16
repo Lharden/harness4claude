@@ -77,15 +77,33 @@ def _repo(tmp_path: Path) -> Path:
     return cwd
 
 
-def _iniciar(tmp_path: Path, casa: Path, sessao: str = "s-maquina") -> subprocess.CompletedProcess:
+def _iniciar(tmp_path: Path, casa: Path, sessao: str = "s-maquina",
+             cwd_do_processo: Path | None = None) -> subprocess.CompletedProcess:
+    """O cwd do payload e `_repo`; o do processo e o mesmo, salvo `cwd_do_processo` (para provar de onde o hook le)."""
     cwd = _repo(tmp_path)
     return subprocess.run(
         ["bash", str(INICIO)],
         input=json.dumps({"session_id": sessao, "cwd": str(cwd), "hook_event_name": "SessionStart",
                           "source": "startup"}),
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        check=False, env=_env(tmp_path, casa), cwd=str(cwd), timeout=120,
+        check=False, env=_env(tmp_path, casa), cwd=str(cwd_do_processo or cwd), timeout=120,
     )
+
+
+def _semear_pipeline_expirado(tmp_path: Path, sessao: str) -> None:
+    """Um pipeline ativo sem `started_at` no balde que o hook vai resolver (conta como expirado: TTL vencido)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        from harness_paths import ensure_state_dir
+    finally:
+        sys.path.remove(str(ROOT / "scripts"))
+    balde = Path(ensure_state_dir(str(tmp_path / "home" / ".claude" / "harness"), str(_repo(tmp_path)),
+                                  session_id=sessao))
+    balde.mkdir(parents=True, exist_ok=True)
+    (balde / "state.json").write_text(json.dumps({
+        "task_id": "t-expirada", "schema_version": 3, "classification": "L2-feature", "status": "active",
+        "pipeline": ["discuss", "tdd"], "current_step": "discuss", "artifacts_so_far": [], "started_at": None,
+    }), encoding="utf-8")
 
 
 def _classificar(tmp_path: Path, casa: Path, sessao: str = "s-maquina-ups") -> subprocess.CompletedProcess:
@@ -141,6 +159,44 @@ def test_o_caminho_expirado_tambem_junta_o_aviso() -> None:
     MAQUINA_DIGEST."""
     texto = INICIO.read_text(encoding="utf-8")
     assert texto.count("os.environ.get('MAQUINA_DIGEST', '')") == 3
+
+
+def test_o_pipeline_expirado_entrega_a_linha_do_aviso_ao_modelo(tmp_path: Path) -> None:
+    """Comportamento do terceiro caminho (a juncao do `_harness_emit resuming`): o pipeline vencido sai como EXPIRED e a
+    linha do aviso chega no MESMO contexto. Contar o texto `MAQUINA_DIGEST` nao prova que a linha sai."""
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", AVISA))
+    _semear_pipeline_expirado(tmp_path, "s-expirada")
+
+    r = _iniciar(tmp_path, casa, sessao="s-expirada")
+
+    assert r.returncode == 0, r.stderr
+    contexto = _contexto(r)
+    assert "HARNESS v3 EXPIRED" in contexto and "t-expirada" in contexto, contexto  # o caminho certo foi o tomado
+    assert "MAQUINA: fotos de desktop a absorver em fastslr" in contexto, contexto
+
+
+AVISA_O_CWD = '''
+def ao_iniciar_sessao(casa, *, python, cwd):
+    return "MAQUINA: cwd recebido=" + str(cwd)
+'''
+
+
+def test_o_aviso_usa_o_cwd_do_payload_e_nao_o_do_processo(tmp_path: Path) -> None:
+    """AC-4.2: e o cwd do payload que casa o projeto da sessao. Os dois valores diferem de proposito: o hook roda com o
+    cwd do processo em outra pasta, e o aviso so pode ver a do payload."""
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", AVISA_O_CWD))
+    outro = tmp_path / "outro-cwd"
+    outro.mkdir()
+
+    r = _iniciar(tmp_path, casa, cwd_do_processo=outro)
+
+    assert r.returncode == 0, r.stderr
+    contexto = _contexto(r)
+    linha = next((x for x in contexto.splitlines() if x.startswith("MAQUINA: cwd recebido=")), "")
+    assert linha, contexto
+    recebido = Path(linha.removeprefix("MAQUINA: cwd recebido=").strip())
+    assert recebido == _repo(tmp_path), linha
+    assert recebido != outro, linha
 
 
 def test_o_hook_passa_a_casa_o_proprio_python_e_o_cwd_da_sessao(tmp_path: Path) -> None:
