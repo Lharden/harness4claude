@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,14 +29,17 @@ CLASSIFICA = ROOT / "hooks" / "harness-classify.sh"
 pytestmark = pytest.mark.skipif(not INICIO.is_file() or not CLASSIFICA.is_file(), reason="hook ausente")
 
 
-def _mh_falso(raiz: Path, corpo: str | None) -> Path:
-    """Um `mh` com so `mh.maquina.avisos` (ou sem `mh.maquina`, com `corpo=None`)."""
+def _mh_falso(raiz: Path, corpo: str | None, *, init_mh: str = "", init_maquina: str = "") -> Path:
+    """Um `mh` com so `mh.maquina.avisos` (ou sem `mh.maquina`, com `corpo=None`).
+
+    `init_mh` e `init_maquina` sao o corpo dos `__init__` dos dois pacotes: e onde o `find_spec` executa codigo.
+    """
     pacote = raiz / "mh"
     pacote.mkdir(parents=True)
-    (pacote / "__init__.py").write_text("", encoding="utf-8")
+    (pacote / "__init__.py").write_text(init_mh, encoding="utf-8")
     if corpo is not None:
         (pacote / "maquina").mkdir()
-        (pacote / "maquina" / "__init__.py").write_text("", encoding="utf-8")
+        (pacote / "maquina" / "__init__.py").write_text(init_maquina, encoding="utf-8")
         (pacote / "maquina" / "avisos.py").write_text(corpo, encoding="utf-8")
     return raiz
 
@@ -45,6 +49,9 @@ def _casa(tmp_path: Path, raiz_mh: Path | None) -> Path:
     casa.mkdir(exist_ok=True)
     if raiz_mh is not None:
         (casa / "mh-root").write_text(str(raiz_mh) + "\n", encoding="utf-8")
+    # O hook usa o interpretador nomeado na casa. Sem isso cai no `python` do PATH, que numa maquina com o
+    # master-harness instalado em modo editavel enxerga o `mh` real por cima do falso (LL-02).
+    (casa / "interpretador").write_text(sys.executable + "\n", encoding="utf-8")
     return casa
 
 
@@ -223,3 +230,45 @@ def test_user_prompt_submit_com_mh_que_levanta_segue(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     assert (casa / "tentou").is_file()  # o disparo foi chamado e levantou
     assert "HARNESS v3" in _contexto(r)  # e a classificacao saiu assim mesmo
+
+
+# AC-4.16: silencio so quando o modulo NAO EXISTE. Os 8 casos medidos no lote 20261016-081709-c78f.
+AVISOS_OK = "def ao_iniciar_sessao(casa, *, python, cwd):\n    return 'MAQUINA: ok'\n"
+SEM_ENTRADA = "def outra_coisa():\n    return 1\n"
+NAO_VERIFICADO = "MAQUINA: NAO VERIFICADO - "
+
+
+@pytest.mark.parametrize(
+    ("nome", "montar", "esperado"),
+    [
+        ("avisos_normal", lambda r: _mh_falso(r, AVISOS_OK), "MAQUINA: ok"),
+        ("sem_mh_maquina", lambda r: _mh_falso(r, None), ""),
+        ("runtime_no_init_maquina",
+         lambda r: _mh_falso(r, AVISOS_OK, init_maquina="raise RuntimeError('init quebrado')\n"),
+         NAO_VERIFICADO + "RuntimeError: init quebrado"),
+        ("avisos_sem_ao_iniciar_sessao", lambda r: _mh_falso(r, SEM_ENTRADA), ""),
+        ("submodulo_inexistente_no_init_maquina",
+         lambda r: _mh_falso(r, AVISOS_OK, init_maquina="from mh.maquina.nao_existe import x\n"),
+         NAO_VERIFICADO + "ModuleNotFoundError"),
+        ("modulo_externo_no_init_maquina",
+         lambda r: _mh_falso(r, AVISOS_OK, init_maquina="import modulo_externo_que_falta\n"),
+         NAO_VERIFICADO + "ModuleNotFoundError"),
+        ("import_quebrado_no_init_mh",
+         lambda r: _mh_falso(r, AVISOS_OK, init_mh="from mh.nao_existe import y\n"),
+         NAO_VERIFICADO + "ModuleNotFoundError"),
+        ("attributeerror_no_import_do_avisos",
+         lambda r: _mh_falso(r, "import os\nos.nao_existe\n"),
+         NAO_VERIFICADO + "AttributeError"),
+    ],
+)
+def test_os_oito_casos_do_ac_4_16(tmp_path: Path, nome: str, montar, esperado: str) -> None:
+    casa = _casa(tmp_path, montar(tmp_path / "mh-falso"))
+
+    r = _iniciar(tmp_path, casa)
+
+    assert r.returncode == 0, r.stderr
+    contexto = _contexto(r)
+    if esperado:
+        assert esperado in contexto, f"{nome}: {contexto!r}"
+    else:
+        assert "MAQUINA" not in contexto, f"{nome}: {contexto!r}"

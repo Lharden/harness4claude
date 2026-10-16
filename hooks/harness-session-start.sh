@@ -448,8 +448,11 @@ sys.path.insert(0, raiz)
 import importlib.util
 try:
     achado = importlib.util.find_spec('mh.maquina.avisos')
-except ImportError:
-    achado = None
+except ModuleNotFoundError as exc:
+    if exc.name in ('mh', 'mh.maquina', 'mh.maquina.avisos'):
+        raise SystemExit(0)
+    print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
+    raise SystemExit(0)
 except Exception as exc:
     print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
     raise SystemExit(0)
@@ -457,11 +460,11 @@ if achado is None:
     raise SystemExit(0)
 try:
     from mh.maquina import avisos
-    ao_iniciar = avisos.ao_iniciar_sessao
-except AttributeError:
-    raise SystemExit(0)
 except Exception as exc:
     print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
+    raise SystemExit(0)
+ao_iniciar = getattr(avisos, 'ao_iniciar_sessao', None)
+if ao_iniciar is None:
     raise SystemExit(0)
 try:
     print(ao_iniciar(casa, python=sys.executable, cwd=cwd))
