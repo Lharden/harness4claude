@@ -324,9 +324,35 @@ def _bloco_de_presenca():
         return ""
 
 
+def _disparar_censo():
+    """O censo da sincronia entre as maquinas em segundo plano (REQ-F24 da spec da sincronia, master-harness).
+
+    A sessao longa da maquina que o usuario esta deixando e a que precisa publicar o proprio estado; o SessionStart
+    so dispara na abertura. `mh.maquina.avisos.disparar_se_velho` le o censo desta maquina e o registro do ultimo
+    disparo e, so se o censo passou de 30 min e nao ha disparo em voo, lanca `mh maquina censo` destacado: este hook
+    nao espera o censo. O intervalo e por maquina, no mesmo registro que o SessionStart usa. Best-effort e
+    silencioso, como a presenca: o aviso de um disparo que nao gravou e do SessionStart (AC-4.10). Roda antes das
+    saidas antecipadas pelo mesmo motivo da presenca.
+    """
+    try:
+        casa = os.environ.get("MASTER_HARNESS_HOME") or os.path.join(
+            os.path.expanduser("~"), ".master-harness")
+        with open(os.path.join(casa, "mh-root"), encoding="utf-8") as fh:
+            raiz = fh.readline(4096).strip()
+        if not raiz or not os.path.isdir(raiz):
+            return
+        if raiz not in sys.path:
+            sys.path.insert(0, raiz)
+        from mh.maquina import avisos as _avisos
+        _avisos.disparar_se_velho(casa, python=sys.executable)
+    except Exception:
+        pass
+
+
 msg = os.environ["HARNESS_MSG_LOWER"]
 
 _marcar_presenca()
+_disparar_censo()
 
 # ============================================================================
 # Escopo do estado: bucket do projeto (default) ou raiz global
