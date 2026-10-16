@@ -179,12 +179,16 @@ Depois use o valor retornado como prefixo. `scriptPath` vai para a tool, **não 
 ```
 Workflow({
   scriptPath: "<PLUGIN_ROOT>/scripts/workflows/wf-verify-multimodel.js",
-  args: { task_id, changed_files: [...], spec_path: "docs/specs/<slug>-spec.md", base_ref: "HEAD" }
+  args: { task_id, changed_files: [...], spec_path: "docs/specs/<slug>-spec.md", base_ref: "HEAD",
+          repo_root: "<raiz do worktree da task>" }
 })
 ```
 
+`repo_root` diz a revisores e adjudicador onde está o código: sem ele, eles leem
+caminho relativo no diretório da sessão, que pode ser outro worktree.
+
 Retorna JSON. Workflows disponíveis (validar com `node scripts/workflows/validate_workflows.cjs`):
-- `wf-verify-multimodel.js` → `{ pass, critical_count, findings[], nos_mortos[], summary }` (5 dimensões em paralelo + adjudicação adversarial que refuta falsos-positivos). `nos_mortos` não-vazio força `pass: false`: finding não julgado não é finding liberado.
+- `wf-verify-multimodel.js` → `{ pass, critical_count, nao_adjudicados, findings[], nos_mortos[], summary }` (5 dimensões em paralelo + adjudicação adversarial de crítico/alto). `pass` só é `true` com zero crítico/alto confirmado, zero nó morto **e zero achado não adjudicado**: finding não julgado não é finding liberado. Cada finding traz `n` (posição) e `adjudicado`; os não adjudicados vão para a triagem da seção "verify (com gap-closure)".
 - `wf-context-scan.js` → `{ files[], patterns[], constraints[], risks[], cobertura }` (exploração paralela do codebase). `cobertura.angulos_mortos` nomeia o que faltou no mapa.
 - `wf-grill.js` → `{ perguntas[], bloqueantes, lentes_mortas[], cobertura, summary }` (5 lentes adversariais sobre a spec, em janelas novas). Recebe **só** `spec_path` e `context_path` — nunca a conversa que produziu a spec. `lentes_mortas` não-vazio significa cobertura incompleta, não ausência de achado.
 
@@ -257,11 +261,11 @@ Ao atingir uma fronteira de decisão: grave `pending_gate` no state, marque `sta
 
 ### Verify + gap-closure
 
-Quando a verificação retorna `pass: false`:
-1. Liste os `findings` bloqueantes (critical/high).
-2. Gere `docs/closure-plan.md` com APENAS as delta-tasks.
-3. Execute as delta-tasks e re-rode a verificação.
-4. Máx. 2 iterações; se ainda falhar → gate `escalation`.
+O protocolo inteiro (rodadas, bloqueio, triagem, checador, ordem até o
+`complete`) está na seção **"verify (com gap-closure)"**, mais abaixo. Resumo: no
+máximo 3 rodadas; bloqueio (crítico/alto confirmado ou nó morto) vai ao
+gap-closure; todo achado não adjudicado de toda rodada recebe destino escrito;
+DONE só com `checar_triagem.py` saindo 0.
 
 ## Steps novos (v2.1)
 
@@ -331,15 +335,70 @@ A Anthropic lançou a **Advisor Strategy** um dia antes do Harness v3 ser implem
 ### verify (com gap-closure)
 A fase de verificação no fim de cada pipeline:
 
-1. **L2** → rodar o Workflow `wf-verify-multimodel` (fan-out de 5 dimensões em paralelo + adjudicação adversarial). **L1** → `Skill(skill="verify-against-spec")`. **Bug** → `Skill(skill="superpowers:verification-before-completion")` (testes/lint/type-check).
-2. Apresentar a tabela de `findings` retornada (já deduplicada e filtrada por confidence pelo Workflow).
-3. Se `pass: true` (sem findings critical/high) → pipeline completo, ir para DONE
-5. Se FAIL → analisar o que faltou:
-   a. Listar gaps especificos (teste falhando, requisito nao implementado, finding critico do review multi-modelo)
-   b. Gerar `docs/closure-plan.md` com APENAS as delta-tasks necessarias
-   c. Executar as delta-tasks
-   d. Re-verificar (volta ao passo 1)
-6. Max 2 iteracoes de gap-closure. Se apos 2 ainda falhar → escalar ao usuario
+1. **L1** → `Skill(skill="verify-against-spec")`. **Bug** → `Skill(skill="superpowers:verification-before-completion")` (testes/lint/type-check). **L2** → o Workflow `wf-verify-multimodel`, pelo protocolo de rodadas abaixo.
+2. Apresentar a tabela de `findings` retornada.
+
+**Protocolo de rodadas (L2).** Até 2026-09-30 o DONE saía de `pass: true`, e o
+`pass` contava só crítico/alto confirmado: três rodadas seguidas foram a DONE com
+25 defeitos reais entre 49 achados abertos, dois deles caminhos de evidência
+verde forjada (`docs/specs/verify-adjudica-tudo-medicao.md`). Hoje o `pass` só é
+`true` sem achado aberto, e o DONE exige destino escrito para cada achado não
+adjudicado, conferido por script (spec `verify-adjudica-tudo`, REQ-F8).
+
+1. **Rodada** = uma execução do Workflow. No máximo **3 por task** (a inicial e
+   mais 2), um contador só para bloqueio e triagem. Passe `repo_root` com a raiz
+   do worktree da task.
+2. **Copie a saída logo depois da rodada.** O `.output` do host (o
+   `<output-file>` da notificação) some em horas; a cópia fica no balde da task,
+   fora do repo, em `<STATE_DIR>/verify/<run id>.json` (`<run id>` = o `wf_…`
+   que o tool devolveu). Nunca edite a cópia. Execução que o host abortou (saída
+   sem `result`) não é rodada: não a copie — ela conta como nó morto (passo 6).
+   Se já copiou, mova a cópia para fora de `<STATE_DIR>/verify/` e diga no
+   closure-plan qual execução era; o checador sai 2 enquanto ela estiver lá.
+   ```bash
+   mkdir -p "<STATE_DIR>/verify"
+   cp "<output-file da notificação>" "<STATE_DIR>/verify/<run id>.json"
+   ```
+   ```powershell
+   New-Item -ItemType Directory -Force "<STATE_DIR>/verify"
+   Copy-Item "<output-file da notificação>" "<STATE_DIR>/verify/<run id>.json"
+   ```
+3. **Bloqueio** (crítico/alto confirmado, ou `nos_mortos` não vazio) → gap-closure:
+   delta-tasks no `docs/closure-plan.md`, conserto com teste.
+4. **Triagem.** Todo achado com `adjudicado: false`, de toda rodada, com ou sem
+   bloqueio, ganha uma linha na seção `## Destino dos achados não adjudicados` do
+   `closure-plan.md`:
+   - `consertado` — código ou teste mudou; a referência diz o teste que pega o defeito ou o commit;
+   - `limite` — comportamento real aceito; a referência diz o motivo;
+   - `nao-defeito` — falso positivo ou fora do diff; a referência diz por quê.
+
+   Limite que reaparece numa rodada seguinte ganha linha nova (a referência pode
+   apontar a decisão anterior). Não filtre achado já declarado limite: na medição,
+   um deles era defeito e só foi consertado porque voltou.
+5. **Conserto de código** (bloqueio ou triagem) → nova rodada, obrigatória se
+   ainda houver rodada. Antes dela, o checador não pode apontar `PENDENTE`.
+6. **Nó morto sem código mudado**: rodar de novo não conta no limite; um segundo
+   nó morto seguido vai ao gate `escalation`.
+7. **3ª rodada**: bloqueio → gate `escalation`. Conserto pedido pela triagem
+   fecha com teste que pegue o defeito, e o relatório de verificação lista esses
+   **consertos sem rodada de revisão**. Se o usuário decidir fechar com o
+   bloqueio consertado e sem rodada nova, o checador seguirá saindo 1 pelo
+   `BLOQUEIO` da cópia da 3ª rodada (a cópia não se edita): o fechamento vale
+   com a tabela completa — nenhum `PENDENTE` nem `INVALIDA` —, e o closure-plan
+   registra a decisão com data e o conserto com teste e mutante.
+8. **Checador**, antes de cada rodada nova e antes do `complete`:
+   ```bash
+   python "<PLUGIN_ROOT>/scripts/checar_triagem.py" --plano "docs/closure-plan.md" --saidas "<STATE_DIR>/verify"
+   ```
+   Sai 0 (tudo decidido, última rodada sem bloqueio), 1 (pendente, linha
+   inválida ou bloqueio — imprime as linhas prontas para colar: troque destino e
+   referência) ou 2 (cópia ilegível).
+9. **Ordem no fim:** tabela → checador saindo 0 → evidência de teste final →
+   `state_cli complete`. Escrita depois da evidência a transforma em histórico, e
+   o hook conta `python` como escrita: o checador vem antes da evidência.
+10. **No DONE**, mostre a tabela de destinos ao usuário — `limite` e
+    `nao-defeito` são decisão de quem escreveu o código, e a medição achou quatro
+    "limites" que eram defeito.
 
 **closure-plan.md** deve conter:
 ```markdown
@@ -348,9 +407,13 @@ A fase de verificação no fim de cada pipeline:
 - [gap 1]: [descricao + evidencia]
 ## Delta tasks
 - [ ] [task especifica para fechar gap 1]
+## Destino dos achados não adjudicados
+| Rodada | # | Achado | Destino | Referência |
+|---|---|---|---|---|
+| wf_… | 7 | início do título do achado (20+ caracteres) | consertado | teste, commit ou motivo |
 ## Origem
 - Verificacao que falhou: [qual teste/check]
-- Iteracao: 1 de 2
+- Rodada: 1 de 3
 ```
 
 ## Modelos secundários (Codex/Gemini — opcional)

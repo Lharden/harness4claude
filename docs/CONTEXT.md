@@ -307,3 +307,77 @@ harness4claude leva ~21 min e por isso nunca se autoverifica.
 - Leitura do transcript com pré-filtro por substring (timeout do Stop: 15 s;
   maior transcript medido: 129 MB).
 - Comando atômico para `state_cli` (isenção do contador).
+
+---
+
+# CONTEXT — o `pass` do verify e os achados não adjudicados
+
+> Acrescentado, não substituído (ver o aviso do bloco "guarda de órfão").
+
+**Task:** `t-20260930-181933591685` · **Ramo:** `claude/verify-adjudica-tudo` (worktree `verify-adjudica-tudo`) · **Base:** `8cd6884`
+**Fase:** `discuss` · **Decidido em:** 2026-09-30
+**Origem:** ramo `verify-adjudica-tudo` da sessão `6b0a4567` (evidência em segundo plano).
+**Medição que sustenta:** [`verify-adjudica-tudo-medicao.md`](specs/verify-adjudica-tudo-medicao.md)
+
+## O problema, em uma frase
+
+Nas três rodadas do `wf-verify-multimodel` sobre o diff da evidência em segundo
+plano, o Workflow respondeu `pass: true` e 25 dos 49 achados que ele não
+adjudicou eram defeito real — nenhum dos 49 saiu `high`/`critical`, então a
+adjudicação nunca abriu.
+
+## Locked — decidido pelo usuário, não relitigar
+
+- **L-01 · `pass` honesto (opção A).** `pass: true` só com zero achado não
+  adjudicado, além de zero crítico/alto confirmado e zero nó morto. A skill
+  `harness-workflow` só vai a DONE quando cada achado não adjudicado tem destino
+  escrito: consertado, limite com motivo, ou não-defeito.
+- **L-02 · Rubrica de severidade por consequência (opção B)** no prompt dos
+  revisores: aceitar o que devia recusar, evidência forjada, recusa que muda
+  estado e afins passam a ser `high`.
+- **L-03 · A regra de adjudicação fica:** revisão ampla adjudica só crítico e
+  alto. O item "Fan-out (Workflow)" do `CLAUDE.md` global ganha: achado não
+  adjudicado não libera o `pass`; cada um sai com destino escrito.
+- **L-04 · B é medida antes de entrar:** uma rodada do Workflow com a rubrica
+  sobre o diff da sessão-mãe antes dos consertos (`5d2086b`, com os defeitos
+  G1–G6 conhecidos da rodada 1). Custo aceito: ~570 mil tokens da revisão mais
+  ~85 mil por achado promovido a `high`. **Corrigido em 2026-09-30 (CLARIF-1 da
+  spec, decisão do usuário):** o commit é o `578e0bc`, que a rodada 1 revisou
+  antes do rebase; o `5d2086b` é a mesma feature sobre outra base.
+- **L-05 · "Destino escrito" é checado por script (brainstorming, 2026-09-30):**
+  um checador lê o `closure-plan.md` e reprova listando os achados sem destino,
+  com a linha que falta; a skill manda rodá-lo antes do `complete`. O
+  `state_cli` não muda.
+- **L-06 · Critério de entrada de B:** na rodada sobre `578e0bc`, pelo menos
+  metade dos defeitos conhecidos que a rodada re-achar sai `high`/`critical`.
+  Abaixo disso, B não entra e o resultado fica escrito. **Resultado
+  (2026-09-30, medição §7):** 1 de 7 defeitos re-achados saiu `high` — B não
+  entrou; a constante e seus testes saíram do ramo.
+
+**Achado do brainstorming:** antes do corte de adjudicação
+(`tests/data/wf-verify-multimodel-antes-de-d017a6b.js:151-158`) medium/low já
+não pesavam no `pass`, que sempre contou só crítico/alto confirmado. A causa do
+`pass` verde com defeito real é a fórmula do `pass`, não o corte.
+
+## Deferred — fora do escopo
+
+| item | por quê |
+|---|---|
+| Opções C, D, E da medição §5 | DROP (decisão do usuário, 2026-09-30) |
+| Dedupe semântico no Workflow (5 duplicatas nas 3 rodadas, medição §3.4) | outro defeito do mesmo instrumento; não muda o `pass` |
+
+## Discretion — Claude decide
+
+- Texto da rubrica e onde ela mora no script.
+- Forma do retorno do Workflow além de `pass` (nome de campo, texto do `summary`).
+- Formato do destino de cada achado no `closure-plan.md`.
+- Desenho dos testes do Workflow e da skill.
+
+## Constraints técnicas
+
+- A aresta do adjudicador continua descontaminada: alegação + local + critério,
+  nunca o `rationale` (`test_adjudicador_nao_recebe_rationale`).
+- A rodada de medição roda o script NOVO contra o código ANTIGO (`5d2086b`, em
+  worktree destacado), com a spec daquele commit.
+- Só testes afetados, um processo por vez; suíte completa só no merge.
+- Deploy no cache do plugin só depois do merge e com OK do usuário.

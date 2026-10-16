@@ -53,9 +53,14 @@ desta tarefa mecânica.
   Then nenhum `agent()` de adjudicação é chamado e o retorno traz esses
   findings com `adjudicado: false` e `nao_adjudicados` igual à contagem
   deles.
-- **AC-3** (REQ-6): Given um lote só com medium/low (sem crítico/alto, sem
+- ~~**AC-3** (REQ-6): Given um lote só com medium/low (sem crítico/alto, sem
   nó morto), When o workflow calcula `pass`, Then o valor é o mesmo que a
-  versão anterior do código produzia para o mesmo lote (`true`).
+  versão anterior do código produzia para o mesmo lote (`true`).~~
+  **Superada em 2026-09-30** por [`verify-adjudica-tudo-spec.md`](verify-adjudica-tudo-spec.md)
+  (AC-1.1): um lote só com medium/low dá `pass: false`, porque o achado não
+  adjudicado segue aberto. Três rodadas com `pass: true` tinham 25 defeitos reais
+  entre 49 achados assim ([medição](verify-adjudica-tudo-medicao.md)). O corte da
+  adjudicação (REQ-3, REQ-4) continua valendo.
 - **AC-4** (REQ-6): Given um nó morto em Review ou Adjudicate, When o
   workflow calcula `pass`, Then `pass` é `false`, independente da
   severidade dos findings.

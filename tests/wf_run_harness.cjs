@@ -12,8 +12,8 @@
  *     "verdicts": { "<file>": { "is_real": bool, "confidence": num, "reason": str } }
  *   }
  * Saida (stdout): JSON { "result": <retorno do workflow>, "calls": {
- *   "review": [{ "label": ..., "agentType": ... }, ...],
- *   "adjudicate": [{ "label": ..., "agentType": ..., "file": ... }, ...],
+ *   "review": [{ "label": ..., "agentType": ..., "prompt": ... }, ...],
+ *   "adjudicate": [{ "label": ..., "agentType": ..., "file": ..., "prompt": ... }, ...],
  *   "phases": [...]
  * } }
  */
@@ -33,7 +33,7 @@ async function agent(prompt, opts) {
   const label = (opts && opts.label) || ''
   if (label.startsWith('review:')) {
     const key = extractLabelKey(label, 'review:')
-    calls.review.push({ label, agentType: opts.agentType })
+    calls.review.push({ label, agentType: opts.agentType, prompt })
     const reviews = scenario.reviews || {}
     // chave explicitamente presente com valor null = no morto (agent() nao
     // retornou nada); chave ausente = review sem findings (default).
@@ -42,7 +42,7 @@ async function agent(prompt, opts) {
   }
   if (label.startsWith('adjudicate:')) {
     const file = extractLabelKey(label, 'adjudicate:')
-    calls.adjudicate.push({ label, agentType: opts.agentType, file })
+    calls.adjudicate.push({ label, agentType: opts.agentType, file, prompt })
     const verdicts = scenario.verdicts || {}
     if (Object.prototype.hasOwnProperty.call(verdicts, file)) return verdicts[file]
     return { is_real: true, confidence: 0.9, reason: 'default-mock' }
