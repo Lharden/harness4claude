@@ -419,6 +419,57 @@ except Exception as exc:
 " 2>/dev/null | tr -d '\r\n' || true)"
 export SAUDE_DIGEST
 
+# ---------------------------------------------------------------------------
+# Sincronia entre as maquinas (master-harness, `mh maquina`)
+# ---------------------------------------------------------------------------
+# Copia do SAUDE_DIGEST para o aviso da sincronia (US-4 da spec da sincronia):
+# trabalho da outra maquina a absorver, as duas mexendo no mesmo repo, censo
+# velho, deriva de config, versoes. `mh.maquina.avisos.ao_iniciar_sessao` so le
+# arquivos (os censos no vault, o registro do disparo) e, se o censo desta
+# maquina passou de 30 min, dispara `mh maquina censo` destacado, sem esperar.
+# Silencio sem master-harness ou com um `mh` sem `mh.maquina`; um `mh.maquina`
+# que LEVANTA vira linha `MAQUINA: NAO VERIFICADO`, como no digest da saude. O
+# cwd da sessao vem do payload: e ele que casa o projeto da sessao (AC-4.2).
+MAQUINA_DIGEST="$(printf '%s' "$SESSION_INPUT" | "$PY" -c "
+import json, os, sys
+casa = os.environ.get('MASTER_HARNESS_HOME') or os.path.join(os.path.expanduser('~'), '.master-harness')
+try:
+    cwd = json.load(sys.stdin).get('cwd') or os.getcwd()
+except Exception:
+    cwd = os.getcwd()
+try:
+    with open(os.path.join(casa, 'mh-root'), encoding='utf-8') as fh:
+        raiz = fh.readline(4096).strip()
+except OSError:
+    raise SystemExit(0)
+if not raiz or not os.path.isdir(raiz):
+    raise SystemExit(0)
+sys.path.insert(0, raiz)
+import importlib.util
+try:
+    achado = importlib.util.find_spec('mh.maquina.avisos')
+except ImportError:
+    achado = None
+except Exception as exc:
+    print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
+    raise SystemExit(0)
+if achado is None:
+    raise SystemExit(0)
+try:
+    from mh.maquina import avisos
+    ao_iniciar = avisos.ao_iniciar_sessao
+except AttributeError:
+    raise SystemExit(0)
+except Exception as exc:
+    print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
+    raise SystemExit(0)
+try:
+    print(ao_iniciar(casa, python=sys.executable, cwd=cwd))
+except Exception as exc:
+    print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
+" 2>/dev/null | tr -d '\r\n' || true)"
+export MAQUINA_DIGEST
+
 STATE_FILE_PY="$STATE_DIR_PY/state.json"
 if [ ! -f "$STATE_FILE_PY" ]; then
     "$PY" -c "
@@ -443,7 +494,8 @@ arsenal = os.environ.get('ARSENAL_DIGEST', '').strip()
 sessoes = os.environ.get('SESSIONS_DIGEST', '').strip()
 dreno = os.environ.get('DRENO_DIGEST', '').strip()
 saude = os.environ.get('SAUDE_DIGEST', '').strip()
-partes_saida = [x for x in (digest, arsenal, sessoes, dreno, saude) if x]
+maquina = os.environ.get('MAQUINA_DIGEST', '').strip()
+partes_saida = [x for x in (digest, arsenal, sessoes, dreno, saude, maquina) if x]
 if partes_saida:
     print((chr(10) * 2).join(partes_saida))
 " 2>/dev/null | _harness_emit digest || true
@@ -498,6 +550,9 @@ if dreno:
     partes.append(dreno)
 if saude:
     partes.append(saude)
+maquina = os.environ.get('MAQUINA_DIGEST', '').strip()
+if maquina:
+    partes.append(maquina)
 print('\n\n'.join(partes))
 " 2>/dev/null | _harness_emit resuming || true
     exit 0
@@ -554,6 +609,9 @@ if dreno:
     parts.append(dreno)
 if saude:
     parts.append(saude)
+maquina = os.environ.get('MAQUINA_DIGEST', '').strip()
+if maquina:
+    parts.append(maquina)
 
 if parts:
     print('\n\n'.join(parts))
