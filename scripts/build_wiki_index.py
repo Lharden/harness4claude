@@ -60,6 +60,13 @@ _H1_RE = re.compile(r"^#\s+(.+)$", re.M)
 _HEADING_RE = re.compile(r"^(#{2,4})\s+(.+?)\s*$")
 _SKIP_PREFIXES = ("```", ">", "---", "!")
 _TABLE_SEP_RE = re.compile(r"^\|[\s:|-]+\|$")
+# [[alvo|rótulo]] — dentro de tabela o Obsidian exige o separador escapado (\|).
+_WIKILINK_ALIAS_RE = re.compile(r"\[\[[^\]]*?\\?\|([^\]]*)\]\]")
+# [[pasta/página#seção]] sem rótulo: o que o leitor vê é a seção, ou a página.
+_WIKILINK_RE = re.compile(r"\[\[(?:[^\]]*/)?([^\]#/]*)(?:#([^\]]*))?\]\]")
+_BOLD_RE = re.compile(r"\*\*(\S(?:.*?\S)?)\*\*")
+_ITALIC_RE = re.compile(r"(?<![\w*])\*(\S(?:[^*]*?\S)?)\*(?![\w*])")
+_CODE_RE = re.compile(r"`([^`]*)`")
 
 
 def _default_root():
@@ -93,6 +100,25 @@ def flatten_row(line):
     return " ".join(cell.strip() for cell in line.strip("|").split("|") if cell.strip())
 
 
+def strip_markup(line):
+    """Tira a sintaxe de link e de ênfase e deixa o que o leitor vê.
+
+    A sintaxe entrava crua no texto embedado. No compêndio, 12% dos caracteres eram
+    caminho de wikilink para o verbete vizinho ('[[02 recuperacao-busca#Embedding|
+    Embedding]]'), contra 0,1% nas specs; o vetor do verbete era puxado para o vizinho
+    e perdia a vaga para specs da mesma vizinhança. Medido em 2026-10-20 (D-132): só
+    com isto o golden foi de 68% a 79%, sem nenhum hit confiante novo nos negativos.
+
+    O conteúdo de `código` fica: nome de função é o que se busca. Apagá-lo inteiro foi
+    medido junto e fez um negativo virar hit confiante.
+    """
+    line = _WIKILINK_ALIAS_RE.sub(r"\1", line)
+    line = _WIKILINK_RE.sub(lambda m: m.group(2) or m.group(1), line)
+    line = _BOLD_RE.sub(r"\1", line)
+    line = _ITALIC_RE.sub(r"\1", line)
+    return _CODE_RE.sub(r"\1", line)
+
+
 def clean_lines(block):
     """Prosa útil de um bloco: sem ruido de markup, com tabelas achatadas.
 
@@ -106,10 +132,12 @@ def clean_lines(block):
             continue
         if _TABLE_SEP_RE.match(line):
             continue
+        # Antes de achatar a tabela: o '|' do rótulo de um link não é divisor de célula.
+        line = strip_markup(line).strip()
         if line.startswith("|"):
             line = flatten_row(line)
-            if not line:
-                continue
+        if not line:
+            continue
         out.append(line)
     return out
 

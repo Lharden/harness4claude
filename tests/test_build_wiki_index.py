@@ -43,6 +43,36 @@ def test_clean_lines_mantem_tabela_e_descarta_ruido() -> None:
     assert bwi.clean_lines(bloco) == ["a b", "prosa normal"]
 
 
+def test_clean_lines_tira_a_sintaxe_e_mantem_o_conteudo() -> None:
+    """Sintaxe de link e de ênfase não é conteúdo, e entrava crua no vetor.
+
+    No compêndio 12% dos caracteres eram caminho de wikilink para o verbete vizinho
+    ('[[02 recuperacao-busca#Embedding|Embedding]]'), contra 0,1% nas specs: o vetor do
+    verbete era puxado para o vizinho e perdia para specs da mesma vizinhança (D-132).
+    """
+    bloco = [
+        "melhora a precisão de [[02 recuperacao-busca#Embedding|Embedding]]",
+        "ver [[concepts/llm-wiki-pattern]] e [[03 confiabilidade#Disjuntor]]",
+        "**Intuição.** um *trecho* em `wiki_query.py:route` vale",
+        "| [[decisions/a\\|Decisão A]] | **adotada** |",
+    ]
+
+    assert bwi.clean_lines(bloco) == [
+        "melhora a precisão de Embedding",
+        "ver llm-wiki-pattern e Disjuntor",
+        "Intuição. um trecho em wiki_query.py:route vale",
+        "Decisão A adotada",
+    ]
+
+
+def test_clean_lines_nao_toca_prosa_sem_marcacao() -> None:
+    """A outra metade: texto sem marcação passa intacto, e asterisco que não é ênfase
+    (aritmética, nota de rodapé colada) fica onde está."""
+    bloco = ["custo 2*3 por chamada, top-k e p95", "nota*", "prosa normal (com parênteses)"]
+
+    assert bwi.clean_lines(bloco) == bloco
+
+
 def test_split_sections_quebra_por_heading_2_a_4() -> None:
     corpo = "intro\n## Um\nx\n### Dois\ny\n"
 
