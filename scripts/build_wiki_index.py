@@ -43,6 +43,12 @@ ALIASES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki-al
 # graphify e gerada por maquina e inundaria o índice com 949 notas de no.
 META_PAGES = {"index.md", "log.md"}
 GENERATED_SUBTREE = "graphs"
+# O arquivo morto guarda páginas superadas por definição: a cópia antiga de uma página
+# que hoje existe reescrita. Indexada, ela competia com a sucessora e vencia (o
+# vocabulário da pergunta costuma ser o da versão antiga): em 2026-10-20, 202 chunks de
+# _archive empurravam as páginas atuais para fora do top-3 do golden (D-132).
+ARCHIVE_SUBTREE = "_archive"
+SUBARVORES_FORA = {GENERATED_SUBTREE, ARCHIVE_SUBTREE}
 
 CHUNK_CHARS = 1200
 MIN_CHUNK_CHARS = 80
@@ -73,7 +79,7 @@ def page_files(root):
     found = []
     for dirpath, dirnames, filenames in os.walk(wiki):
         top = os.path.relpath(dirpath, wiki).split(os.sep)[0]
-        if top == GENERATED_SUBTREE:
+        if top in SUBARVORES_FORA:
             dirnames[:] = []
             continue
         for name in filenames:

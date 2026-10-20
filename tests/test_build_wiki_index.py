@@ -153,6 +153,20 @@ def test_subarvore_de_grafo_e_paginas_meta_ficam_fora(tmp_path: Path) -> None:
     assert encontrados == ["x.md"]
 
 
+def test_arquivo_morto_fica_fora_e_pagina_atual_entra(tmp_path: Path) -> None:
+    """Página arquivada é superada por definição: entrava no índice e tomava o top-3
+    da página atual que a substituiu (golden a 55%, D-132). As duas metades: a cópia
+    em _archive some, a página viva com o mesmo nome continua."""
+    write_page(tmp_path, "projects/h/02 Mecanismo.md", LONGO)
+    write_page(tmp_path, "_archive/2026-07-x/h/02 Mecanismo.md", LONGO)
+    write_page(tmp_path, "_archive/solta.md", LONGO)
+
+    wiki = tmp_path / "wiki"
+    encontrados = [os.path.relpath(p, wiki).replace(os.sep, "/") for p in bwi.page_files(str(tmp_path))]
+
+    assert encontrados == ["projects/h/02 Mecanismo.md"]
+
+
 def test_load_aliases_ignora_chaves_de_comentario(tmp_path: Path) -> None:
     arquivo = tmp_path / "aliases.json"
     arquivo.write_text(json.dumps({"_comment": "nota", "a/b": ["x"]}), encoding="utf-8")

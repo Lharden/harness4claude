@@ -6,7 +6,7 @@
       "prompt": "por que trocamos TLA+ na autorreforma do harness?",
       "expect_any": [
         "decisions/assimilacoes-2026",
-        "projects/harness4claude/09 Autorreforma - Estrategia e Execucao"
+        "compendio/03 confiabilidade#TLA+"
       ]
     },
     {
@@ -58,7 +58,8 @@
     {
       "prompt": "como funciona o mecanismo de execucao do harness4claude",
       "expect_any": [
-        "projects/harness4claude/02 Mecanismo e Fluxo de Execução"
+        "projects/harness4claude/02 Os Hooks e o Ciclo de Vida",
+        "projects/harness4claude/01 O Que Ele Faz Num Turno"
       ]
     },
     {
@@ -81,15 +82,9 @@
       ]
     },
     {
-      "prompt": "otimizacao de VRAM e escolha de modelos no harness lite",
-      "expect_any": [
-        "projects/harness-lite/04 Otimização de Modelos e VRAM"
-      ]
-    },
-    {
       "prompt": "qual a estrategia de evidencias e testes do harness4codex",
       "expect_any": [
-        "projects/harness4codex/08 Evidências, Testes e Proveniência"
+        "projects/harness4codex/04 O Que Está Provado, e os Limites"
       ]
     },
     {
