@@ -32,7 +32,7 @@ control") — e substituem palpite por leitura onde a observacao tinha errado:
 | Stop             | decision/block     | interrompe de verdade; so para gate     |
 | SubagentStart    | additionalContext  | doc oficial, secao SubagentStart        |
 | PostCompact      | nenhum             | doc oficial: "No decision control"      |
-| qualquer         | systemMessage      | MORTO                                   |
+| qualquer         | systemMessage      | tela do usuário; nunca o modelo         |
 
 Ate 2026-09-24 este arquivo classificava `PostToolUse` como stdout cru,
 "provado" por `<harness-reclassification>` aparecendo em transcript. A doc diz
@@ -45,6 +45,17 @@ do modelo; era so a saida do hook exibida na UI, do mesmo jeito que
 imprimia `<harness-reclassification>` cru por esse canal morto, e
 `harness-transactional.py` mandava o aviso de composicao de shell pelo mesmo
 caminho via este emissor.
+
+O `systemMessage` chega a TELA do usuario e nunca ao contexto do modelo. Ele
+serve para o que o usuario precisa ver, e so sai pelo tipo `tela` do
+`Emitter`, aceito so em UserPromptSubmit e SessionStart: o host aceita
+`systemMessage` de topo junto do `hookSpecificOutput` nesses dois eventos (doc
+oficial, "Common JSON fields"). Em qualquer outro evento, `add("tela", ...)`
+levanta `ValueError`. O primeiro consumidor e o monitor entre as maquinas do
+master-harness (design `monitor-maquinas-design.md`, ASSUMPTION-009): o mesmo
+texto vai ao modelo por `additionalContext` e ao usuario por `tela`. A regra
+de cima continua: o que o modelo precisa saber vai pelo `additionalContext`;
+quem usa `tela` entrega o mesmo texto tambem por la.
 
 O PostCompact nao tem canal para o modelo: o host rejeita `hookSpecificOutput`
 nele ("Hook JSON output validation failed"), descarta `systemMessage` e
@@ -101,6 +112,13 @@ except Exception:  # pragma: no cover - fallback defensivo
 STDOUT = "stdout"
 ADDCTX = "additionalContext"
 SILENT = "silent"
+
+# O tipo `tela`: vira o `systemMessage` de topo, que o host mostra ao usuario e
+# nunca poe no contexto do modelo. So nos eventos em que o host o aceita junto do
+# `hookSpecificOutput`; em outro evento, `Emitter.add` recusa (ver docstring).
+TELA = "tela"
+SYSTEM_MESSAGE = "systemMessage"
+TELA_EVENTS = frozenset({"userpromptsubmit", "sessionstart"})
 
 # Canal por evento. Ausente do mapa => stdout, o canal conservador que
 # comprovadamente chega. `stop` e silencioso de proposito; ver docstring.
@@ -212,32 +230,52 @@ class Emitter:
         self.cwd = cwd or ""
         self.root = root
         self.blocks = []
+        self.tela = []
         self._flushed = False
 
     def add(self, kind, text):
+        """Acumula um bloco. O tipo `tela` vai para a tela do usuario, nao ao modelo.
+
+        `tela` fora de UserPromptSubmit e SessionStart levanta `ValueError`: e
+        erro de quem chama, e o host descartaria o campo (ou a saida inteira)
+        em silencio, que e o modo de falha que este modulo existe para evitar.
+        """
+        if str(kind) == TELA and str(self.event or "").strip().lower() not in TELA_EVENTS:
+            raise ValueError(
+                f"tipo 'tela' so em UserPromptSubmit e SessionStart, nao em {canonical_event(self.event)}")
         if text and str(text).strip():
-            self.blocks.append((str(kind), str(text).rstrip()))
+            alvo = self.tela if str(kind) == TELA else self.blocks
+            alvo.append((str(kind), str(text).rstrip()))
         return self
 
     def text(self) -> str:
+        """O texto que vai ao modelo (sem os blocos de `tela`)."""
         return "\n\n".join(t for _, t in self.blocks)
+
+    def screen_text(self) -> str:
+        """O texto que vai a tela do usuario (so os blocos de `tela`)."""
+        return "\n\n".join(t for _, t in self.tela)
 
     def payload(self) -> dict:
         """O JSON a escrever no stdout, ou {} se nao ha nada a dizer."""
         body = self.text()
-        if not body:
+        tela = self.screen_text()
+        if not body and not tela:
             return {}
         channel = resolve_channel(self.event)
         if channel == SILENT:
             return {}
         if channel == ADDCTX:
-            return {
-                "hookSpecificOutput": {
+            out = {}
+            if body:
+                out["hookSpecificOutput"] = {
                     "hookEventName": canonical_event(self.event),
                     "additionalContext": body,
                 }
-            }
-        return {"__stdout__": body}
+            if tela:
+                out[SYSTEM_MESSAGE] = tela
+            return out
+        return {"__stdout__": body} if body else {}
 
     def flush(self, stream=None) -> dict:
         if self._flushed:
@@ -256,6 +294,8 @@ class Emitter:
             pass
         for kind, text in self.blocks:
             self._record(kind, text, channel if out else SILENT)
+        for kind, text in self.tela:
+            self._record(kind, text, SYSTEM_MESSAGE if out else SILENT)
         self.heartbeat()
         return out
 
@@ -370,6 +410,8 @@ def main(argv=None) -> int:
     ap.add_argument("--cwd", default="")
     ap.add_argument("--text", default=None)
     ap.add_argument("--text-file", default=None, help="arquivo, ou - para stdin")
+    ap.add_argument("--tela", default="",
+                    help="texto para a tela do usuario (systemMessage); so UserPromptSubmit e SessionStart")
     ap.add_argument("--aggregate", action="store_true")
     ap.add_argument("--channel-of", default=None, help="imprime o canal do evento e sai")
     ap.add_argument("--live", action="store_true", help="sessoes com batimento recente")
@@ -392,12 +434,17 @@ def main(argv=None) -> int:
             text = sys.stdin.read()
         else:
             text = Path(a.text_file).read_text(encoding="utf-8")
-    if not text:
+    if not text and not (a.tela or "").strip():
         return 0
 
-    Emitter(
-        a.event, hook=a.hook, session_id=a.session_id, cwd=a.cwd
-    ).add(a.kind, text).flush()
+    em = Emitter(a.event, hook=a.hook, session_id=a.session_id, cwd=a.cwd).add(a.kind, text)
+    if (a.tela or "").strip():
+        try:
+            em.add(TELA, a.tela)
+        except ValueError as exc:
+            # Evento sem tela: o texto do modelo sai mesmo assim; a recusa vai ao stderr, nunca some.
+            print(f"emit.py: {exc}", file=sys.stderr)
+    em.flush()
     return 0
 
 
