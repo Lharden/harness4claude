@@ -47,7 +47,7 @@ Campo opcional `maquinas = ["notebook", ...]` em cada entrada do registry. O
 registry é um só para as duas máquinas (o Obsidian Sync o espelha) e o
 `reconcile` compara com o disco de UMA; sem o campo, uma ferramenta instalada só
 numa máquina virava órfã ou fantasma na outra. Sem o campo a entrada vale em
-todas, como sempre. Os ids são os perfis de `AI-Brain/maquinas/*.json` (o
+todas, como sempre. Os ids são o campo `maquina` dos censos `AI-Brain/maquinas/*.json` (o
 vocabulário do `mh maquina`) e o `check` recusa id fora dele. A máquina atual é
 o campo `id` de `<casa do mh>/maquina-id`, só lido aqui: com ela, `orfa` só vale
 nas máquinas declaradas e instalação fora delas é `fora_das_maquinas`; sem ela,
@@ -296,7 +296,7 @@ def maquinas_de(item: dict) -> list[str] | None:
 
 
 def maquinas_declaradas(root: Path | None) -> set[str]:
-    """Vocabulário de ids de máquina: o `id` de cada `<root>/maquinas/*.json`."""
+    """Vocabulário de ids de máquina: o campo `maquina` de cada censo `<root>/maquinas/*.json`."""
     if root is None:
         return set()
     ids: set[str] = set()
@@ -305,7 +305,7 @@ def maquinas_declaradas(root: Path | None) -> set[str]:
             dados = json.loads(perfil.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        ident = dados.get("id") if isinstance(dados, dict) else None
+        ident = dados.get("maquina") if isinstance(dados, dict) else None
         if isinstance(ident, str) and ident.strip():
             ids.add(ident.strip())
     return ids

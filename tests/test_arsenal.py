@@ -1088,7 +1088,8 @@ def _perfis_de_maquina(root: Path, *ids: str) -> None:
     pasta = Path(root) / "maquinas"
     pasta.mkdir(parents=True, exist_ok=True)
     for ident in ids:
-        (pasta / f"{ident}.json").write_text(json.dumps({"esquema": 1, "id": ident}), encoding="utf-8")
+        (pasta / f"{ident}.json").write_text(
+            json.dumps({"esquema": 1, "maquina": ident, "instante": "2026-10-21T00:00:00Z"}), encoding="utf-8")
 
 
 def _esta_maquina(casa: Path, monkeypatch, ident: str | None, bruto: str | None = None) -> Path:
@@ -1198,3 +1199,20 @@ class TestMaquinasDoRegistry:
         (casa / "maquina-id").unlink()
         assert ars.maquina_atual() is None
         assert list(casa.iterdir()) == []
+
+    def test_censo_com_as_chaves_reais_e_aceito(self, ars, tmp_path):
+        """O arquivo de `maquinas/` e o censo do `mh maquina`: o id esta em `maquina`, nao ha `id`."""
+        censo = {
+            "apps": {}, "apps_motivo": "x", "ausentes": [], "chegada": {"instante": None}, "config": {},
+            "config_truncada": False, "duracao_s": 1.0, "esquema": 1, "fora_do_lugar": [],
+            "instante": "2026-10-21T00:00:00Z", "machine_guid_sha256": "0" * 64, "manifesto": {},
+            "maquina": "notebook", "nao_declarados": [], "pacotes": {}, "plugins": {}, "repos": {},
+            "saida": 0, "versoes": {},
+        }
+        assert "id" not in censo
+        pasta = tmp_path / "vault-censo" / "maquinas"
+        pasta.mkdir(parents=True)
+        (pasta / "notebook.json").write_text(json.dumps(censo), encoding="utf-8")
+        assert ars.maquinas_declaradas(tmp_path / "vault-censo") == {"notebook"}
+        _escreve_registry(tmp_path / "vault-censo", self._reg(maquinas=["notebook"]))
+        assert ars.command_check(tmp_path / "vault-censo")["ready"] is True
