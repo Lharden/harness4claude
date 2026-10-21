@@ -1,6 +1,6 @@
 {
-  "description": "Golden set da operacao query da wiki AI-Brain. Mesma estrutura do golden-prompts.json do skill-router: positives exigem a pagina alvo no top-3; negatives exigem zero hits (pergunta fora do dominio do vault nao pode devolver pagina). Alvo pode ser pagina (`area/pagina`) ou verbete (`area/pagina#Termo`) — no compendio a unidade de sentido e a secao, e casar so a pagina passaria o gate sem provar que o verbete certo veio. Campos `categoria` e `origem` sao metadado da medida do D-132 (golden ampliado com uso real em 2026-10-21); o teste os ignora.",
-  "gate": "top-3 hit rate >= 0.80",
+  "description": "Golden set da operacao query da wiki AI-Brain. Mesma estrutura do golden-prompts.json do skill-router: positives exigem a pagina alvo no top-3; negatives exigem zero hits (pergunta fora do dominio do vault nao pode devolver pagina). Alvo pode ser pagina (`area/pagina`) ou verbete (`area/pagina#Termo`) — no compendio a unidade de sentido e a secao, e casar so a pagina passaria o gate sem provar que o verbete certo veio. Campos `categoria` e `origem` sao metadado da medida do D-132 (golden ampliado com uso real em 2026-10-21); o teste ignora `categoria` e usa `origem` para o corte dos casos originais. Portao (D-132): top-3 >= 80% nos DOIS cortes, o agregado dos positivos e o subconjunto `origem == golden-v1` (os 19 originais, cujo residuo motivou o D-132), porque o agregado ampliado sozinho dilui esse residuo.",
+  "gate": "top-3 hit rate >= 0.80 no agregado e em origem == golden-v1",
   "positives": [
     {
       "prompt": "por que trocamos TLA+ na autorreforma do harness?",

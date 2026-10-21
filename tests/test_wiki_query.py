@@ -226,3 +226,36 @@ def test_secoes_de_pagina_comum_ainda_colapsam() -> None:
     ]
 
     assert len(wq.dedupe_by_page(hits, top_k=5)) == 1
+
+
+def test_penalidade_de_spec_reordena_e_desloca_a_confianca(monkeypatch) -> None:
+    """D-132: o trecho `type: spec` cai PENALIDADE_SPEC no score E no cos, e a ordem e refeita.
+
+    Dois trechos quase empatados (spec 0.50 e decisao 0.49): sem a penalidade a spec vence;
+    com ela, a decisao passa na frente. O cos da spec cai junto, o que a tira da banda
+    confiante (CONFIDENT_COS = 0.45) quando estava a menos de 0.03 acima da barra.
+    """
+    monkeypatch.setattr(wq, "embed_query", lambda *_a, **_k: [1.0, 0.0])
+    chunks = chunks_fake(12)
+    chunks[0].update(type="spec", page_id="specs/x-spec", id="specs/x-spec")
+    chunks[1].update(type="decision", page_id="decisions/y", id="decisions/y")
+    vecs = [[0.50, (1 - 0.50 ** 2) ** 0.5], [0.49, (1 - 0.49 ** 2) ** 0.5]]
+    vecs += [[0.0, 1.0]] * 10  # ruido abaixo do piso
+
+    hits = wq.route("consulta", chunks, vecs, top_k=3)
+
+    assert [h["skill"]["page_id"] for h in hits] == ["decisions/y", "specs/x-spec"]
+    spec = hits[1]
+    assert abs(spec["score"] - (0.50 - wq.PENALIDADE_SPEC)) < 1e-9
+    assert abs(spec["cos"] - spec["score"]) < 1e-9
+    assert abs(hits[0]["cos"] - 0.49) < 1e-9, "so o type: spec e penalizado"
+
+
+def test_penalizar_specs_nao_toca_a_camada_a_nem_outros_tipos() -> None:
+    outros = {"id": "o", "score": 0.4, "cos": 0.4, "layer": "B", "skill": {"type": "decision"}}
+    spec = {"id": "s", "score": 0.4, "cos": 0.4, "layer": "B", "skill": {"type": "spec"}}
+
+    resultado = wq.penalizar_specs([spec, outros])
+
+    assert resultado[0] is outros and outros["score"] == 0.4 and outros["cos"] == 0.4
+    assert abs(spec["score"] - (0.4 - wq.PENALIDADE_SPEC)) < 1e-9
