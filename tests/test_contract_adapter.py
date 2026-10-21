@@ -1,10 +1,7 @@
 import importlib.util
-import io
 import json
 import re
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(os.environ["HARNESS_PLUGIN_ROOT"])
@@ -43,7 +40,8 @@ def test_vendored_contract_pins_version_and_lock():
     assert adapter.verify_lock(vendorizada) is True
     # 1.2.0: `superseded` no enum de status. 1.3.0 (2026-10-08): sondas de producao e a chave `entradas`.
     # 1.4.0 (2026-10-09): `schemas/node-result.schema.json` saiu, sem consumidor (L-70 do master-harness).
-    assert vendorizada["capabilities"]["contract_version"] == "1.4.0"
+    # 1.5.0 (2026-10-21): a sonda de `integration.science-harness` alcanca o MCP e sai de `pendente` (D-136).
+    assert vendorizada["capabilities"]["contract_version"] == "1.5.0"
     assert not (ROOT / "contract" / "schemas" / "node-result.schema.json").exists()
     assert "schemas/node-result.schema.json" not in vendorizada["lock"]["files"]
 
@@ -97,77 +95,6 @@ def test_release_version_and_lifecycle_are_synchronized():
         "SessionEnd",
     } <= set(hooks)
     assert (ROOT / "skills" / "science-evidence" / "SKILL.md").exists()
-
-
-def _chamar_server_info(spec: dict) -> dict:
-    """Sobe o servidor do registro e chama `server_info` pelo protocolo MCP stdio."""
-    processo = subprocess.Popen(
-        [spec["command"], *spec.get("args", [])],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8",
-    )
-    try:
-        def pedir(mensagem):
-            processo.stdin.write(json.dumps(mensagem) + "\n")
-            processo.stdin.flush()
-            if "id" not in mensagem:
-                return None
-            while True:
-                resposta = json.loads(processo.stdout.readline())
-                if resposta.get("id") == mensagem["id"]:
-                    return resposta
-
-        pedir({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "sonda-contrato", "version": "0"}}})
-        pedir({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        resposta = pedir({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                          "params": {"name": "server_info", "arguments": {}}})
-    finally:
-        processo.stdin.close()
-        processo.wait(timeout=10)
-    assert resposta["result"]["isError"] is False
-    return json.loads(resposta["result"]["content"][0]["text"])
-
-
-def test_science_intent_routes_evidence_prompts(monkeypatch, capsys, tmp_path):
-    """Sonda de `integration.science-harness`: do prompt ate a resposta do MCP.
-
-    Ate 2026-10-07 esta sonda provava so que o hook roteava, e passava com o MCP
-    ausente do Claude (decisao 5 de `decisoes-capacidades-orfas.md`). Agora o
-    hook so emite com o `science_harness` registrado, e a sonda sobe o servidor
-    pelo mesmo registro que o hook aceitou e chama `server_info`, como a skill
-    `science-evidence` manda. O servidor e um duble no formato do `shs.exe
-    claims-mcp`; a sonda nao depende do executavel real da maquina.
-    """
-    hook = _load("science_intent", ROOT / "hooks" / "science_intent.py")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    config_dir = tmp_path / "claude-config"
-    config_dir.mkdir()
-    (config_dir / ".claude.json").write_text(json.dumps({"mcpServers": {"science_harness": {
-        "type": "stdio", "command": sys.executable,
-        "args": [str(ROOT / "tests" / "fixtures" / "fake_claims_mcp.py")], "env": {}}}}), encoding="utf-8")
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(
-        {"prompt": "Review scientific evidence", "cwd": str(repo)})))
-
-    assert hook.main() == 0
-
-    response = json.loads(capsys.readouterr().out)
-    # A chave mudou em 2026-09-01: `systemMessage` e canal de UI e nao entra no
-    # contexto do modelo — nos 343 transcripts, 100% das linhas com ele no
-    # stdout tem `content` vazio. Este assert le so a chave nova de proposito:
-    # aceitar as duas deixaria a regressao passar despercebida.
-    assert "systemMessage" not in response
-    message = response["hookSpecificOutput"]["additionalContext"]
-    assert "science-evidence" in message
-    assert "read-only" in message
-    assert "provenance" in message
-
-    spec = hook.registro_science(str(repo))
-    assert spec is not None
-    assert "corpora" in _chamar_server_info(spec)
 
 
 def test_classifier_core_is_portable_and_used_by_the_hook():

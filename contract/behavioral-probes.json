@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.4.0",
+  "contract_version": "1.5.0",
   "adapters": {
     "harness4codex": {
       "classification.deterministic-suggestion": [
@@ -60,7 +60,7 @@
         "tests/test_harness_lite_adapter.py::test_preview_envelope_matches_harness_lite_task_envelope_v1"
       ],
       "integration.science-harness": [
-        "tests/test_science_adapter.py::test_scientific_evidence_prompts_activate_the_read_only_mcp_route"
+        "tests/test_science_probe.py::test_science_probe_cli_reaches_the_registered_mcp_in_three_states"
       ],
       "lifecycle.full-hooks": [
         "tests/test_sondas_de_producao.py::test_hook_por_subprocesso_atende_todo_evento_de_hooks_json"
@@ -130,7 +130,7 @@
         "tests/test_harness_lite_adapter.py::test_a_passed_bundle_with_artifacts_is_acceptable"
       ],
       "integration.science-harness": [
-        "tests/test_contract_adapter.py::test_science_intent_routes_evidence_prompts"
+        "tests/test_science_probe.py::test_sonda_alcanca_o_mcp_registrado_nos_tres_estados"
       ],
       "lifecycle.full-hooks": [
         "tests/test_sondas_de_producao.py::test_todo_comando_de_hooks_json_roda"
@@ -206,13 +206,9 @@
           "substituta": "leitor de producao do Codex sobre bundle real do Lite (auditoria 4.3)"
         }
       },
-      "integration.science-harness": {
-        "pendente": {
-          "dono": "decisao 5 + L-63",
-          "causa": "a sonda prova o roteamento; o MCP registrado nao e exercitado",
-          "substituta": "test_hook.py:505 mais initialize e tools/list contra shs claims-mcp (auditoria 4.3)"
-        }
-      },
+      "integration.science-harness": [
+        "harness4codex/cli.py::run"
+      ],
       "lifecycle.full-hooks": [
         "hooks/codex_harness_hook.py"
       ],
@@ -284,13 +280,9 @@
           "substituta": "fase do harness-workflow que delega ao Lite, contra Lite em loopback (auditoria 4.3)"
         }
       },
-      "integration.science-harness": {
-        "pendente": {
-          "dono": "decisao 5 + L-63",
-          "causa": "a sonda prova o roteamento; o MCP science_harness nao e exercitado",
-          "substituta": "science_intent com e sem MCP, mais initialize e tools/list contra shs claims-mcp (auditoria 4.3)"
-        }
-      },
+      "integration.science-harness": [
+        "scripts/science_probe.py"
+      ],
       "lifecycle.full-hooks": [
         "hooks/hooks.json"
       ],

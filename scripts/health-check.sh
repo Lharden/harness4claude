@@ -259,6 +259,26 @@ PYEOF
     echo ""
 fi
 
+# ===========================================================================
+# Science Harness MCP: o servico registrado responde?
+# ===========================================================================
+# Ate o D-136 o gatilho por regex mandava usar o `science_harness` sem saber se ele subia, e a sonda do contrato
+# ficava verde com o `shs.exe` quebrado. A sonda sobe o servidor registrado no `.claude.json` e faz `initialize` e
+# `tools/list` (scripts/science_probe.py; saida 0 passa, 1 reprova, 2 nao verificado). Registrado e quebrado e FAIL;
+# nao registrado ou desligado e WARN, nunca [OK]: a maquina nao declarou o servico, e nao conferir nao e conformar.
+echo "--- Science Harness MCP ---"
+PROBE_OUT="$(python "$PLUGIN_DIR/scripts/science_probe.py" --json 2>&1 </dev/null)"
+PROBE_RC=$?
+case "$PROBE_RC" in
+    0) echo "[OK]     science_harness responde initialize e tools/list" ;;
+    2) warn "science_harness nao verificado (nao registrado, desligado ou config ilegivel)"
+       echo "         $PROBE_OUT" ;;
+    *) echo "[FAIL]   science_harness registrado, mas a sonda reprovou (saida $PROBE_RC)"
+       echo "         $PROBE_OUT"
+       EXIT_CODE=1 ;;
+esac
+echo ""
+
 echo "--- Skills ---"
 check "harness-workflow skill"   "test -f '$SKILLS_DIR/harness-workflow/SKILL.md'"
 check "discuss skill"            "test -f '$SKILLS_DIR/discuss/SKILL.md'"
