@@ -328,3 +328,189 @@ def test_os_oito_casos_do_ac_4_16(tmp_path: Path, nome: str, montar, esperado: s
         assert esperado in contexto, f"{nome}: {contexto!r}"
     else:
         assert "MAQUINA" not in contexto, f"{nome}: {contexto!r}"
+
+
+# ------------------------------------------------------------------ monitor entre as maquinas (fase 3) ----
+# Spec do monitor (master-harness, `docs/specs/monitor-maquinas-spec.md`), REQ-F5 e AC-2.6; design, componente 8 e
+# "Saida dos hooks". O `UserPromptSubmit` chama `avisos.no_prompt` quando o `mh` o tem e entrega o texto num JSON so,
+# ao modelo (`additionalContext`) e a tela (`systemMessage`), em todo caminho de saida, inclusive os que antes saiam
+# calados. Com o `mh` antigo, a chamada e a saida de antes.
+
+TEXTO_MONITOR = ("MAQUINA: fastslr: 1 commit atras do remoto → `git -C '~/fastslr' pull --ff-only` "
+                 "— sugestões para o usuário; não execute sem pedido")
+
+MONITOR = f'''
+import json, os, pathlib
+def no_prompt(casa, *, python, cwd, sessao, agora=None, lancar=None, env=None, raiz=None):
+    pathlib.Path(casa, "no_prompt.json").write_text(json.dumps(
+        {{"casa": str(casa), "python": python, "cwd": str(cwd), "sessao": sessao}}))
+    return os.environ.get("TEXTO_MONITOR_FALSO", {TEXTO_MONITOR!r})
+def disparar_se_velho(casa, *, python):
+    pathlib.Path(casa, "disparou.json").write_text("{{}}")
+    return 1
+def ao_iniciar_sessao(casa, *, python, cwd, sessao=None, origem=None, agora=None, lancar=None, env=None, raiz=None):
+    pathlib.Path(casa, "inicio.json").write_text(json.dumps(
+        {{"casa": str(casa), "cwd": str(cwd), "sessao": sessao, "origem": origem}}))
+    return {TEXTO_MONITOR!r}
+'''
+
+ANTIGO = '''
+import pathlib
+def disparar_se_velho(casa, *, python):
+    pathlib.Path(casa, "disparou.json").write_text("{}")
+    return 1
+'''
+
+PROMPT_L1 = "implementar uma feature nova de autenticacao com refatoracao de arquitetura"
+PROMPT_L0 = "o que e isso?"
+PROMPT_AUTOMACAO = "<task-notification> o comando de fundo terminou </task-notification>"
+
+
+def _prompt(tmp_path: Path, casa: Path, prompt: str, *,
+            sessao: str | None = "s-monitor") -> subprocess.CompletedProcess:
+    cwd = _repo(tmp_path)
+    payload = {"cwd": str(cwd), "hook_event_name": "UserPromptSubmit", "prompt": prompt}
+    if sessao is not None:
+        payload["session_id"] = sessao
+    return subprocess.run(
+        ["bash", str(CLASSIFICA)], input=json.dumps(payload),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False, env=_env(tmp_path, casa), cwd=str(cwd), timeout=120,
+    )
+
+
+def _um_json(r: subprocess.CompletedProcess) -> dict:
+    """A saida inteira e UM objeto JSON (`json.loads` reprova dois objetos ou texto cru em volta)."""
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def _nos_dois_canais(saida: dict, texto: str = TEXTO_MONITOR) -> str:
+    assert saida["systemMessage"] == texto
+    assert saida["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    contexto = saida["hookSpecificOutput"]["additionalContext"]
+    assert texto in contexto
+    return contexto
+
+
+def test_monitor_l1_um_json_com_o_texto_no_contexto_e_na_tela(tmp_path: Path) -> None:
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+
+    contexto = _nos_dois_canais(_um_json(_prompt(tmp_path, casa, PROMPT_L1)))
+
+    assert "HARNESS v3 CLASSIFIED" in contexto
+    chamado = json.loads((casa / "no_prompt.json").read_text(encoding="utf-8"))
+    assert chamado["sessao"] == "s-monitor" and Path(chamado["cwd"]) == _repo(tmp_path)
+    assert Path(chamado["casa"]) == casa and Path(chamado["python"]).name.lower().startswith("python")
+    assert not (casa / "disparou.json").exists()  # o `no_prompt` substitui o `disparar_se_velho` (AC-2.9)
+
+
+def test_monitor_l0_o_bloco_de_classificacao_entra_no_mesmo_json(tmp_path: Path) -> None:
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+
+    contexto = _nos_dois_canais(_um_json(_prompt(tmp_path, casa, PROMPT_L0)))
+
+    assert "<harness-classification>" in contexto and "level: L0" in contexto
+
+
+def test_monitor_na_saida_antecipada_que_antes_era_calada(tmp_path: Path) -> None:
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+
+    saida = _um_json(_prompt(tmp_path, casa, PROMPT_AUTOMACAO))
+
+    assert _nos_dois_canais(saida) == TEXTO_MONITOR  # so o monitor: a automacao continua sem classificacao
+    assert (casa / "no_prompt.json").is_file()
+
+
+def test_monitor_no_caminho_de_continuacao(tmp_path: Path) -> None:
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+    _prompt(tmp_path, casa, PROMPT_L1)
+
+    contexto = _nos_dois_canais(_um_json(_prompt(tmp_path, casa, "e agora o resto")))
+
+    assert "HARNESS v3 CONTINUING" in contexto
+
+
+def test_monitor_sem_id_de_sessao_chama_com_none(tmp_path: Path) -> None:
+    """AC-2.11: sem id, o `mh` so dispara; o hook nao inventa um id (nem o escopo do projeto)."""
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+
+    _prompt(tmp_path, casa, PROMPT_L1, sessao=None)
+
+    assert json.loads((casa / "no_prompt.json").read_text(encoding="utf-8"))["sessao"] is None
+
+
+def _saida_de_antes(r: subprocess.CompletedProcess, prompt: str) -> None:
+    """A forma da saida sem o monitor: automacao calada, L0 em stdout cru, L1+ num JSON so com `hookSpecificOutput`."""
+    assert r.returncode == 0, r.stderr
+    assert "systemMessage" not in r.stdout and "MAQUINA" not in r.stdout
+    if prompt == PROMPT_AUTOMACAO:
+        assert r.stdout == ""
+    elif prompt == PROMPT_L0:
+        assert r.stdout.startswith("<harness-classification>")
+    else:
+        assert list(json.loads(r.stdout)) == ["hookSpecificOutput"]
+
+
+@pytest.mark.parametrize("prompt", [PROMPT_L1, PROMPT_L0, PROMPT_AUTOMACAO])
+def test_monitor_vazio_deixa_a_saida_de_antes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str) -> None:
+    monkeypatch.setenv("TEXTO_MONITOR_FALSO", "")
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+
+    r = _prompt(tmp_path, casa, prompt)
+
+    assert (casa / "no_prompt.json").is_file()
+    _saida_de_antes(r, prompt)
+
+
+@pytest.mark.parametrize("prompt", [PROMPT_L1, PROMPT_L0, PROMPT_AUTOMACAO])
+def test_mh_antigo_sem_no_prompt_mantem_o_disparo_e_a_saida_de_antes(tmp_path: Path, prompt: str) -> None:
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", ANTIGO))
+
+    r = _prompt(tmp_path, casa, prompt)
+
+    assert (casa / "disparou.json").is_file()
+    _saida_de_antes(r, prompt)
+
+
+def test_no_prompt_que_levanta_vira_nao_verificado_nos_dois_canais(tmp_path: Path) -> None:
+    corpo = ("def no_prompt(casa, *, python, cwd, sessao):\n"
+             "    raise RuntimeError('memoria\\npodre')\n")
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", corpo))
+
+    saida = _um_json(_prompt(tmp_path, casa, PROMPT_L1))
+
+    contexto = _nos_dois_canais(saida, "MAQUINA: NAO VERIFICADO - RuntimeError: memoria podre")
+    assert "HARNESS v3 CLASSIFIED" in contexto
+
+
+def test_session_start_passa_sessao_e_origem_e_entrega_na_tela(tmp_path: Path) -> None:
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", MONITOR))
+    cwd = _repo(tmp_path)
+
+    r = subprocess.run(
+        ["bash", str(INICIO)],
+        input=json.dumps({"session_id": "s-retomada", "cwd": str(cwd), "hook_event_name": "SessionStart",
+                          "source": "resume"}),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False, env=_env(tmp_path, casa), cwd=str(cwd), timeout=120,
+    )
+
+    assert r.returncode == 0, r.stderr
+    saida = json.loads(r.stdout)
+    assert saida["systemMessage"] == TEXTO_MONITOR
+    assert TEXTO_MONITOR in saida["hookSpecificOutput"]["additionalContext"]
+    inicio = json.loads((casa / "inicio.json").read_text(encoding="utf-8"))
+    assert inicio["sessao"] == "s-retomada" and inicio["origem"] == "resume"
+
+
+def test_session_start_com_mh_de_assinatura_antiga_chama_como_antes(tmp_path: Path) -> None:
+    """`AVISA` tem `ao_iniciar_sessao(casa, *, python, cwd)`: passar `sessao=` a ele levantaria TypeError."""
+    casa = _casa(tmp_path, _mh_falso(tmp_path / "mh-falso", AVISA))
+
+    r = _iniciar(tmp_path, casa)
+
+    saida = json.loads(r.stdout)
+    assert "NAO VERIFICADO" not in r.stdout
+    assert "MAQUINA: fotos de desktop" in saida["hookSpecificOutput"]["additionalContext"]
+    assert saida["systemMessage"].startswith("MAQUINA: fotos de desktop")

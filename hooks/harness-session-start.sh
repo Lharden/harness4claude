@@ -138,7 +138,9 @@ _harness_emit() {
     local texto
     texto="$(cat)"
     [ -z "$texto" ] && return 0
-    printf '%s' "$texto" | "$PY" "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --session-id "${HARNESS_SESSION_ID:-}"         --cwd "$PWD" --text-file - 2>/dev/null         || printf '%s' "$texto"
+    # `--tela`: a linha do monitor entre as maquinas tambem vai a tela do
+    # usuario (`systemMessage`), no mesmo JSON; vazia, nada muda.
+    printf '%s' "$texto" | "$PY" "$PLUGIN_DIR/hooks/emit.py"         --event SessionStart --kind "$kind" --hook session_start         --session-id "${HARNESS_SESSION_ID:-}"         --cwd "$PWD" --text-file - --tela="${MAQUINA_DIGEST:-}" 2>/dev/null         || printf '%s' "$texto"
 }
 
 MIGRATE_PY="$PLUGIN_DIR/scripts/migrate_state.py"
@@ -430,13 +432,23 @@ export SAUDE_DIGEST
 # Silencio sem master-harness ou com um `mh` sem `mh.maquina`; um `mh.maquina`
 # que LEVANTA vira linha `MAQUINA: NAO VERIFICADO`, como no digest da saude. O
 # cwd da sessao vem do payload: e ele que casa o projeto da sessao (AC-4.2).
+#
+# Monitor entre as maquinas (spec do monitor REQ-F5, design componente 8): se a
+# assinatura de `ao_iniciar_sessao` aceitar (`inspect.signature`), o hook passa
+# `sessao=` (o `session_id` do payload) e `origem=` (o `source`: startup,
+# resume, clear, compact), e o `mh` redefine a memoria da sessao para o que
+# mostrou (AC-2.10). Um `mh` anterior ao monitor recebe a chamada de antes. A
+# linha vai ao modelo e tambem a tela do usuario (`--tela` do `_harness_emit`).
 MAQUINA_DIGEST="$(printf '%s' "$SESSION_INPUT" | "$PY" -c "
 import json, os, sys
 casa = os.environ.get('MASTER_HARNESS_HOME') or os.path.join(os.path.expanduser('~'), '.master-harness')
 try:
-    cwd = json.load(sys.stdin).get('cwd') or os.getcwd()
+    payload = json.load(sys.stdin)
+    if not isinstance(payload, dict):
+        payload = {}
 except Exception:
-    cwd = os.getcwd()
+    payload = {}
+cwd = payload.get('cwd') or os.getcwd()
 try:
     with open(os.path.join(casa, 'mh-root'), encoding='utf-8') as fh:
         raiz = fh.readline(4096).strip()
@@ -466,8 +478,18 @@ except Exception as exc:
 ao_iniciar = getattr(avisos, 'ao_iniciar_sessao', None)
 if ao_iniciar is None:
     raise SystemExit(0)
+extras = {}
 try:
-    print(ao_iniciar(casa, python=sys.executable, cwd=cwd))
+    import inspect
+    aceitos = inspect.signature(ao_iniciar).parameters
+    if 'sessao' in aceitos:
+        extras['sessao'] = payload.get('session_id') or None
+    if 'origem' in aceitos:
+        extras['origem'] = payload.get('source') or None
+except (TypeError, ValueError):
+    extras = {}
+try:
+    print(ao_iniciar(casa, python=sys.executable, cwd=cwd, **extras))
 except Exception as exc:
     print(f'MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}')
 " 2>/dev/null | tr -d '\r\n' || true)"

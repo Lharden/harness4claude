@@ -6,7 +6,9 @@ O que esta travado aqui, e por que:
   erro de logica: era um canal que existe, aceita a escrita, nao devolve erro,
   e simplesmente nao chega ao modelo. 81 sinais em 47 sessoes, 0 acoes. Um
   teste que garanta que nenhum caminho aqui produz essa chave e o unico jeito
-  de a regressao ser barulhenta em vez de invisivel.
+  de a regressao ser barulhenta em vez de invisivel. Desde 2026-10-19 a chave
+  tem um uso legitimo, o tipo `tela` (a tela do usuario, nunca o modelo), so em
+  UserPromptSubmit e SessionStart; nenhum outro tipo a produz.
 - **Um bloco por turno.** O host aceita um `hookSpecificOutput` por saida.
   Dois emissores escrevendo a chave direto se sobrescreveriam em silencio —
   era o risco concreto de juntar BRANCH SIGNAL e `<harness-parked>`. Por isso
@@ -85,10 +87,77 @@ class TestSystemMessageNuncaMais:
             em.add("k", "texto qualquer")
             assert "systemMessage" not in json.dumps(em.payload())
 
-    def test_o_modulo_nao_menciona_a_chave_como_saida(self):
+    def test_a_chave_so_existe_na_constante_do_tipo_tela(self):
+        """A chave sai por um lugar so: a constante que o tipo `tela` usa.
+
+        Ate 2026-10-19 a chave nao podia aparecer no codigo. Com o tipo `tela`
+        (design do monitor entre as maquinas, ASSUMPTION-009), ela aparece uma
+        vez, e qualquer outro caminho que a escreva reprova aqui; o teste de
+        cima continua provando que nenhum tipo comum a produz.
+        """
         fonte = EMIT_PATH.read_text(encoding="utf-8")
         codigo = fonte.split('"""', 2)[-1]
-        assert '"systemMessage"' not in codigo
+        assert codigo.count('"systemMessage"') == 1
+        assert 'SYSTEM_MESSAGE = "systemMessage"' in codigo
+        assert "'systemMessage'" not in codigo
+
+
+class TestTela:
+    """O tipo `tela`: `systemMessage` de topo, so em UserPromptSubmit e SessionStart (design do monitor, comp. 8)."""
+
+    @pytest.mark.parametrize("evento", ["UserPromptSubmit", "SessionStart", "userpromptsubmit"])
+    def test_tela_vira_system_message_e_nao_entra_no_contexto(self, emit, tmp_path, evento):
+        em = emit.Emitter(evento, hook="t", root=tmp_path)
+        em.add("maquina", "MAQUINA: x").add("tela", "MAQUINA: x")
+        out = em.payload()
+        assert out["systemMessage"] == "MAQUINA: x"
+        assert out["hookSpecificOutput"]["additionalContext"] == "MAQUINA: x"
+        assert out["hookSpecificOutput"]["hookEventName"] == emit.canonical_event(evento)
+
+    def test_tela_sozinha_nao_vai_ao_modelo(self, emit, tmp_path):
+        em = emit.Emitter("UserPromptSubmit", hook="t", root=tmp_path)
+        em.add("tela", "so para o usuario")
+        assert em.payload() == {"systemMessage": "so para o usuario"}
+        assert em.text() == ""
+
+    @pytest.mark.parametrize("evento", ["PostToolUse", "PreToolUse", "Stop", "SubagentStop", "SessionEnd",
+                                        "PreCompact", "PostCompact", "SubagentStart", "Qualquer", None])
+    def test_tela_fora_dos_dois_eventos_e_recusada(self, emit, tmp_path, evento):
+        em = emit.Emitter(evento, hook="t", root=tmp_path)
+        with pytest.raises(ValueError, match="tela"):
+            em.add("tela", "nao pode")
+        assert em.payload() == {}
+
+    def test_um_json_so_com_os_dois_campos(self, emit, tmp_path):
+        buf = io.StringIO()
+        em = emit.Emitter("UserPromptSubmit", hook="t", root=tmp_path)
+        em.add("classified", "HARNESS v3 CLASSIFIED").add("maquina", "MAQUINA: y").add("tela", "MAQUINA: y")
+        em.flush(stream=buf)
+        out = json.loads(buf.getvalue())  # falha se houver dois objetos
+        assert set(out) == {"hookSpecificOutput", "systemMessage"}
+        assert "HARNESS v3 CLASSIFIED" in out["hookSpecificOutput"]["additionalContext"]
+        assert "MAQUINA: y" in out["hookSpecificOutput"]["additionalContext"]
+
+    def test_extrato_registra_a_tela_pelo_canal_dela(self, emit, tmp_path):
+        emit.Emitter("SessionStart", hook="t", root=tmp_path).add("tela", "abc").flush(stream=io.StringIO())
+        row = json.loads(emit.log_path(tmp_path).read_text(encoding="utf-8").strip())
+        assert row["kind"] == "tela" and row["channel"] == "systemMessage"
+
+    def test_cli_tela_no_session_start(self, emit, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv("HARNESS_DIR", str(tmp_path))
+        emit.main(["--event", "SessionStart", "--kind", "digest", "--text", "bloco\n\nMAQUINA: z",
+                   "--tela", "MAQUINA: z"])
+        out = json.loads(capsys.readouterr().out)
+        assert out["systemMessage"] == "MAQUINA: z"
+        assert out["hookSpecificOutput"]["additionalContext"] == "bloco\n\nMAQUINA: z"
+
+    def test_cli_tela_em_evento_sem_tela_vai_ao_stderr_e_o_texto_sai(self, emit, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv("HARNESS_DIR", str(tmp_path))
+        emit.main(["--event", "PostToolUse", "--kind", "k", "--text", "contexto", "--tela", "nao"])
+        cap = capsys.readouterr()
+        out = json.loads(cap.out)
+        assert "systemMessage" not in out and out["hookSpecificOutput"]["additionalContext"] == "contexto"
+        assert "tela" in cap.err
 
 
 class TestUmBlocoPorTurno:

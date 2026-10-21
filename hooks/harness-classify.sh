@@ -188,7 +188,17 @@ def _falar(kind, texto):
     `HARNESS v3 CLASSIFIED` foi emitido 81 vezes em 47 sessoes e
     `Skill(harness-workflow)` foi invocada em zero. O emissor central resolve
     o canal pelo evento e registra em emissions.jsonl.
+
+    O texto do monitor entre as maquinas (`_MAQUINA`, de `_monitor_maquina`)
+    viaja no MESMO JSON: no `additionalContext`, para o modelo, e como `tela`
+    (`systemMessage`), para o usuario. Um JSON so por execucao: dois objetos no
+    stdout quebrariam o parse do host. `texto` vazio e a saida que antes era
+    calada: so o monitor fala, sem o bloco de presenca.
     """
+    corpo = (texto + _bloco_de_presenca()) if texto else ""
+    maquina = _MAQUINA
+    if not corpo and not maquina:
+        return
     try:
         import importlib.util
         _hooks = os.environ.get("HARNESS_HOOKS_DIR") or ""
@@ -198,17 +208,35 @@ def _falar(kind, texto):
             raise ImportError
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        mod.Emitter("UserPromptSubmit", hook="classify",
-                    session_id=os.environ.get("HARNESS_SESSION_ID") or "",
-                    cwd=os.environ.get("HARNESS_SESSION_CWD") or ""
-                    ).add(kind, texto + _bloco_de_presenca()).flush()
+        em = mod.Emitter("UserPromptSubmit", hook="classify",
+                         session_id=os.environ.get("HARNESS_SESSION_ID") or "",
+                         cwd=os.environ.get("HARNESS_SESSION_CWD") or "")
+        em.add(kind, corpo)
+        if maquina:
+            em.add("maquina", maquina).add(mod.TELA, maquina)
+        em.flush()
     except Exception:
         # Sem o emissor, o canal provado escrito a mao. Perder a classificacao
         # por causa do mensageiro repetiria a falha que isto veio consertar.
-        print(json.dumps({"hookSpecificOutput": {
+        saida = {}
+        contexto = "\n\n".join(x for x in (corpo, maquina) if x)
+        saida["hookSpecificOutput"] = {
             "hookEventName": "UserPromptSubmit",
-            "additionalContext": texto + _bloco_de_presenca(),
-        }}, ensure_ascii=False))
+            "additionalContext": contexto,
+        }
+        if maquina:
+            saida["systemMessage"] = maquina
+        print(json.dumps(saida, ensure_ascii=False))
+
+
+def _sair():
+    """Saida antecipada. Antes era calada; agora entrega o monitor, se ele tem o que dizer.
+
+    `no_prompt` ja rodou (antes das saidas antecipadas) e ja gravou as
+    sugestoes como mostradas na memoria da sessao: sair calado aqui as perderia.
+    """
+    _falar("monitor", "")
+    raise SystemExit(0)
 
 
 # ============================================================================
@@ -324,15 +352,25 @@ def _bloco_de_presenca():
         return ""
 
 
-def _disparar_censo():
-    """O censo da sincronia entre as maquinas em segundo plano (REQ-F24 da spec da sincronia, master-harness).
+def _monitor_maquina():
+    """O monitor entre as maquinas no meio da sessao (master-harness, spec do monitor REQ-F5, design componente 8).
 
-    A sessao longa da maquina que o usuario esta deixando e a que precisa publicar o proprio estado; o SessionStart
-    so dispara na abertura. `mh.maquina.avisos.disparar_se_velho` le o censo desta maquina e o registro do ultimo
-    disparo e, so se o censo passou de 30 min e nao ha disparo em voo, lanca `mh maquina censo` destacado: este hook
-    nao espera o censo. O intervalo e por maquina, no mesmo registro que o SessionStart usa. Best-effort e
-    silencioso, como a presenca: o aviso de um disparo que nao gravou e do SessionStart (AC-4.10). Roda antes das
-    saidas antecipadas pelo mesmo motivo da presenca.
+    Devolve o texto `MAQUINA: ...` a entregar, ou "". Quem decide o que dizer e
+    `mh.maquina.avisos.no_prompt`: le os censos e a memoria da sessao, devolve
+    so o que esta sessao ainda nao viu, e dispara o censo de fundo sem espera-lo.
+    Este hook so chama e entrega (em `_falar`, nos dois canais).
+
+    - `mh` com `no_prompt`: chamado com a casa, o proprio python, o cwd e o
+      `session_id` do payload (sem id, `None`: o `mh` so dispara, AC-2.11).
+      Um `no_prompt` que levanta vira `MAQUINA: NAO VERIFICADO`, como no
+      SessionStart: silencio ali seria o proprio defeito.
+    - `mh` antigo, sem `no_prompt`: o de antes, `disparar_se_velho` (REQ-F24
+      da sincronia), calado.
+    - Sem `mh`, ou `mh` que nao importa: silencio, como antes; o import
+      quebrado ja vira linha no SessionStart.
+
+    Roda antes das saidas antecipadas pelo mesmo motivo da presenca: metade dos
+    prompts sai cedo, e sao as sessoes que estao trabalhando.
     """
     try:
         casa = os.environ.get("MASTER_HARNESS_HOME") or os.path.join(
@@ -340,19 +378,32 @@ def _disparar_censo():
         with open(os.path.join(casa, "mh-root"), encoding="utf-8") as fh:
             raiz = fh.readline(4096).strip()
         if not raiz or not os.path.isdir(raiz):
-            return
+            return ""
         if raiz not in sys.path:
             sys.path.insert(0, raiz)
         from mh.maquina import avisos as _avisos
-        _avisos.disparar_se_velho(casa, python=sys.executable)
     except Exception:
-        pass
+        return ""
+    no_prompt = getattr(_avisos, "no_prompt", None)
+    if not callable(no_prompt):
+        try:
+            _avisos.disparar_se_velho(casa, python=sys.executable)
+        except Exception:
+            pass
+        return ""
+    try:
+        texto = no_prompt(casa, python=sys.executable,
+                          cwd=os.environ.get("HARNESS_SESSION_CWD") or os.getcwd(),
+                          sessao=os.environ.get("HARNESS_SESSION_ID") or None)
+    except Exception as exc:
+        return " ".join(f"MAQUINA: NAO VERIFICADO - {type(exc).__name__}: {exc}".split())
+    return str(texto or "").strip()
 
 
 msg = os.environ["HARNESS_MSG_LOWER"]
 
 _marcar_presenca()
-_disparar_censo()
+_MAQUINA = _monitor_maquina()
 
 # ============================================================================
 # Escopo do estado: bucket do projeto (default) ou raiz global
@@ -435,7 +486,7 @@ AUTOMATION_PREFIXES = (
     "you are estimating",
 )
 if any(sig in msg for sig in AUTOMATION_SIGNATURES) or msg.startswith(AUTOMATION_PREFIXES):
-    raise SystemExit(0)
+    _sair()
 
 # ============================================================================
 # Guards anti-automação por COMPRIMENTO (incidente t-20260612-034438)
@@ -447,7 +498,7 @@ MAX_CLASSIFY_LEN = 30000
 MAX_SWITCH_LEN = 1500
 
 if len(msg) > MAX_CLASSIFY_LEN:
-    raise SystemExit(0)
+    _sair()
 
 # ============================================================================
 # Task-switch detection
@@ -943,7 +994,7 @@ pipeline_display = " -> ".join(pipeline) if pipeline else "none"
 
 if level == "L0":
     # L0: simple tag, no workflow needed
-    print(f"""<harness-classification>
+    _bloco_l0 = f"""<harness-classification>
 task_id: {task_id}
 classification: {classification}
 level: {level}
@@ -951,9 +1002,16 @@ type: {task_type}
 status: {status}
 pipeline: {pipeline_display}
 started_at: {started_at}
-</harness-classification>{_bloco_de_presenca()}""")
-    # Aqui a presenca sai por stdout CRU, e nao pelo emissor — o caminho L0 nao
-    # chama `_falar`. O canal esta certo mesmo assim: o CLAUDE.md separa stdout
+</harness-classification>"""
+    if _MAQUINA:
+        # Com o monitor falando, a saida tem de ser UM JSON (o `systemMessage`
+        # da tela so existe em JSON): o bloco L0 entra no mesmo
+        # `additionalContext`, junto com o texto do monitor.
+        _falar("classification", _bloco_l0)
+    else:
+        print(_bloco_l0 + _bloco_de_presenca())
+    # Sem o monitor, a presenca sai por stdout CRU, e nao pelo emissor. O canal
+    # esta certo mesmo assim: o CLAUDE.md separa stdout
     # cru (vira `content`, sem marca de proveniencia, "so para DADO") de
     # `additionalContext` (rotulado, "para toda INSTRUCAO"), e "ha outra sessao
     # neste repositorio" e um FATO, nao uma ordem. Continua sendo um unico

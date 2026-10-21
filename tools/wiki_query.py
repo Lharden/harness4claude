@@ -63,6 +63,17 @@ SNIPPET_CHARS = 240
 MIN_COS = 0.30
 CONFIDENT_COS = 0.45
 
+# Penalidade de score das paginas `type: spec` (D-132). Medida em 2026-10-21 sobre o golden
+# ampliado (tests/data/golden-wiki.json, sha256 ae7b1e8339b3bb2a3a6ccb1a67a8cc040aa5b98878d432924d45939de4070997,
+# 47 positivos e 7 negativos): as paginas de `specs/` (verificacoes, relatorios, grills) empurravam
+# decisoes e verbetes do compendio para fora do top-3. Descontar 0,03 do score do trecho de uma
+# pagina `type: spec` levou o top-3 de 40/47 a 43/47 (91,5%) e os 19 casos `golden-v1` de 15 a 17
+# (89,5%), sem perder caso algum e com 0 negativos confiantes. Entre 0,01 e 0,05 a diferenca e de um
+# caso, entao o valor nao esta medido com folga. A remocao dos registros de processo do indice
+# (a outra opcao) perdia 7 casos e foi descartada. Decisao do usuario em 21/10.
+PENALIDADE_SPEC = 0.03
+TIPO_PENALIZADO = "spec"
+
 # Quantos chunks buscar por página desejada antes de deduplicar.
 OVERFETCH = 4
 
@@ -150,6 +161,25 @@ def dedupe_by_page(hits: list[dict], top_k: int) -> list[dict]:
     return ordered[:top_k]
 
 
+def penalizar_specs(b_scored: list[dict]) -> list[dict]:
+    """Desconta PENALIDADE_SPEC do trecho de pagina `type: spec` e refaz a ordem (D-132).
+
+    Baixa `score` **e** `cos`, como a medida fez: o `pick` usa o `cos` para o piso, para a
+    margem sobre a mediana e para a barra de confianca (`CONFIDENT_COS`), entao a penalidade
+    tambem desloca a confianca de uma pagina `spec` -- um trecho de spec precisa de 0,03 a
+    mais de cosseno para ser afirmado. Nos hits `spec` o `cos` passa a ser o score
+    penalizado, igual ao script da medida; os registros de pagina carregam `usage_count`
+    neutro, entao o reforco de uso e zero e score e cos so diferem pela penalidade. So a
+    Camada B e penalizada; a Camada A (match exato) segue pinada.
+    """
+    for hit in b_scored:
+        if hit["skill"].get("type") == TIPO_PENALIZADO:
+            hit["score"] -= PENALIDADE_SPEC
+            hit["cos"] = hit["score"]
+    b_scored.sort(key=lambda h: h["score"], reverse=True)
+    return b_scored
+
+
 def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_TOP_K) -> list[dict]:
     """Camada A pinada no topo, Camada B **sempre** completando. Nunca levanta.
 
@@ -166,7 +196,7 @@ def route(question: str, pages: list[dict], vecs: list, *, top_k: int = DEFAULT_
     b_scored: list[dict] = []
     if vecs:
         try:
-            b_scored = sr.layer_b(embed_query(question), pages, vecs)
+            b_scored = penalizar_specs(sr.layer_b(embed_query(question), pages, vecs))
         except Exception:  # Ollama fora / timeout / payload torto: degrada p/ Camada A
             b_scored = []
     saved = (sr.TOP_K, sr.MIN_COS, sr.MIN_MARGIN)

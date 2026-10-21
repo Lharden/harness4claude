@@ -1,45 +1,57 @@
 {
-  "description": "Golden set da operacao query da wiki AI-Brain. Mesma estrutura do golden-prompts.json do skill-router: positives exigem a pagina alvo no top-3; negatives exigem zero hits (pergunta fora do dominio do vault nao pode devolver pagina). Alvo pode ser pagina (`area/pagina`) ou verbete (`area/pagina#Termo`) — no compendio a unidade de sentido e a secao, e casar so a pagina passaria o gate sem provar que o verbete certo veio.",
-  "gate": "top-3 hit rate >= 0.80",
+  "description": "Golden set da operacao query da wiki AI-Brain. Mesma estrutura do golden-prompts.json do skill-router: positives exigem a pagina alvo no top-3; negatives exigem zero hits (pergunta fora do dominio do vault nao pode devolver pagina). Alvo pode ser pagina (`area/pagina`) ou verbete (`area/pagina#Termo`) — no compendio a unidade de sentido e a secao, e casar so a pagina passaria o gate sem provar que o verbete certo veio. Campos `categoria` e `origem` sao metadado da medida do D-132 (golden ampliado com uso real em 2026-10-21); o teste ignora `categoria` e usa `origem` para o corte dos casos originais. Portao (D-132): top-3 >= 80% nos DOIS cortes, o agregado dos positivos e o subconjunto `origem == golden-v1` (os 19 originais, cujo residuo motivou o D-132), porque o agregado ampliado sozinho dilui esse residuo.",
+  "gate": "top-3 hit rate >= 0.80 no agregado e em origem == golden-v1",
   "positives": [
     {
       "prompt": "por que trocamos TLA+ na autorreforma do harness?",
       "expect_any": [
         "decisions/assimilacoes-2026",
-        "projects/harness4claude/09 Autorreforma - Estrategia e Execucao"
-      ]
+        "compendio/03 confiabilidade#TLA+"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "que modelo de embedding local o skill router usa",
       "expect_any": [
         "specs/skill-router-design",
         "decisions/assimilacoes-2026"
-      ]
+      ],
+      "categoria": "spec-design",
+      "origem": "golden-v1"
     },
     {
       "prompt": "como o vault e sincronizado entre varias maquinas",
       "expect_any": [
         "ops/Guia de Sincronização do Vault",
         "ops/Decisao - Arquitetura de Sincronizacao (3 camadas)"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "o que e desenvolvimento guiado por especificacao no harness",
       "expect_any": [
         "concepts/sdd"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "qual o padrao de wiki mantida por um modelo de linguagem",
       "expect_any": [
         "concepts/llm-wiki-pattern"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "quem e o dono deste vault e qual o perfil dele",
       "expect_any": [
         "entities/leonardo"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "o que foi assimilado do graphify e como ficou",
@@ -47,100 +59,398 @@
         "decisions/assimilacoes-2026",
         "specs/graphify-integration-spec",
         "specs/graphify-integration-design"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "em que pe esta o artigo de series temporais para a EAAI",
       "expect_any": [
         "projects/artigo-timeseries"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "como funciona o mecanismo de execucao do harness4claude",
       "expect_any": [
-        "projects/harness4claude/02 Mecanismo e Fluxo de Execução"
-      ]
+        "projects/harness4claude/02 Os Hooks e o Ciclo de Vida",
+        "projects/harness4claude/01 O Que Ele Faz Num Turno"
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "comparacao entre os tres harnesses e principios comuns",
       "expect_any": [
         "projects/Harnesses - MOC Comparativo"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "o que aconteceu no trabalho entre maio e agosto de 2026",
       "expect_any": [
         "synthesis/linha-do-tempo-2026-05-a-08"
-      ]
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "quais decisoes foram travadas na incorporacao do obsidian ao harness",
       "expect_any": [
         "decisions/harness4claude-context",
         "decisions/assimilacoes-2026"
-      ]
-    },
-    {
-      "prompt": "otimizacao de VRAM e escolha de modelos no harness lite",
-      "expect_any": [
-        "projects/harness-lite/04 Otimização de Modelos e VRAM"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "qual a estrategia de evidencias e testes do harness4codex",
       "expect_any": [
-        "projects/harness4codex/08 Evidências, Testes e Proveniência"
-      ]
+        "projects/harness4codex/04 O Que Está Provado, e os Limites"
+      ],
+      "categoria": "livre",
+      "origem": "golden-v1"
     },
     {
       "prompt": "quais recusas de tecnica ja foram registradas e por que",
       "expect_any": [
         "decisions/assimilacoes-2026"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "por que dividir a pagina em secoes antes de gerar os vetores",
       "expect_any": [
         "compendio/02 recuperacao-busca#Chunking semântico"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "o que fazer quando o servico de embedding cai no meio do pipeline",
       "expect_any": [
         "compendio/03 confiabilidade#Degradação graciosa"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "como medir se a busca acha a resposta certa nas primeiras posicoes",
       "expect_any": [
         "compendio/04 estatistica-medicao#Hit rate top-k"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "por que dividir o vetor pelo seu tamanho antes de comparar",
       "expect_any": [
         "compendio/05 matematica-aplicada#Norma L2"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
     },
     {
       "prompt": "texto que chegou com a acentuacao corrompida na leitura do arquivo",
       "expect_any": [
         "compendio/08 dados-proveniencia#Mojibake"
-      ]
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "golden-v1"
+    },
+    {
+      "prompt": "contaminacao de aresta adjudicador rationale verificacao adversarial",
+      "expect_any": [
+        "decisions/assimilacoes-2026",
+        "sources/mstockton-aresta-descontaminada",
+        "compendio/03 confiabilidade#Contaminação de aresta"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "real"
+    },
+    {
+      "prompt": "ledger de suposicoes assumption spec",
+      "expect_any": [
+        "decisions/assimilacoes-2026",
+        "sources/wast3-grafo-7-nos"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "real"
+    },
+    {
+      "prompt": "dynamic workflows Claude Code harness fan-out adversarial verification",
+      "expect_any": [
+        "sources/mstockton-aresta-descontaminada",
+        "sources/graph-engineering-claude",
+        "decisions/assimilacoes-2026"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "real"
+    },
+    {
+      "prompt": "roteamento em cascata: modelo barato por padrão (GPT-6 Luna no Codex), escalar para modelo caro por evidência, Jev como decisor System One",
+      "expect_any": [
+        "decisions/master-harness-context",
+        "sources/typesafe-jev",
+        "specs/jev-integracao"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "real"
+    },
+    {
+      "prompt": "master-harness: servico de coordenacao entre harness4claude e harness4codex, memoria compartilhada no Obsidian, arsenal unificado, delegacao ao harness-lite",
+      "expect_any": [
+        "decisions/master-harness-context",
+        "projects/master-harness/01 Visão Geral e o Problema",
+        "projects/master-harness/00 MOC - Master-Harness"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "real"
+    },
+    {
+      "prompt": "Jev TypeSafe System One modelo decisor API julgamento tipado probabilidade",
+      "expect_any": [
+        "sources/typesafe-jev",
+        "specs/jev-integracao"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "real"
+    },
+    {
+      "prompt": "o que e o conjunto de dados 3W da Petrobras usado no artigo",
+      "expect_any": [
+        "compendio/08 dados-proveniencia#Dataset 3W"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "por que selar as regras de avaliacao antes de existir qualquer veredito",
+      "expect_any": [
+        "compendio/07 metodologia-pesquisa#Pré-registro"
+      ],
+      "categoria": "decisao-compendio",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "fabrica agentica LiteLLM Vercel OpenRouter gateway System One bake-off retomada",
+      "expect_any": [
+        "specs/gateway-de-modelos-spec-light",
+        "specs/fabrica-plano"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "Science em produção: reordenar fila do juiz de fidelidade com hints do Jev, sidecar s1_hints.jsonl",
+      "expect_any": [
+        "specs/s1-onda6-science-spec",
+        "specs/s1-onda6-science-design",
+        "decisions/master-harness-context"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "sistema de trading agentic: research plane com evaluator imutavel, backtest, calibracao Brier, System-1 Jev/Laya, risk gates, OMS, reconciliacao, harness financeiro falsificavel",
+      "expect_any": [
+        "specs/moneytree-farmer-v1-spec",
+        "specs/moneytree-farmer-v1-design",
+        "decisions/moneytree-farmer-context"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "vizinhanca consultavel por conjunto de cids, camada de tensao, claim_relations kNN, similaridade entre claims de um pacote",
+      "expect_any": [
+        "specs/vizinhanca-consultavel-spec",
+        "specs/vizinhanca-consultavel-design"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "System One: modelos de decisao nao-autoregressivos (Laya, AgentJev, Jev) como sugestao calibrada na classificacao de prompts, roteamento de skill, Branch Keeper e ordem da fila do juiz P5",
+      "expect_any": [
+        "specs/system-one-spec",
+        "specs/system-one-design",
+        "specs/system-one-plano",
+        "decisions/master-harness-context"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "replay do System One P5: jev reordena a fila do juiz de fidelidade do Science, medida em pares julgados depois do selo",
+      "expect_any": [
+        "specs/s1-replay-p5-spec",
+        "specs/s1-replay-p5-design"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "prova dinamica de sondas por sabotagem da entrada de producao, teste de mutacao",
+      "expect_any": [
+        "specs/prova-dinamica-sondas-spec",
+        "specs/prova-dinamica-sondas-design",
+        "decisions/master-harness-context"
+      ],
+      "categoria": "spec-design",
+      "origem": "real"
+    },
+    {
+      "prompt": "como o skill router escolhe a skill a partir do prompt e qual o limiar de confianca",
+      "expect_any": [
+        "specs/skill-router-design",
+        "workflows/03 skill-router"
+      ],
+      "categoria": "spec-design",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "as tres alegacoes de novidade do artigo, C1 C2 C3, sobreviveram a verificacao bibliografica do juiz?",
+      "expect_any": [
+        "specs/q1-bibliografia-verificacao"
+      ],
+      "categoria": "registro-processo",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "quantas rodadas a prova dinamica das sondas precisou e o que cada rodada mostrou sobre o instrumento",
+      "expect_any": [
+        "specs/prova-dinamica-sondas-relatorio"
+      ],
+      "categoria": "registro-processo",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "a task do seed do portao de Stop era fantasma mesmo? o que a verificacao dos achados concluiu",
+      "expect_any": [
+        "specs/portao-de-stop-achados",
+        "specs/portao-de-task-fantasma-diagnostico"
+      ],
+      "categoria": "registro-processo",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "o que a medicao antes do desenho mostrou sobre quanto o top-8 do claim_relations esconde de um conjunto real",
+      "expect_any": [
+        "specs/vizinhanca-consultavel-medicao"
+      ],
+      "categoria": "registro-processo",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "o que a verificacao encontrou ao ligar o evidence_queue: o guarda que o vigiava funcionava?",
+      "expect_any": [
+        "specs/evidence-queue-ligado-verification"
+      ],
+      "categoria": "registro-processo",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "quais vermelhos ficaram declarados, com causa e dono, na verificacao da onda 6 do Science com os hints do Jev",
+      "expect_any": [
+        "specs/s1-onda6-science-verification"
+      ],
+      "categoria": "registro-processo",
+      "origem": "parafrase"
+    },
+    {
+      "prompt": "o que o carimbo equivalent do contrato afirma",
+      "expect_any": [
+        "concepts/equipotencia-entre-harnesses"
+      ],
+      "categoria": "livre",
+      "origem": "real"
+    },
+    {
+      "prompt": "como uma ferramenta externa entra no sistema",
+      "expect_any": [
+        "workflows/08 arsenal-assimilacao",
+        "decisions/assimilacoes-2026"
+      ],
+      "categoria": "livre",
+      "origem": "real"
+    },
+    {
+      "prompt": "reforma Q1 do artigo_timeseries: masterplan, auditoria do benchmark 3W, vazamento entre instâncias, journal",
+      "expect_any": [
+        "projects/artigo-timeseries",
+        "decisions/artigo-timeseries-context",
+        "specs/q1-masterplan-v0.2"
+      ],
+      "categoria": "livre",
+      "origem": "real"
+    },
+    {
+      "prompt": "masterplan v0.2 programa Q1 artigo timeseries",
+      "expect_any": [
+        "specs/q1-masterplan-v0.2",
+        "decisions/artigo-timeseries-context"
+      ],
+      "categoria": "livre",
+      "origem": "real"
+    },
+    {
+      "prompt": "concorrente held-out-well 3W Thakur R-19 cobertura C2",
+      "expect_any": [
+        "specs/q1-bibliografia-verificacao",
+        "specs/q1-masterplan-v0.2"
+      ],
+      "categoria": "livre",
+      "origem": "real"
+    },
+    {
+      "prompt": "portao de Stop: frescura da evidencia medida pelo digesto da arvore do checkout (git status, HEAD) em vez de inferir escrita pelo texto do comando de shell; subagentes em worktree fora do checkout",
+      "expect_any": [
+        "specs/revisao-que-invalida-plano",
+        "specs/portao-mede-atividade-verification"
+      ],
+      "categoria": "livre",
+      "origem": "real"
     }
   ],
   "negatives": [
     {
       "prompt": "qual a receita de bolo de cenoura com cobertura de chocolate",
-      "reason": "culinaria: fora do dominio do vault"
+      "reason": "culinaria: fora do dominio do vault",
+      "origem": "golden-v1"
     },
     {
       "prompt": "what is the average rainfall in the Amazon basin in millimeters",
-      "reason": "geografia/clima: fora do dominio do vault"
+      "reason": "geografia/clima: fora do dominio do vault",
+      "origem": "golden-v1"
     },
     {
       "prompt": "como configurar um reverse proxy nginx com certificado wildcard",
-      "reason": "sysadmin generico: nenhuma pagina do vault cobre isso"
+      "reason": "sysadmin generico: nenhuma pagina do vault cobre isso",
+      "origem": "golden-v1"
+    },
+    {
+      "prompt": "qual o melhor horario para regar tomateiros na horta de casa",
+      "reason": "jardinagem: fora do dominio do vault",
+      "origem": "construido"
+    },
+    {
+      "prompt": "como trocar a correia dentada de um carro 1.0 flex",
+      "reason": "mecanica automotiva: fora do dominio do vault",
+      "origem": "construido"
+    },
+    {
+      "prompt": "who won the 1994 FIFA World Cup final and what was the score",
+      "reason": "esporte: fora do dominio do vault",
+      "origem": "construido"
+    },
+    {
+      "prompt": "roteiro de tres dias em Lisboa com criancas pequenas",
+      "reason": "viagem: fora do dominio do vault",
+      "origem": "construido"
     }
   ]
 }

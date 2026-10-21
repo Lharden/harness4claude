@@ -2,7 +2,10 @@
 
 Espelha tests/test_router_golden.py: requer índice real + Ollama, pula se ausentes.
 Dois gates, um por banda:
-  - positives: a página alvo no top-3 em >= 80% dos casos (banda "vale mostrar")
+  - positives: a página alvo no top-3 em >= 80% dos casos (banda "vale mostrar"), cobrado
+    em dois cortes (D-132): o agregado e o subconjunto `origem == "golden-v1"`. O golden
+    foi ampliado com casos de uso real que acertam mais e diluem o resíduo que motivou o
+    D-132; o corte dos originais mantém esse resíduo cobrado.
   - negatives: zero hits **confiantes** — pergunta fora do domínio não pode fazer a
     wiki afirmar cobertura (banda "vale afirmar")
 """
@@ -21,6 +24,8 @@ from tools import wiki_query as wq
 GOLDEN = Path(__file__).parent / "data" / "golden-wiki.json"
 TOP_K = 3
 HIT_RATE_GATE = 0.80
+# Campo `origem` dos casos originais do golden (D-132): o subconjunto e escolhido pelo campo.
+ORIGEM_ORIGINAL = "golden-v1"
 
 
 def _ollama_up() -> bool:
@@ -75,17 +80,31 @@ def test_alvos_do_golden_existem_no_indice() -> None:
 @needs_stack
 def test_positives_top3_hit_rate() -> None:
     golden = _golden()
-    detalhes, acertos = [], 0
+    detalhes, resultados = [], []
     for case in golden["positives"]:
         hits = wq.query(case["prompt"], top_k=TOP_K)["hits"]
         top = [sorted(_chaves(hit))[-1] for hit in hits]
         alcance = set().union(*(_chaves(hit) for hit in hits)) if hits else set()
         ok = any(alvo in alcance for alvo in case["expect_any"])
-        acertos += ok
+        resultados.append((case, ok))
         detalhes.append(f"{'OK  ' if ok else 'MISS'} {case['prompt'][:48]} -> {top}")
-    taxa = acertos / len(golden["positives"])
     print("\n".join(detalhes))
-    assert taxa >= HIT_RATE_GATE, f"top-{TOP_K} hit rate {taxa:.0%} < {HIT_RATE_GATE:.0%}"
+
+    originais = [ok for case, ok in resultados if case.get("origem") == ORIGEM_ORIGINAL]
+    assert originais, f"nenhum caso com origem == {ORIGEM_ORIGINAL!r}: o corte dos originais ficaria vazio"
+    cortes = {
+        "agregado": [ok for _case, ok in resultados],
+        f"origem == {ORIGEM_ORIGINAL!r}": originais,
+    }
+    reprovados = []
+    for nome, oks in cortes.items():
+        taxa = sum(oks) / len(oks)
+        print(f"corte {nome}: {sum(oks)}/{len(oks)} = {taxa:.1%}")
+        if taxa < HIT_RATE_GATE:
+            reprovados.append(
+                f"{nome}: top-{TOP_K} hit rate {taxa:.0%} ({sum(oks)}/{len(oks)}) < {HIT_RATE_GATE:.0%}"
+            )
+    assert not reprovados, "; ".join(reprovados)
 
 
 @needs_stack
