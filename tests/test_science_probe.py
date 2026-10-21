@@ -289,3 +289,13 @@ def test_registro_por_url_e_nao_verificado(tmp_path, repo):
     config = _config(tmp_path, {"mcpServers": {"science_harness": {"type": "http", "url": "http://127.0.0.1:1/mcp"}}})
     codigo, relato = _rodar(config, repo)
     assert (codigo, relato["estado"], relato["motivo"]) == (2, "nao_verificado", "transporte_url")
+
+# ------------------------------------------------------------------------------------ o gatilho por regex saiu
+
+
+def test_o_gatilho_por_regex_saiu_do_plugin():
+    """D-136: o hook `science_intent` e a entrada dele no `hooks.json` sairam; a skill `science-evidence` fica."""
+    assert not (ROOT / "hooks" / "science_intent.py").exists()
+    hooks = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
+    assert "science_intent" not in hooks
+    assert (ROOT / "skills" / "science-evidence" / "SKILL.md").exists()

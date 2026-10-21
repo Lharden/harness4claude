@@ -625,7 +625,7 @@ def servidores_mcp_usuario(
     entra; sem a chave conta como habilitado (padrão do Codex); `enabled` não
     booleano gera aviso (só o tipo, nunca o valor) e o servidor não entra. No
     Claude não há desligado global de servidor de usuário: o `/mcp` desliga por
-    projeto em `projects.<raiz>.disabledMcpServers` (ver hooks/science_intent.py).
+    projeto em `projects.<raiz>.disabledMcpServers` (ver scripts/science_probe.py).
 
     Devolve (registros, avisos). Os registros têm o formato do agregado que o
     reconcile consome (`_novo_agregado`, kind="mcp"), mais `origens`. Arquivo

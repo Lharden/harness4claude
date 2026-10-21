@@ -1,5 +1,9 @@
 # science_intent cercado pela presença do MCP — verificação
 
+> Superado pelo D-136 (2026-10-21): o hook `science_intent` e os testes dele sairam, e a sonda de
+> `integration.science-harness` agora e `scripts/science_probe.py` (handshake `initialize` e `tools/list`). Este
+> documento fica como registro do cerco que existiu entre 2026-10-07 e 2026-10-21.
+
 Origem: decisão 5 de `master-harness/docs/decisoes-capacidades-orfas.md` (seções 5 e 10),
 tomada pelo usuário em 2026-10-07: registrar o `science_harness` no Claude e cercar o hook
 pela presença dele. Sessão de 2026-10-07, ramo `claude/nervous-shaw-348dc1`.
