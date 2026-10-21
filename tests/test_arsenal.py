@@ -1013,7 +1013,7 @@ def _escreve_registry(root: Path, registry: dict, dispensados: list | None = Non
               f'updated = "{registry["updated"]}"', ""]
     for t in registry["tools"]:
         linhas.append("[[tools]]")
-        linhas += [f'{k} = "{v}"' for k, v in t.items()]
+        linhas += [f"{k} = {json.dumps(v)}" if isinstance(v, list) else f'{k} = "{v}"' for k, v in t.items()]
         linhas.append("")
     (d / "tools.toml").write_text("\n".join(linhas), encoding="utf-8")
     if dispensados is not None:
@@ -1079,3 +1079,122 @@ class TestSpend:
         fake_claude({"p": {"skills": {"s": "d"}}})
         res = ars.command_spend(teto=10_000)
         assert any("não freia" in w or "nao freia" in w for w in res["warnings"])
+
+
+# ------------------------------------------------------- maquinas (D-067)
+
+def _perfis_de_maquina(root: Path, *ids: str) -> None:
+    """Vocabulario do `mh maquina`: um perfil `maquinas/<id>.json` por maquina, na raiz do vault falso."""
+    pasta = Path(root) / "maquinas"
+    pasta.mkdir(parents=True, exist_ok=True)
+    for ident in ids:
+        (pasta / f"{ident}.json").write_text(json.dumps({"esquema": 1, "id": ident}), encoding="utf-8")
+
+
+def _esta_maquina(casa: Path, monkeypatch, ident: str | None, bruto: str | None = None) -> Path:
+    """Casa falsa do mh, com (ou sem) o `maquina-id` que o `mh maquina` grava."""
+    casa.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("MASTER_HARNESS_HOME", str(casa))
+    if bruto is not None:
+        (casa / "maquina-id").write_text(bruto, encoding="utf-8")
+    elif ident is not None:
+        (casa / "maquina-id").write_text(json.dumps({"esquema": 1, "id": ident}), encoding="utf-8")
+    return casa
+
+
+class TestMaquinasDoRegistry:
+    """O registry e um so para as duas maquinas; o reconcile cobra presenca so onde a entrada manda."""
+
+    @pytest.fixture(autouse=True)
+    def _vault_e_casa_falsos(self, tmp_path, monkeypatch):
+        _perfis_de_maquina(tmp_path, "notebook", "desktop")
+        # Sem isto o teste leria o `maquina-id` da maquina real.
+        monkeypatch.setenv("MASTER_HARNESS_HOME", str(tmp_path / "casa-sem-id"))
+
+    def _reg(self, **over):
+        return _registry(**over)
+
+    def test_orfa_e_cobrada_na_maquina_declarada(self, ars, fake_claude, tmp_path, monkeypatch):
+        fake_claude({"superpowers": {"skills": {"a": "d"}, "enabled": False}})
+        _esta_maquina(tmp_path / "casa", monkeypatch, "notebook")
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook"]))
+        res = ars.command_reconcile(tmp_path)
+        assert [(a["tipo"], a["id"]) for a in res["achados"]] == [("orfa", "superpowers")]
+        assert res["ready"] is False
+
+    def test_orfa_nao_e_cobrada_na_outra_maquina(self, ars, fake_claude, tmp_path, monkeypatch):
+        fake_claude({"superpowers": {"skills": {"a": "d"}, "enabled": False}})
+        _esta_maquina(tmp_path / "casa", monkeypatch, "desktop")
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook"]))
+        res = ars.command_reconcile(tmp_path)
+        assert res["achados"] == []
+        assert res["ready"] is True
+
+    def test_instalada_fora_das_maquinas_declaradas_e_warning(self, ars, fake_claude, tmp_path, monkeypatch):
+        fake_claude({"superpowers": {"skills": {"a": "d"}}})
+        _esta_maquina(tmp_path / "casa", monkeypatch, "desktop")
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook"]))
+        res = ars.command_reconcile(tmp_path)
+        assert [(a["tipo"], a["id"], a["nivel"]) for a in res["achados"]] == [
+            ("fora_das_maquinas", "superpowers", "warning")]
+        assert "notebook" in res["achados"][0]["mensagem"]
+        assert res["ready"] is True
+        assert res["resumo"]["fora_das_maquinas"] == 1
+
+    def test_instalada_na_maquina_declarada_nao_gera_achado(self, ars, fake_claude, tmp_path, monkeypatch):
+        fake_claude({"superpowers": {"skills": {"a": "d"}}})
+        _esta_maquina(tmp_path / "casa", monkeypatch, "notebook")
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook"]))
+        assert ars.command_reconcile(tmp_path)["achados"] == []
+
+    @pytest.mark.parametrize("instalada", [True, False])
+    def test_id_desconhecido_da_nao_verificado_e_nunca_orfa(
+            self, ars, fake_claude, tmp_path, monkeypatch, instalada):
+        fake_claude({"superpowers": {"skills": {"a": "d"}, "enabled": instalada}})
+        _esta_maquina(tmp_path / "casa", monkeypatch, None)  # casa sem `maquina-id`
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook"]))
+        res = ars.command_reconcile(tmp_path)
+        assert [(a["tipo"], a["id"], a["nivel"]) for a in res["achados"]] == [
+            ("nao_verificado", "superpowers", "warning")]
+        assert res["ready"] is True
+        assert res["resumo"]["nao_verificado"] == 1 and res["resumo"]["orfas"] == 0
+        assert any(w.startswith("nao_verificado: superpowers") for w in res["warnings"])
+
+    def test_maquina_id_ilegivel_tambem_e_desconhecido(self, ars, fake_claude, tmp_path, monkeypatch):
+        fake_claude({"superpowers": {"skills": {"a": "d"}, "enabled": False}})
+        _esta_maquina(tmp_path / "casa", monkeypatch, None, bruto="{isto nao e json")
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook"]))
+        tipos = [a["tipo"] for a in ars.command_reconcile(tmp_path)["achados"]]
+        assert tipos == ["nao_verificado"]
+
+    def test_entrada_sem_o_campo_se_comporta_como_hoje(self, ars, fake_claude, tmp_path, monkeypatch):
+        fake_claude({"superpowers": {"skills": {"a": "d"}, "enabled": False}})
+        _escreve_registry(tmp_path, self._reg())
+        for ident in ("notebook", "desktop", None):
+            _esta_maquina(tmp_path / f"casa-{ident}", monkeypatch, ident)
+            res = ars.command_reconcile(tmp_path)
+            assert [(a["tipo"], a["id"]) for a in res["achados"]] == [("orfa", "superpowers")], ident
+            assert res["resumo"]["nao_verificado"] == 0
+
+    def test_check_recusa_id_fora_do_vocabulario(self, ars, tmp_path):
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebok"]))
+        res = ars.command_check(tmp_path)
+        assert res["ready"] is False
+        assert any("notebok" in e and "maquinas" in e for e in res["errors"])
+
+    def test_check_aceita_ids_do_vocabulario(self, ars, tmp_path):
+        _escreve_registry(tmp_path, self._reg(maquinas=["notebook", "desktop"]))
+        assert ars.command_check(tmp_path)["ready"] is True
+
+    def test_check_recusa_lista_vazia(self, ars, tmp_path):
+        _escreve_registry(tmp_path, self._reg(maquinas=[]))
+        assert any("lista não vazia" in e for e in ars.command_check(tmp_path)["errors"])
+
+    def test_maquina_atual_so_le_e_nunca_grava(self, ars, tmp_path, monkeypatch):
+        casa = _esta_maquina(tmp_path / "casa", monkeypatch, "desktop")
+        antes = {p.name: p.read_bytes() for p in casa.iterdir()}
+        assert ars.maquina_atual() == "desktop"
+        assert {p.name: p.read_bytes() for p in casa.iterdir()} == antes
+        (casa / "maquina-id").unlink()
+        assert ars.maquina_atual() is None
+        assert list(casa.iterdir()) == []

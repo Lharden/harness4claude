@@ -42,6 +42,16 @@ Uso:
     python tools/arsenal.py budget [--teto N]      # custo do roster vs teto
     python tools/arsenal.py collisions [--min C]   # gatilhos que se atropelam
 Todos aceitam `--root DIR` (raiz do vault) e `--report`.
+
+Campo opcional `maquinas = ["notebook", ...]` em cada entrada do registry. O
+registry é um só para as duas máquinas (o Obsidian Sync o espelha) e o
+`reconcile` compara com o disco de UMA; sem o campo, uma ferramenta instalada só
+numa máquina virava órfã ou fantasma na outra. Sem o campo a entrada vale em
+todas, como sempre. Os ids são os perfis de `AI-Brain/maquinas/*.json` (o
+vocabulário do `mh maquina`) e o `check` recusa id fora dele. A máquina atual é
+o campo `id` de `<casa do mh>/maquina-id`, só lido aqui: com ela, `orfa` só vale
+nas máquinas declaradas e instalação fora delas é `fora_das_maquinas`; sem ela,
+a entrada com `maquinas` sai `nao_verificado`, nunca órfã nem silêncio.
 """
 
 from __future__ import annotations
@@ -112,6 +122,9 @@ CAMPOS_OBRIGATORIOS = ("id", "kind", "decisao", "decidido_em", "por_que", "rollb
 # deriva: cada assimilação inventa um rótulo novo, nada casa com nada, e o campo
 # vira decoração.
 CAMPO_CAPACIDADE = "faz_o_que"
+
+# `maquinas` — em quais máquinas a entrada deve estar presente. Ausente = todas.
+CAMPO_MAQUINAS = "maquinas"
 
 # Absorver exige dizer O QUE veio e ONDE encaixou. Sem os dois, "absorvido" vira
 # um jeito educado de dizer "não usei" — e a nuance que justificou a decisão
@@ -197,6 +210,9 @@ _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # --------------------------------------------------------------------------
 
 
+MAQUINAS_REL = Path("maquinas")
+
+
 def registry_path(root: Path) -> Path:
     return Path(root) / REGISTRY_REL
 
@@ -267,6 +283,47 @@ def capacidades_de(item: dict) -> set[str]:
     if isinstance(bruto, list):
         return {str(c).strip() for c in bruto if str(c).strip()}
     return set()
+
+
+def maquinas_de(item: dict) -> list[str] | None:
+    """Máquinas declaradas na entrada. None = campo ausente (vale em todas)."""
+    if CAMPO_MAQUINAS not in item:
+        return None
+    bruto = item[CAMPO_MAQUINAS]
+    if not isinstance(bruto, list):
+        return []
+    return [str(m) for m in bruto]
+
+
+def maquinas_declaradas(root: Path | None) -> set[str]:
+    """Vocabulário de ids de máquina: o `id` de cada `<root>/maquinas/*.json`."""
+    if root is None:
+        return set()
+    ids: set[str] = set()
+    for perfil in sorted((Path(root) / MAQUINAS_REL).glob("*.json")):
+        try:
+            dados = json.loads(perfil.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        ident = dados.get("id") if isinstance(dados, dict) else None
+        if isinstance(ident, str) and ident.strip():
+            ids.add(ident.strip())
+    return ids
+
+
+def maquina_atual() -> str | None:
+    """Id desta máquina, lido de `<casa do mh>/maquina-id`. Só lê, nunca grava.
+
+    A casa segue a regra do `mh` (`MASTER_HARNESS_HOME`, senão `~/.master-harness`).
+    Arquivo ausente, ilegível ou sem `id` = desconhecido (None), nunca um palpite.
+    """
+    casa = os.environ.get("MASTER_HARNESS_HOME") or str(Path.home() / ".master-harness")
+    try:
+        dados = json.loads((Path(casa) / "maquina-id").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    ident = dados.get("id") if isinstance(dados, dict) else None
+    return ident.strip() if isinstance(ident, str) and ident.strip() else None
 
 
 def _alvos_de_absorcao(item: dict) -> list[str]:
@@ -348,6 +405,17 @@ def validate_registry(registry: dict, dispensados: dict[str, dict], root: Path |
                 erros.append(
                     f"{rotulo}: {CAMPO_CAPACIDADE} usa '{cap}', que não está em [[capacidades]] — "
                     "declare o rótulo lá ou use um dos existentes"
+                )
+
+        declaradas = maquinas_de(item)
+        if declaradas is not None:
+            vocabulario = maquinas_declaradas(root)
+            if not declaradas:
+                erros.append(f"{rotulo}: {CAMPO_MAQUINAS} deve ser uma lista não vazia de ids de máquina")
+            for maq in sorted(set(declaradas) - vocabulario):
+                erros.append(
+                    f"{rotulo}: {CAMPO_MAQUINAS} usa '{maq}', que não é uma máquina de "
+                    f"{MAQUINAS_REL.as_posix()}/*.json (conhecidas: {sorted(vocabulario)})"
                 )
 
         if item.get("decisao") == "prova" and not item.get("prova_ate"):
@@ -754,11 +822,46 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False, 
             usos=info["usos"],
         )
 
+    agora_aqui = maquina_atual()
+    if agora_aqui is None and any(maquinas_de(t) is not None for t in entradas.values()):
+        warnings.append(
+            "máquina atual desconhecida (maquina-id ausente ou ilegível) — as entradas com "
+            f"'{CAMPO_MAQUINAS}' não foram verificadas; rode `mh maquina`"
+        )
+
     for ident, item in sorted(entradas.items()):
         info = disco.get(ident)
+        declaradas = maquinas_de(item)
+        # Entrada com `maquinas` e máquina atual desconhecida: nem órfã nem
+        # silêncio. Cobrar presença sem saber onde se está acusaria a máquina errada.
+        if declaradas is not None and agora_aqui is None:
+            achado(
+                "nao_verificado",
+                ident,
+                "warning",
+                f"declarada só em {declaradas}, mas a máquina atual é desconhecida — presença não verificada",
+            )
+            continue
+        aqui_deve_ter = declaradas is None or agora_aqui in declaradas
+        if (
+            not aqui_deve_ter
+            and item.get("decisao") in ("adotado", "prova")
+            and info is not None
+            and info["enabled"]
+        ):
+            achado(
+                "fora_das_maquinas",
+                ident,
+                "warning",
+                f"habilitado nesta máquina ({agora_aqui}), mas o registry o declara só em {declaradas}",
+            )
         # `absorvido` fica fora: por definição a ferramenta NÃO está instalada.
         # Cobrar presença dela seria acusar de órfã exatamente o caso de sucesso.
-        if item.get("decisao") in ("adotado", "prova") and (info is None or not info["enabled"]):
+        if (
+            aqui_deve_ter
+            and item.get("decisao") in ("adotado", "prova")
+            and (info is None or not info["enabled"])
+        ):
             achado(
                 "orfa",
                 ident,
@@ -832,6 +935,8 @@ def command_reconcile(root: Path, fontes: bool = False, rollback: bool = False, 
             "fantasmas": sum(1 for a in achados if a["tipo"] == "fantasma"),
             "orfas": sum(1 for a in achados if a["tipo"] == "orfa"),
             "recaidas": sum(1 for a in achados if a["tipo"] == "recaida"),
+            "fora_das_maquinas": sum(1 for a in achados if a["tipo"] == "fora_das_maquinas"),
+            "nao_verificado": sum(1 for a in achados if a["tipo"] == "nao_verificado"),
         },
     }
 
