@@ -11,6 +11,7 @@ reprove. Sem eles, o smoke-test seria teatro.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -55,6 +56,9 @@ def _run_health_check(plugin_dir: Path, **env_extra: str) -> subprocess.Complete
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin_dir)
+    # D-136: a secao "Science Harness MCP" sobe o servidor registrado no `.claude.json`. Sem isto o smoke dependeria do
+    # `science_harness` real da maquina (e do estado do `shs.exe`); cada teste que quer um registro passa o dele.
+    env["CLAUDE_CONFIG_DIR"] = str(plugin_dir / "sem-claude-json")
     env.update(env_extra)
     return subprocess.run(
         [BASH, str(plugin_dir / "scripts" / "health-check.sh")],
@@ -242,6 +246,7 @@ class TestDisjuntorRespeitaOCooldown:
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["CLAUDE_PLUGIN_ROOT"] = str(plugin_dir)
+        env["CLAUDE_CONFIG_DIR"] = str(plugin_dir / "sem-claude-json")  # D-136: sem o science_harness real
         env["HARNESS_DIR"] = str(harness_dir)
         env["HARNESS_ROUTER"] = "1"
         proc = subprocess.run(
@@ -283,3 +288,42 @@ class TestDisjuntorRespeitaOCooldown:
         self._breaker(harness, falhas=2, idade_s=10)
         saida = self._rodar(plugin_copy, harness)
         assert "em cooldown" not in saida
+
+
+class TestSecaoScienceHarness:
+    """A secao "Science Harness MCP" do health-check chama a sonda e traduz os tres estados (D-136).
+
+    Registrado e quebrado e FAIL (era o defeito: verde com o `shs.exe` quebrado); nao registrado e WARN, nunca OK; e o
+    duble completo e OK. Os tres casos sao as metades uns dos outros: uma secao que sempre avisa, sempre passa ou sempre
+    reprova falha em pelo menos dois.
+    """
+
+    DUBLE = ROOT / "tests" / "fixtures" / "fake_claims_mcp.py"
+
+    def _secao(self, plugin_copy, tmp_path, nome, servidor):
+        base = tmp_path / nome
+        base.mkdir()
+        if servidor is not None:
+            conteudo = json.dumps({"mcpServers": {"science_harness": servidor}})
+            (base / ".claude.json").write_text(conteudo, encoding="utf-8")
+        res = _run_health_check(plugin_copy, CLAUDE_CONFIG_DIR=str(base))
+        marcador = "--- Science Harness MCP ---"
+        assert marcador in res.stdout, "secao ausente do relatorio"
+        return res, res.stdout.split(marcador, 1)[1].split("--- ", 1)[0]
+
+    def _servidor(self, *flags):
+        return {"type": "stdio", "command": sys.executable, "args": [str(self.DUBLE), *flags], "env": {}}
+
+    def test_servidor_registrado_que_responde_e_ok(self, plugin_copy, tmp_path):
+        _, secao = self._secao(plugin_copy, tmp_path, "ok", self._servidor())
+        assert "[OK]     science_harness responde" in secao, secao
+
+    def test_servidor_registrado_e_quebrado_reprova(self, plugin_copy, tmp_path):
+        _, secao = self._secao(plugin_copy, tmp_path, "quebrado", self._servidor("--sem", "search_claims"))
+        assert "[FAIL]   science_harness registrado" in secao, secao
+        assert "ferramenta_ausente" in secao
+
+    def test_servidor_nao_registrado_avisa_e_nunca_e_ok(self, plugin_copy, tmp_path):
+        _, secao = self._secao(plugin_copy, tmp_path, "vazio", None)
+        assert "[WARN]   science_harness nao verificado" in secao, secao
+        assert "[OK]" not in secao

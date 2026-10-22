@@ -36,16 +36,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/py.sh\" science_intent.py",
-            "timeout": 10,
-            "statusMessage": "Science evidence routing..."
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/harness-roteamento.sh\" UserPromptSubmit",
             "timeout": 10,
             "statusMessage": "Roteamento de chips..."

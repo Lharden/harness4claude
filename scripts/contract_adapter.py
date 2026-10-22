@@ -46,7 +46,7 @@ EVIDENCE = {
     "integration.harness-lite": [
         "tests/test_harness_lite_adapter.py#test_a_passed_bundle_with_artifacts_is_acceptable",
     ],
-    "integration.science-harness": ["tests/test_contract_adapter.py#test_science_intent_routes_evidence_prompts"],
+    "integration.science-harness": ["tests/test_science_probe.py#test_sonda_alcanca_o_mcp_registrado_nos_tres_estados"],
     "lifecycle.full-hooks": ["tests/test_sondas_de_producao.py#test_todo_comando_de_hooks_json_roda"],
     "observability.health-telemetry": [
         "tests/test_sondas_de_producao.py#test_check_hook_liveness_cli_sai_zero_e_reprova_evento_mudo",
