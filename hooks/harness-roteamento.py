@@ -139,7 +139,9 @@ def user_prompt_submit(d: dict) -> None:
         else:
             texto = _instrucao_mae(par, sha, remetente, True)
     else:
-        par = rt.parse_linha(prompt)
+        # A linha so vale como a ultima do prompt, a mesma regra que o PreToolUse cobra do chip: uma linha citada no
+        # meio de outra mensagem (relatorio de subagente, prompt colado) nao faz da sessao uma filha (D-037).
+        par = rt.parse_linha(prompt) if rt.termina_na_linha(prompt) else None
         if par is None or not rt.par_valido(par, tabela):
             return
         bucket = rt.pasta_da_sessao(sid, cwd)
