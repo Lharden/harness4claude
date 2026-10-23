@@ -1,6 +1,6 @@
 """conftest.py — resolucao de paths e hermetismo dos testes do Harness v3.
 
-Tres responsabilidades:
+Quatro responsabilidades:
 
 1. `HARNESS_PLUGIN_ROOT` — resolucao do plugin (comportamento pre-existente).
 2. Hermetismo (task P-1.b): cada classe de teste recebe um `HARNESS_DIR`
@@ -9,6 +9,9 @@ Tres responsabilidades:
 3. Hermetismo do vault: a suite inteira nunca resolve o AI-Brain real. Sem
    excecao por marca — nenhum teste tem motivo para escrever no vault
    sincronizado.
+4. Hermetismo da casa do master-harness (D-139): `MASTER_HARNESS_HOME` numa casa
+   temporaria da sessao, e o teste que resolver `~/.master-harness` reprova no
+   setup, tambem com `touches_real`.
 
 O padrao da fixture foi PROMOVIDO de `tests/test_state_lock.py:38-55`, onde ja
 estava validado por 9 testes de concorrencia. Divergir dele seria regressao.
@@ -42,6 +45,24 @@ _VAULT_ENV_ORIGINAL = {k: os.environ.get(k) for k in _VAULT_VARS}
 _vault_session_mp: pytest.MonkeyPatch | None = None
 _vault_session_dir: str | None = None
 REAL_VAULTS: frozenset[Path] = frozenset()
+
+# Casa do master-harness (D-139). Capturada no import, antes do isolamento: `MASTER_HARNESS_HOME` do chamador (se
+# houver) e o fallback `~/.master-harness`, que e o que o hook de inicio de sessao e o preludio dos `.sh` leem quando a
+# variavel falta. Sao as casas que nenhum teste pode alcancar.
+_CASA_VAR = "MASTER_HARNESS_HOME"
+_CASA_ENV_ORIGINAL = os.environ.get(_CASA_VAR)
+_casa_session_mp: pytest.MonkeyPatch | None = None
+_casa_session_dir: str | None = None
+
+
+def _casas_reais() -> frozenset[Path]:
+    candidatos = [Path.home() / ".master-harness"]
+    if _CASA_ENV_ORIGINAL:
+        candidatos.append(Path(_CASA_ENV_ORIGINAL))
+    return frozenset(p.resolve() for p in candidatos)
+
+
+REAL_CASAS: frozenset[Path] = _casas_reais()
 BASH_REQUIRED_CLASSES = {
     "test_arsenal_gate.py": {"TestInvocacaoBloqueia", "TestMencaoNaoBloqueia", "TestPassaDireto", "TestFalhaAberta"},
     "test_signals_criacao.py": {"TestCriacaoBashNaoApagaTask"},
@@ -115,7 +136,43 @@ def pytest_configure(config):
         "Fora do gate hermetico; ver docs/self-reform/claude/TEST_MATRIX.md.",
     )
 
+    _isolar_casa_na_sessao()
     _isolar_vault_na_sessao()
+
+
+def _isolar_casa_na_sessao() -> None:
+    """Aponta `MASTER_HARNESS_HOME` para uma casa temporaria ANTES da coleta (D-139).
+
+    O hook de inicio de sessao chama `mh.saude.ao_iniciar_sessao(casa)`; com o cache de saude velho (> 6 h) esse
+    chamador lanca um `mh saude --registrar` destacado, que herda o ambiente. Um teste que rodou o hook com o vault
+    falso do pytest regravou o `~/.master-harness/saude/ultima.json` real em 22/10. O MH e o harness4codex ja isolam
+    a casa; esta suite ficou de fora.
+
+    A casa leva so o marcador `interpretador` (o preludio derivado dos `.sh` o le para escolher o Python; sem ele
+    cairia no `python` do PATH e gravaria um batimento de queda). Nao leva o `mh-root`: sem ele o digest de saude
+    fica em silencio, e os testes que o exercitam montam a propria casa. `touches_real` libera o `HARNESS_DIR`,
+    nunca a casa.
+    """
+    global _casa_session_mp, _casa_session_dir
+    _casa_session_dir = tempfile.mkdtemp(prefix="pytest-mh-casa-")
+    (Path(_casa_session_dir) / "interpretador").write_text(Path(sys.executable).as_posix() + "\n", encoding="utf-8")
+    _casa_session_mp = pytest.MonkeyPatch()
+    _casa_session_mp.setenv(_CASA_VAR, _casa_session_dir)
+
+
+def _casa_real_resolvida() -> str | None:
+    """Descreve a casa real do master-harness que o ambiente atual alcancaria, ou None.
+
+    Mesma precedencia do hook e do preludio: `MASTER_HARNESS_HOME`, senao `~/.master-harness`."""
+    env = os.environ.get(_CASA_VAR)
+    casa = Path(env) if env else Path(os.path.expanduser("~")) / ".master-harness"
+    try:
+        resolvida = casa.resolve()
+    except OSError:
+        return None
+    if resolvida in REAL_CASAS:
+        return f"o ambiente resolve a casa {resolvida}"
+    return None
 
 
 def _resolver_vault(env: dict[str, str | None]) -> Path:
@@ -164,7 +221,13 @@ def _isolar_vault_na_sessao() -> None:
 
 
 def pytest_unconfigure(config):
-    global _vault_session_mp, _vault_session_dir
+    global _vault_session_mp, _vault_session_dir, _casa_session_mp, _casa_session_dir
+    if _casa_session_mp is not None:
+        _casa_session_mp.undo()
+        _casa_session_mp = None
+    if _casa_session_dir is not None:
+        shutil.rmtree(_casa_session_dir, ignore_errors=True)
+        _casa_session_dir = None
     if _vault_session_mp is not None:
         _vault_session_mp.undo()
         _vault_session_mp = None
@@ -254,6 +317,16 @@ def pytest_runtest_setup(item):
     AI-Brain sincronizado. Depois o `HARNESS_DIR`, que falha por padrao com
     escape possivel mas nunca acidental — a marca precisa estar escrita no teste.
     """
+    casa = _casa_real_resolvida()
+    if casa is not None:
+        pytest.fail(
+            f"{item.nodeid} resolveria a casa REAL do master-harness: {casa}.\n"
+            f"Casas reais: {sorted(str(p) for p in REAL_CASAS)}.\n"
+            f"O isolamento de sessao do conftest foi removido ou desfeito; `touches_real` nao libera a casa. "
+            f"Quem precisa de outra casa passa a sua, explicita.",
+            pytrace=False,
+        )
+
     vazamento = _vault_real_resolvido()
     if vazamento is not None:
         pytest.fail(
