@@ -221,6 +221,20 @@ def test_ac4_filha_recebe_a_instrucao_uma_vez_por_sessao(amb):
     assert "additionalContext" in _saida(p3)["hookSpecificOutput"]
 
 
+def test_linha_no_meio_da_mensagem_nao_vira_instrucao_de_filha(amb):
+    """D-037: a orquestradora recebeu o roteiro de nascimento de chip por uma linha `Roteamento:` citada no relatorio
+    de um subagente. Do lado da filha vale a mesma regra do PreToolUse: a linha so conta como a ultima do prompt."""
+    env, _, _ = amb
+    relatorio = ("<agent-message from=\"a1\">\n  Prompt usado no chip:\n"
+                 "Roteamento: sonnet · medium (execucao-mecanica)\n  Terminei; o SHA e abc1234.\n</agent-message>")
+    p = _rodar(env, _ups(relatorio, "orquestradora-1"), "UserPromptSubmit")
+    assert _saida(p) == {}
+    # a mesma sessao continua podendo nascer de um chip de verdade: a mensagem citada nao gastou a vez dela
+    chip = "Implemente Z.\n\nRoteamento: sonnet · medium (execucao-mecanica)"
+    p2 = _rodar(env, _ups(chip, "orquestradora-1"), "UserPromptSubmit")
+    assert "additionalContext" in _saida(p2)["hookSpecificOutput"]
+
+
 def test_filha_com_par_fora_da_tabela_nao_recebe_instrucao(amb):
     env, _, _ = amb
     p = _rodar(env, _ups("X\nRoteamento: opus · max (analise-complexa)", "filha-3"), "UserPromptSubmit")
